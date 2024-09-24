@@ -1,13 +1,24 @@
 from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Type, List
 import numpy as np
 from unienv_interface.backends.base import ComputeBackend
+import gymnasium as gym
 import abc
+
+_space_to_gym_mappings : Mapping[Type["Space"], Type[gym.Space]] = {}
+_gym_to_space_mappings : Mapping[Type[gym.Space], Type["Space"]] = {}
+def register_space_to_gym_mapping(gym_cls : Type[gym.Space]):
+    def decorator(space_cls : Type["Space"]):
+        _space_to_gym_mappings[space_cls] = gym_cls
+        _gym_to_space_mappings[gym_cls] = space_cls
+        return space_cls
+    return decorator
 
 SpaceDataT = TypeVar("SpaceDataT", covariant=True)
 _SpaceBDeviceT = TypeVar("_SpaceBDeviceT", covariant=True)
 _SpaceBDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
 _SpaceBDRNGT = TypeVar("_SpaceBDRNGT", covariant=True)
-class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]):
+_GymDataT = TypeVar("_GymDataT", covariant=True)
+class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]):
     def __init__(
         self,
         backend : Type[ComputeBackend[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
@@ -36,11 +47,11 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         return self._device
     
     @abc.abstractmethod
-    def to_device(self, device : Optional[_SpaceBDeviceT]) -> "Space[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+    def to_device(self, device : Optional[_SpaceBDeviceT]) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
         raise NotImplementedError
 
     @abc.abstractmethod
-    def to_backend(self, backend : Type[ComputeBackend]) -> "Space":
+    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Space":
         raise NotImplementedError
 
     @property
@@ -60,7 +71,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         """Checks whether this space can be flattened to a :class:`gymnasium.spaces.Box`."""
         raise NotImplementedError
 
-    def sample(self, mask: Any | None = None) -> SpaceDataT:
+    def sample(self) -> SpaceDataT:
         """Randomly sample an element of this space.
 
         Can be uniform or non-uniform sampling based on boundedness of space.
@@ -94,3 +105,28 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         """Convert a JSONable data type to a batch of samples from this space."""
         # By default, assume identity is JSONable
         return sample_n
+    
+    def from_gym_data(self, gym_data : _GymDataT) -> SpaceDataT:
+        """Convert a gym space to this space."""
+        return gym_data
+    
+    def to_gym_data(self, data : _GymDataT) -> Any:
+        """Convert this space to a gym space."""
+        return data
+    
+    @abc.abstractmethod
+    def to_gym_space(self) -> gym.Space:
+        """Convert this space to a gym space."""
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def from_gym_space(
+        cls, 
+        gym_space : gym.Space,
+        backend : Type[ComputeBackend[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
+        dtype : Optional[_SpaceBDTypeT] = None,
+        device : Optional[_SpaceBDeviceT] = None,
+    ) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+        """Convert a gym space to this space."""
+        raise NotImplementedError

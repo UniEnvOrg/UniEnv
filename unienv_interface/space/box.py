@@ -1,15 +1,17 @@
-from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
-import array_api_compat.torch
+from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union
 import numpy as np
-from .space import Space
+from .space import Space, register_space_to_gym_mapping
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
+import gymnasium as gym
 
 BoxArrayT = TypeVar("BoxArrayT", covariant=True)
 _BoxBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _BoxBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _BoxBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-class Box(Space[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
+
+@register_space_to_gym_mapping(gym.spaces.Box)
+class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def __init__(
         self,
         backend : Type[ComputeBackend[BoxArrayT, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
@@ -17,7 +19,7 @@ class Box(Space[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         high: SupportsFloat | BoxArrayT,
         shape: Optional[Sequence[int]] = None,
         device : Optional[_BoxBDeviceT] = None,
-        dtype: Optional[_BoxBDTypeT] = None,
+        dtype: _BoxBDTypeT = None,
         seed: Optional[int] = None,
     ):
         assert (
@@ -81,6 +83,30 @@ class Box(Space[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     @property
     def shape(self) -> tuple[int, ...]:
         return self._shape
+
+    def to_device(self, device : Optional[_BoxBDeviceT]) -> "Box[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+        return Box(
+            backend=self.backend,
+            low=self.low,
+            high=self.high,
+            shape=self.shape,
+            device=device,
+            dtype=self.dtype,
+            seed=self.seed
+        )
+
+    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Box":
+        new_low = backend.from_dlpack(self.low)
+        new_high = backend.from_dlpack(self.high)
+
+        return Box(
+            backend=backend,
+            low=new_low,
+            high=new_high,
+            shape=self.shape,
+            device=device,
+            dtype=new_low.dtype
+        )
 
     @property
     def is_flattenable(self):
@@ -181,11 +207,45 @@ class Box(Space[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
 
     def to_jsonable(self, sample_n: Sequence[BoxArrayT]) -> list[np.ndarray]:
         """Convert a batch of samples from this space to a JSONable data type."""
-        return [self.backend.to_numpy(sample) for sample in sample_n]
+        return [self.backend.to_numpy(sample).tolist() for sample in sample_n]
 
-    def from_jsonable(self, sample_n: Sequence[np.ndarray]) -> list[BoxArrayT]:
+    def from_jsonable(self, sample_n: Sequence[Sequence[float | int]]) -> list[BoxArrayT]:
         """Convert a JSONable data type to a batch of samples from this space."""
-        return [self.backend.from_numpy(sample, dtype=self.dtype, device=self.device) for sample in sample_n]
+        return [self.backend.from_numpy(np.asarray(sample), dtype=self.dtype, device=self.device) for sample in sample_n]
+
+    def from_gym_data(self, gym_data: np.ndarray) -> BoxArrayT:
+        return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
+    
+    def to_gym_data(self, data: BoxArrayT) -> np.ndarray:
+        return self.backend.to_numpy(data)
+    
+    def to_gym_space(self) -> gym.spaces.Box:
+        """Convert this space to a gym space."""
+        new_low = self.backend.to_numpy(self.low)
+        new_high = self.backend.to_numpy(self.high)
+        return gym.spaces.Box(
+            low=new_low,
+            high=new_high,
+            dtype=new_low.dtype
+        )
+    
+    @classmethod
+    def from_gym_space(
+        cls, 
+        gym_space : gym.spaces.Box,
+        backend : Type[ComputeBackend[Any, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
+        dtype : Optional[_BoxBDTypeT] = None,
+        device : Optional[_BoxBDeviceT] = None,
+    ) -> "Box[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+        assert isinstance(gym_space, gym.spaces.Box), f"Expects gym_space to be of type gym.spaces.Box, actual type: {type(gym_space)}"
+        return Box(
+            backend=backend,
+            low=gym_space.low,
+            high=gym_space.high,
+            shape=gym_space.shape,
+            device=device,
+            dtype=dtype
+        )
 
     def __repr__(self) -> str:
         """A string representation of this space.

@@ -97,4 +97,3 @@ class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDictType, _BDeviceType, _BD
     @abc.abstractmethod
     def dtype_is_real_floating(cls, dtype : _BDtypeType) -> bool:
         raise NotImplementedError
-    
