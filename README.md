@@ -1,2 +1,4 @@
 # UniEnvPy
-Universal Agent / Parallel Environment
+Universal Single / Parallel Environment Interfaces
+
+

@@ -1,0 +1,23 @@
+[project]
+name = "unienv_interface"
+version = "0.0.1a"
+requires-python = ">= 3.10"
+dependencies = [
+    "numpy",
+    "gymnasium>=0.28.1",
+    "pydlpack",
+    "array-api-compat"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "tqdm"
+]
+torch = [
+    ""
+]
+
+[tool.setuptools.packages.find]
+include = ["*"]
+exclude = ["training*", "tests*"]
