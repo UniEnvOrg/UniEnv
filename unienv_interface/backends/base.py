@@ -75,7 +75,7 @@ class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDictType, _BDeviceType, _BD
 
     @classmethod
     @abc.abstractmethod
-    def random_uniform(cls, rng : _BRNGType, shape : Sequence[int], lower_bound : float, upper_bound : float, dtype : Optional[_BDtypeType] = None, device : Optional[_BDeviceType] = None) -> Tuple[_BRNGType, _BArrayType]:
+    def random_uniform(cls, rng : _BRNGType, shape : Sequence[int], lower_bound : float = 0.0, upper_bound : float = 1.0, dtype : Optional[_BDtypeType] = None, device : Optional[_BDeviceType] = None) -> Tuple[_BRNGType, _BArrayType]:
         raise NotImplementedError
 
     @classmethod

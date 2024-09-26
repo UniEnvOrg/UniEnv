@@ -17,9 +17,9 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         backend : Type[ComputeBackend[BoxArrayT, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
         low: SupportsFloat | BoxArrayT,
         high: SupportsFloat | BoxArrayT,
+        dtype: _BoxBDTypeT,
         shape: Optional[Sequence[int]] = None,
         device : Optional[_BoxBDeviceT] = None,
-        dtype: _BoxBDTypeT = None,
         seed: Optional[int] = None,
     ):
         assert (
@@ -69,8 +69,8 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
 
         self._shape: tuple[int, ...] = shape
 
-        self.low = array_api_workspace.astype(_low, dtype=self.dtype)
-        self.high = array_api_workspace.astype(_high, dtype=self.dtype)
+        self.low = array_api_workspace.astype(_low, dtype=self.dtype, device=device)
+        self.high = array_api_workspace.astype(_high, dtype=self.dtype, device=device)
 
         super().__init__(
             backend=backend,
@@ -84,14 +84,14 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def shape(self) -> tuple[int, ...]:
         return self._shape
 
-    def to_device(self, device : Optional[_BoxBDeviceT]) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+    def to_device(self, device : _BoxBDeviceT) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
         return Box(
             backend=self.backend,
             low=self.low,
             high=self.high,
+            dtype=self.dtype,
             shape=self.shape,
             device=device,
-            dtype=self.dtype,
             seed=self.seed
         )
 
@@ -103,9 +103,9 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             backend=backend,
             low=new_low,
             high=new_high,
+            dtype=new_low.dtype,
             shape=self.shape,
-            device=device,
-            dtype=new_low.dtype
+            device=device
         )
 
     @property
@@ -242,9 +242,8 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             dtype=new_low.dtype
         )
     
-    @classmethod
+    @staticmethod
     def from_gym_space(
-        cls, 
         gym_space : gym.spaces.Box,
         backend : Type[ComputeBackend[Any, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
         dtype : Optional[_BoxBDTypeT] = None,
@@ -255,9 +254,9 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             backend=backend,
             low=gym_space.low,
             high=gym_space.high,
+            dtype=dtype,
             shape=gym_space.shape,
-            device=device,
-            dtype=dtype
+            device=device
         )
 
     def __repr__(self) -> str:

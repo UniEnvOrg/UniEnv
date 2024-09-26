@@ -47,7 +47,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         return self._device
     
     @abc.abstractmethod
-    def to_device(self, device : Optional[_SpaceBDeviceT]) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+    def to_device(self, device : _SpaceBDeviceT) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -127,14 +127,16 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         """Convert this space to a gym space."""
         raise NotImplementedError
     
-    @classmethod
-    @abc.abstractmethod
+    @staticmethod
     def from_gym_space(
-        cls, 
         gym_space : gym.Space,
         backend : Type[ComputeBackend[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
         dtype : Optional[_SpaceBDTypeT] = None,
         device : Optional[_SpaceBDeviceT] = None,
     ) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
-        """Convert a gym space to this space."""
-        raise NotImplementedError
+        return _gym_to_space_mappings[type(gym_space)].from_gym_space(
+            gym_space,
+            backend=backend,
+            dtype=dtype,
+            device=device
+        )

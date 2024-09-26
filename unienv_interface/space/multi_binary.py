@@ -34,7 +34,7 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
     def shape(self) -> tuple[int, ...]:
         return self._shape  # type: ignore
 
-    def to_device(self, device: _MultiBDeviceT | None) -> "MultiBinary[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]":
+    def to_device(self, device: _MultiBDeviceT) -> "MultiBinary[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]":
         return MultiBinary(
             backend=self.backend,
             shape=self.shape,
@@ -67,7 +67,7 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
 
     def to_jsonable(self, sample_n: Sequence[MultiBArrayT]) -> list[Sequence[int]]:
         """Convert a batch of samples from this space to a JSONable data type."""
-        return np.array([self.backend.from_numpy(sample) for sample in sample_n]).tolist()
+        return np.array([self.backend.to_numpy(sample) for sample in sample_n]).tolist()
 
     def from_jsonable(self, sample_n: list[Sequence[int]]) -> list[MultiBArrayT]:
         """Convert a JSONable data type to a batch of samples from this space."""
@@ -98,9 +98,8 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
         """Convert this space to a gym space."""
         return gym.spaces.MultiBinary(self.shape)
     
-    @classmethod
-    def from_gym_space(
-        cls, 
+    @staticmethod
+    def from_gym_space( 
         gym_space : gym.spaces.MultiBinary,
         backend : Type[ComputeBackend[MultiBArrayT, Any, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
         dtype : Optional[_MultiBDTypeT] = None,
@@ -116,7 +115,7 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
 
     def __repr__(self) -> str:
         """Gives a string representation of this space."""
-        return f"MultiBinary({self.n})"
+        return f"MultiBinary({self.backend}, {self.shape}, {self.dtype}, {self.device})"
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""
