@@ -149,6 +149,18 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
         """Convert a gym space to this space."""
         return self.backend.array_api_namespace.asarray([gym_data], dtype=self.dtype, device=self.device)
 
+    def from_other_backend(self, other_data : Any) -> DiscreteArrayT:
+        new_tensor = self.backend.from_dlpack(other_data)
+        return self.from_same_backend(new_tensor)
+
+    def from_same_backend(self, other_data : DiscreteArrayT) -> DiscreteArrayT:
+        new_tensor = other_data
+        if self.dtype is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, dtype=self.dtype, device=self.device)
+        elif self.device is not None:
+            new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
+        return new_tensor
+
     def to_gym_data(self, data : DiscreteArrayT) -> np.int64:
         """Convert this space to a gym space."""
         return np.int64(data[0])
@@ -167,7 +179,8 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
         backend : Type[ComputeBackend[DiscreteArrayT, Any, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
         dtype : Optional[_DiscreteBDTypeT] = None,
         device : Optional[_DiscreteBDeviceT] = None,
-    ) -> "Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]":
+    ) -> "Discrete[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]":
+        assert isinstance(gym_space, gym.spaces.Discrete), f"Expected gym_space to be of type gym.spaces.Discrete, got {type(gym_space)}"
         return Discrete(
             backend=backend,
             n=int(gym_space.n),

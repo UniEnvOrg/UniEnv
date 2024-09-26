@@ -84,7 +84,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def shape(self) -> tuple[int, ...]:
         return self._shape
 
-    def to_device(self, device : Optional[_BoxBDeviceT]) -> "Box[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+    def to_device(self, device : Optional[_BoxBDeviceT]) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
         return Box(
             backend=self.backend,
             low=self.low,
@@ -216,6 +216,19 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def from_gym_data(self, gym_data: np.ndarray) -> BoxArrayT:
         return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
     
+    def from_other_backend(self, other_data: Any) -> BoxArrayT:
+        new_tensor = self.backend.from_dlpack(other_data)
+        return self.from_same_backend(new_tensor)
+
+    def from_same_backend(self, other_data: BoxArrayT) -> BoxArrayT:
+        new_tensor = other_data
+        if self.dtype is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, dtype=self.dtype, device=self.device)
+        elif self.device is not None:
+            new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
+        
+        return new_tensor
+
     def to_gym_data(self, data: BoxArrayT) -> np.ndarray:
         return self.backend.to_numpy(data)
     
@@ -236,7 +249,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         backend : Type[ComputeBackend[Any, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
         dtype : Optional[_BoxBDTypeT] = None,
         device : Optional[_BoxBDeviceT] = None,
-    ) -> "Box[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+    ) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
         assert isinstance(gym_space, gym.spaces.Box), f"Expects gym_space to be of type gym.spaces.Box, actual type: {type(gym_space)}"
         return Box(
             backend=backend,

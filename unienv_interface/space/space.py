@@ -110,10 +110,18 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         """Convert a gym space to this space."""
         return gym_data
     
-    def to_gym_data(self, data : _GymDataT) -> Any:
+    def to_gym_data(self, data : SpaceDataT) -> _GymDataT:
         """Convert this space to a gym space."""
         return data
     
+    def from_other_backend(self, other_data : Any) -> SpaceDataT:
+        """Convert data from another backend to this backend."""
+        raise NotImplementedError
+    
+    def from_same_backend(self, other_data : SpaceDataT) -> SpaceDataT:
+        """Convert data from another device to this device."""
+        raise NotImplementedError
+
     @abc.abstractmethod
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
