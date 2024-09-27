@@ -1,0 +1,161 @@
+"""Implementation of a space that represents the cartesian product of `Discrete` spaces."""
+"""Implementation of a space consisting of finitely many elements."""
+from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List
+import numpy as np
+from .space import Space, register_space_to_gym_mapping
+from unienv_interface.backends.base import ComputeBackend
+import array_api_compat
+import gymnasium as gym
+from .discrete import Discrete
+
+alphanumeric: frozenset[str] = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+)
+
+_TextDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
+_TextDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
+_TextDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
+@register_space_to_gym_mapping(gym.spaces.Text)
+class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
+    def __init__(
+        self,
+        backend : Type[ComputeBackend[Any, Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
+        max_length: int,
+        *,
+        min_length: int = 1,
+        charset: frozenset[str] | str = alphanumeric,
+        seed: Optional[int] = None,
+        device : Optional[_TextDeviceT] = None,
+    ):
+        self._gym_space = gym.spaces.Text(max_length=max_length, min_length=min_length, charset=charset, seed=seed)
+        super().__init__(
+            backend=backend,
+            shape=None,
+            dtype=str,
+            device=device,
+            seed=seed,
+        )
+
+    def to_device(self, device : _TextDeviceT) -> "Text[_TextDeviceT, _TextDTypeT, _TextDRNGT]":
+        return Text(
+            backend=self.backend,
+            max_length=self.max_length,
+            min_length=self.min_length,
+            charset=self.character_set,
+            device=device
+        )
+
+    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Text":
+        return Text(
+            backend=backend,
+            max_length=self.max_length,
+            min_length=self.min_length,
+            charset=self.character_set,
+            device=device
+        )
+
+    @property
+    def min_length(self) -> int:
+        return self._gym_space.min_length
+
+    @min_length.setter
+    def min_length(self, value: int) -> None:
+        self._gym_space.min_length = value
+    
+    @property
+    def max_length(self) -> int:
+        return self._gym_space.max_length
+    
+    @max_length.setter
+    def max_length(self, value: int) -> None:
+        self._gym_space.max_length = value
+    
+    @property
+    def character_set(self) -> frozenset[str]:
+        """Returns the character set for the space."""
+        return self._gym_space.character_set
+
+    @property
+    def character_list(self) -> tuple[str, ...]:
+        """Returns a tuple of characters in the space."""
+        return self._gym_space.character_list
+
+    def character_index(self, char: str) -> np.int32:
+        """Returns a unique index for each character in the space's character set."""
+        return self._gym_space.character_index(char)
+
+    @property
+    def characters(self) -> str:
+        """Returns a string with all Text characters."""
+        return self._gym_space.characters
+
+    @property
+    def is_flattenable(self) -> bool:
+        """The flattened version is an integer array for each character, padded to the max character length."""
+        return True
+
+    def sample(
+        self
+    ) -> str:
+        return self._gym_space.sample()
+
+    def contains(self, x: Any) -> bool:
+        """Return boolean specifying if x is a valid member of this space."""
+        return self._gym_space.contains(x)
+
+    def __repr__(self) -> str:
+        """Gives a string representation of this space."""
+        return f"Text({self._gym_space.min_length}, {self._gym_space.max_length}, charset={self.characters})"
+
+    def __eq__(self, other: Any) -> bool:
+        """Check whether ``other`` is equivalent to this instance."""
+        return (
+            isinstance(other, Text)
+            and self.min_length == other.min_length
+            and self.max_length == other.max_length
+            and self.character_set == other.character_set
+        )
+    
+    def to_jsonable(self, sample_n: Sequence[str]) -> List[str]:
+        """Convert a batch of samples from this space to a JSONable data type."""
+        # By default, assume identity is JSONable
+        return sample_n
+
+    def from_jsonable(self, sample_n: List[str]) -> List[str]:
+        """Convert a JSONable data type to a batch of samples from this space."""
+        # By default, assume identity is JSONable
+        return list(sample_n)
+    
+    def from_gym_data(self, gym_data : str) -> str:
+        """Convert a gym space to this space."""
+        return gym_data
+    
+    def to_gym_data(self, data : str) -> str:
+        """Convert this space to a gym space."""
+        return data
+    
+    def from_other_backend(self, other_data : str) -> str:
+        """Convert data from another backend to this backend."""
+        return other_data
+    
+    def from_same_backend(self, other_data : str) -> str:
+        """Convert data from another device to this device."""
+        return other_data
+
+    def to_gym_space(self) -> gym.spaces.Text:
+        return self._gym_space
+    
+    @staticmethod
+    def from_gym_space(
+        gym_space : gym.spaces.Text,
+        backend : Type[ComputeBackend[Any, Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
+        dtype : Optional[_TextDeviceT] = None,
+        device : Optional[_TextDeviceT] = None,
+    ) -> "Text[_TextDeviceT, _TextDTypeT, _TextDRNGT]":
+        return Text(
+            backend=backend,
+            max_length=gym_space.max_length,
+            min_length=gym_space.min_length,
+            charset=gym_space.character_set,
+            device=device
+        )
