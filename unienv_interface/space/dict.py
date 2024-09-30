@@ -17,8 +17,8 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
         self,
         backend: Type[ComputeBackend[DictType[str, Any], _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]],
         spaces: None | DictType[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]] | Sequence[tuple[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]]] = None,
-        seed: dict | int | np.random.Generator | None = None,
         device : Optional[_DictBDeviceT] = None,
+        seed: dict | int | np.random.Generator | None = None,
     ):
         """Constructor of :class:`Dict` space.
 
@@ -68,7 +68,8 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             backend=space.backend,
             shape=None,
             device=device,
-            dtype=None
+            dtype=None,
+            seed=seed,
         )
 
     @property
