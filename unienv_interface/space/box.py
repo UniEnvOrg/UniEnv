@@ -14,7 +14,7 @@ _BoxBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[BoxArrayT, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
+        backend : Type[ComputeBackend[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
         low: SupportsFloat | BoxArrayT,
         high: SupportsFloat | BoxArrayT,
         dtype: _BoxBDTypeT,
@@ -245,7 +245,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     @staticmethod
     def from_gym_space(
         gym_space : gym.spaces.Box,
-        backend : Type[ComputeBackend[Any, Any, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
+        backend : Type[ComputeBackend[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
         dtype : Optional[_BoxBDTypeT] = None,
         device : Optional[_BoxBDeviceT] = None,
     ) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":

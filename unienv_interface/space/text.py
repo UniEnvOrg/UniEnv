@@ -19,7 +19,7 @@ _TextDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
 class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
+        backend : Type[ComputeBackend[Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
         max_length: int,
         *,
         min_length: int = 1,
@@ -148,7 +148,7 @@ class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
     @staticmethod
     def from_gym_space(
         gym_space : gym.spaces.Text,
-        backend : Type[ComputeBackend[Any, Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
+        backend : Type[ComputeBackend[Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
         dtype : Optional[_TextDeviceT] = None,
         device : Optional[_TextDeviceT] = None,
     ) -> "Text[_TextDeviceT, _TextDTypeT, _TextDRNGT]":

@@ -21,7 +21,7 @@ _GymDataT = TypeVar("_GymDataT", covariant=True)
 class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
+        backend : Type[ComputeBackend[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
         shape: Optional[Sequence[int]] = None,
         device : Optional[_SpaceBDeviceT] = None,
         dtype: Optional[_SpaceBDTypeT] = None,
@@ -96,7 +96,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         """Return boolean specifying if x is a valid member of this space."""
         return self.contains(x)
     
-    def to_jsonable(self, sample_n: Sequence[SpaceDataT]) -> List[Any]:
+    def to_jsonable(self, sample_n: Sequence[SpaceDataT]) -> Any:
         """Convert a batch of samples from this space to a JSONable data type."""
         # By default, assume identity is JSONable
         return list(sample_n)
@@ -132,7 +132,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     @staticmethod
     def from_gym_space(
         gym_space : gym.Space,
-        backend : Type[ComputeBackend[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
+        backend : Type[ComputeBackend[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
         dtype : Optional[_SpaceBDTypeT] = None,
         device : Optional[_SpaceBDeviceT] = None,
     ) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":

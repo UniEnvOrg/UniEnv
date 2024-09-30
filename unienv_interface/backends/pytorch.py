@@ -5,7 +5,7 @@ import torch
 import numpy as np
 import dlpack
 
-class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Dict[str, Any], Union[torch.device, str], torch.dtype, torch.Generator]):
+class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str], torch.dtype, torch.Generator]):
     array_api_namespace = array_api_compat.torch
 
     @classmethod
@@ -29,15 +29,6 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Dict[str, Any], Union[t
     @classmethod
     def from_dlpack(cls, data : dlpack.DLPackObject) -> torch.Tensor:
         return torch.from_dlpack(data)
-
-    @classmethod
-    def from_dict(cls, data : Dict[str,Any]) -> Dict[str, Any]:
-        for k,v in data.items():
-            if isinstance(v, np.ndarray):
-                data[k] = cls.from_numpy(v)
-            elif isinstance(v, dict):
-                data[k] = cls.from_dict(v)
-        return data
 
     @classmethod
     def random_number_generator(cls, seed : Optional[int] = None, device : Optional[Union[torch.device, str]] = None) -> torch.Generator:

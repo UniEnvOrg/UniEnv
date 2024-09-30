@@ -6,11 +6,11 @@ import gymnasium as gym
 import array_api_compat
 
 _BArrayType = TypeVar("_BArrayType", covariant=True)
-_BDictType = TypeVar("_BDictType", Dict, covariant=True)
+# _BDictType = TypeVar("_BDictType", Dict, covariant=True)
 _BDeviceType = TypeVar("_BDeviceType", covariant=True)
 _BDtypeType = TypeVar("_BDtypeType", covariant=True)
 _BRNGType = TypeVar("_BRNGType", covariant=True)
-class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDictType, _BDeviceType, _BDtypeType, _BRNGType]):
+class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDeviceType, _BDtypeType, _BRNGType]):
     array_api_namespace : Any
 
     @classmethod
@@ -38,27 +38,27 @@ class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDictType, _BDeviceType, _BD
     def from_dlpack(cls, data : dlpack.DLPackObject) -> _BArrayType:
         raise NotImplementedError
 
-    @classmethod
-    def from_dict(cls, data : Dict[str,Any]) -> _BDictType:
-        new_data = {}
-        for k,v in data.items():
-            if isinstance(v, np.ndarray):
-                new_data[k] = cls.from_numpy(v)
-            elif isinstance(v, dict):
-                new_data[k] = cls.from_dict(v)
-        return new_data
+    # @classmethod
+    # def from_dict(cls, data : Dict[str,Any]) -> _BDictType:
+    #     new_data = {}
+    #     for k,v in data.items():
+    #         if isinstance(v, np.ndarray):
+    #             new_data[k] = cls.from_numpy(v)
+    #         elif isinstance(v, dict):
+    #             new_data[k] = cls.from_dict(v)
+    #     return new_data
     
-    @classmethod
-    def to_dict(cls, data: _BDictType) -> Dict[str, Any]:
-        new_data = {}
-        for k,v in data.items():
-            if cls.is_backendarray(v):
-                new_data[k] = cls.to_numpy(v)
-            elif cls.is_backenddict(v):
-                new_data[k] = cls.to_dict(v)
-            else:
-                new_data[k] = v
-        return new_data
+    # @classmethod
+    # def to_dict(cls, data: _BDictType) -> Dict[str, Any]:
+    #     new_data = {}
+    #     for k,v in data.items():
+    #         if cls.is_backendarray(v):
+    #             new_data[k] = cls.to_numpy(v)
+    #         elif cls.is_backenddict(v):
+    #             new_data[k] = cls.to_dict(v)
+    #         else:
+    #             new_data[k] = v
+    #     return new_data
 
     @classmethod
     @abc.abstractmethod

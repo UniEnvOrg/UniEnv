@@ -15,7 +15,7 @@ _MultiBDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
 class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[MultiBArrayT, Any, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
+        backend : Type[ComputeBackend[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
         shape: Sequence[int],
         device : Optional[_MultiBDeviceT] = None,
         dtype: Optional[_MultiBDTypeT] = None,
@@ -101,7 +101,7 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
     @staticmethod
     def from_gym_space( 
         gym_space : gym.spaces.MultiBinary,
-        backend : Type[ComputeBackend[MultiBArrayT, Any, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
+        backend : Type[ComputeBackend[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
         dtype : Optional[_MultiBDTypeT] = None,
         device : Optional[_MultiBDeviceT] = None,
     ) -> "MultiBinary[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]":

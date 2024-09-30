@@ -29,7 +29,7 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
 
     def __init__(
         self,
-        backend : Type[ComputeBackend[DiscreteArrayT, Any, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
+        backend : Type[ComputeBackend[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
         n: int,
         start: int = 0,
         device : Optional[_DiscreteBDeviceT] = None,
@@ -175,7 +175,7 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
     @staticmethod
     def from_gym_space(
         gym_space : gym.spaces.Discrete,
-        backend : Type[ComputeBackend[DiscreteArrayT, Any, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
+        backend : Type[ComputeBackend[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
         dtype : Optional[_DiscreteBDTypeT] = None,
         device : Optional[_DiscreteBDeviceT] = None,
     ) -> "Discrete[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]":

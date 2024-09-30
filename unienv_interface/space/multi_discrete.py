@@ -44,7 +44,7 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
 
     def __init__(
         self,
-        backend: Type[ComputeBackend[MultiDArrayT, Any, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
+        backend: Type[ComputeBackend[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
         nvec: MultiDArrayT,
         start: Optional[MultiDArrayT] = None,
         dtype: Optional[_MultiDDTypeT] = None,
@@ -210,7 +210,7 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
     @staticmethod
     def from_gym_space(
         gym_space : gym.spaces.MultiDiscrete,
-        backend : Type[ComputeBackend[MultiDArrayT, Any, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
+        backend : Type[ComputeBackend[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
         dtype : Optional[_MultiDDTypeT] = None,
         device : Optional[_MultiDDeviceT] = None,
     ) -> "MultiDiscrete[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]":
