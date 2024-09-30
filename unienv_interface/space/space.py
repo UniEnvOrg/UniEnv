@@ -27,17 +27,11 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         dtype: Optional[_SpaceBDTypeT] = None,
         seed: Optional[int] = None,
     ):
-        """Constructor of :class:`Space`.
-
-        Args:
-            shape (Optional[Sequence[int]]): If elements of the space are numpy arrays, this should specify their shape.
-            dtype (Optional[Type | str]): If elements of the space are numpy arrays, this should specify their dtype.
-            seed: Optionally, you can use this argument to seed the RNG that is used to sample from the space
-        """
         self.backend = backend
         self._shape = None if shape is None else tuple(shape)
         self.dtype = None if dtype is None else np.dtype(dtype)
         self._rng : Optional[_SpaceBDRNGT] = None
+        self._np_rng : Optional[np.random.Generator] = None
         self._device = device
         if seed is not None:
             self.seed(seed)
@@ -53,6 +47,13 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     @abc.abstractmethod
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Space":
         raise NotImplementedError
+
+    @property
+    def np_rng(self) -> np.random.Generator:
+        if self._np_rng is None:
+            self.seed()
+
+        return self._np_rng
 
     @property
     def rng(self) -> _SpaceBDRNGT:
@@ -87,6 +88,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     def seed(self, seed: int | None = None) -> None:
         """Seed the PRNG of this space and possibly the PRNGs of subspaces."""
         self._rng = self.backend.random_number_generator(seed, self._device)
+        self._np_rng = np.random.default_rng(seed)
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -136,6 +138,9 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         dtype : Optional[_SpaceBDTypeT] = None,
         device : Optional[_SpaceBDeviceT] = None,
     ) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+        if type(gym_space) not in _gym_to_space_mappings:
+            raise NotImplementedError(f"Conversion from gym space of type {type(gym_space)} is not supported.")
+
         return _gym_to_space_mappings[type(gym_space)].from_gym_space(
             gym_space,
             backend=backend,

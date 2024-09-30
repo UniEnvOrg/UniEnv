@@ -1,5 +1,4 @@
 """Implementation of a space that represents the cartesian product of `Discrete` spaces."""
-"""Implementation of a space consisting of finitely many elements."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
 from .space import Space, register_space_to_gym_mapping
