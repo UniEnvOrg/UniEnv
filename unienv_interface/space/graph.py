@@ -1,7 +1,7 @@
 """Implementation of a space that represents graph information where nodes and edges can be represented with euclidean space."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, NamedTuple
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -63,6 +63,17 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
     @property
     def is_flattenable(self):
         return False
+    
+    @property
+    def flat_dim(self) -> None:
+        """Return the shape of the space as an immutable property."""
+        return None
+    
+    def flatten(self, data : GraphInstance[GraphBArrayT]) -> GraphBArrayT:
+        raise NotImplementedError("Graph space is not flattenable.")
+    
+    def unflatten(self, data : GraphBArrayT) -> GraphInstance[GraphBArrayT]:
+        raise NotImplementedError("Graph space is not flattenable.")
 
     def to_device(self, device : _GraphBDeviceT) -> "Graph[_GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]":
         return Graph(
@@ -286,27 +297,5 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
         return gym.spaces.Graph(
             node_space=self.node_space.to_gym_space(),
             edge_space=self.edge_space.to_gym_space() if self.edge_space is not None else None,
-        )
-    
-    def from_gym_space(
-        gym_space : gym.spaces.Graph,
-        backend : Type[ComputeBackend[GraphBArrayT, _GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]],
-        dtype : Optional[_GraphBDTypeT] = None,
-        device : Optional[_GraphBDeviceT] = None,
-    ) -> "Graph[_GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]":
-        return Graph(
-            backend=backend,
-            node_space=Space.from_gym_space(
-                gym_space.node_space,
-                backend=backend,
-                dtype=dtype,
-                device=device
-            ),
-            edge_space=Space.from_gym_space(
-                gym_space.edge_space,
-                backend=backend,
-                dtype=dtype,
-                device=device
-            ) if gym_space.edge_space is not None else None,
-            device=device
+            seed=self.np_rng.integers(0)
         )

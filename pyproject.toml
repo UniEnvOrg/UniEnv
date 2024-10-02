@@ -6,7 +6,8 @@ dependencies = [
     "numpy",
     "gymnasium>=0.29.0",
     "pydlpack",
-    "array-api-compat"
+    "array-api-compat",
+    "packaging"
 ]
 
 [project.optional-dependencies]
@@ -15,7 +16,10 @@ dev = [
     "tqdm"
 ]
 torch = [
-    ""
+    "torch"
+]
+jax = [
+    "jax"
 ]
 
 [tool.setuptools.packages.find]

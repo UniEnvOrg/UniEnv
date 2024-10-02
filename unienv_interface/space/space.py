@@ -4,15 +4,6 @@ from unienv_interface.backends.base import ComputeBackend
 import gymnasium as gym
 import abc
 
-_space_to_gym_mappings : Mapping[Type["Space"], Type[gym.Space]] = {}
-_gym_to_space_mappings : Mapping[Type[gym.Space], Type["Space"]] = {}
-def register_space_to_gym_mapping(gym_cls : Type[gym.Space]):
-    def decorator(space_cls : Type["Space"]):
-        _space_to_gym_mappings[space_cls] = gym_cls
-        _gym_to_space_mappings[gym_cls] = space_cls
-        return space_cls
-    return decorator
-
 SpaceDataT = TypeVar("SpaceDataT", covariant=True)
 _SpaceBDeviceT = TypeVar("_SpaceBDeviceT", covariant=True)
 _SpaceBDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
@@ -68,8 +59,23 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         return self._shape
 
     @property
+    @abc.abstractmethod
     def is_flattenable(self) -> bool:
-        """Checks whether this space can be flattened to a :class:`gymnasium.spaces.Box`."""
+        """Checks whether this space can be flattened to a :class:`Box`."""
+        raise NotImplementedError
+    
+    @property
+    @abc.abstractmethod
+    def flat_dim(self) -> int | None:
+        """Return the shape of the space as an immutable property."""
+        raise NotImplementedError
+    
+    def flatten(self, data : SpaceDataT) -> Any:
+        """Flatten the data."""
+        raise NotImplementedError
+    
+    def unflatten(self, data : Any) -> SpaceDataT:
+        """Unflatten the data."""
         raise NotImplementedError
 
     def sample(self, **kwargs) -> SpaceDataT:

@@ -2,7 +2,7 @@
 
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple as TupleType, Type, Literal, List, Dict
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -11,7 +11,6 @@ _TupleBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _TupleBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _TupleBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.Tuple)
 class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]):
     def __init__(
         self,
@@ -42,6 +41,29 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
     @property
     def is_flattenable(self):
         return all(space.is_flattenable for space in self.spaces)
+
+    @property
+    def flat_dim(self) -> Optional[int]:
+        """Return the shape of the space as an immutable property."""
+        if not self.is_flattenable:
+            return None
+        return sum(space.flat_dim for space in self.spaces)
+    
+    def flatten(self, data : TupleType[Any, ...]) -> Any:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.concat([
+            space.flatten(data[i]) for i, space in enumerate(self.spaces)
+        ])
+    
+    def unflatten(self, data : Any) -> TupleType[Any, ...]:
+        """Unflatten the data."""
+        result = []
+        start = 0
+        for space in self.spaces:
+            end = start + space.flat_dim
+            result.append(space.unflatten(data[start:end]))
+            start = end
+        return result
 
     def seed(self, seed: Optional[int] = None) -> None:
         for space in self.spaces:
@@ -109,16 +131,3 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
 
     def to_gym_space(self) -> gym.Space:
         return gym.spaces.Tuple([space.to_gym_space() for space in self.spaces])
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.Tuple,
-        backend : Type[ComputeBackend[Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]],
-        dtype : Optional[_TupleBDTypeT] = None,
-        device : Optional[_TupleBDeviceT] = None,
-    ) -> "Tuple[_TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]":
-        return Tuple(
-            backend=backend,
-            spaces=[Space.from_gym_space(subspace, backend=backend, dtype=dtype, device=device) for subspace in gym_space.spaces],
-            device=device
-        )

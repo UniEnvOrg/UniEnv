@@ -12,6 +12,8 @@ _BDtypeType = TypeVar("_BDtypeType", covariant=True)
 _BRNGType = TypeVar("_BRNGType", covariant=True)
 class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDeviceType, _BDtypeType, _BRNGType]):
     array_api_namespace : Any
+    default_integer_dtype : _BDtypeType
+    default_floating_dtype : _BDtypeType
 
     @classmethod
     @abc.abstractmethod

@@ -1,6 +1,6 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -10,7 +10,6 @@ _BoxBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _BoxBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _BoxBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.Box)
 class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def __init__(
         self,
@@ -18,8 +17,8 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         low: SupportsFloat | BoxArrayT,
         high: SupportsFloat | BoxArrayT,
         dtype: _BoxBDTypeT,
-        shape: Optional[Sequence[int]] = None,
         device : Optional[_BoxBDeviceT] = None,
+        shape: Optional[Sequence[int]] = None,
         seed: Optional[int] = None,
     ):
         assert (
@@ -112,6 +111,19 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def is_flattenable(self):
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return True
+    
+    @property
+    def flat_dim(self) -> int:
+        """Return the shape of the space as an immutable property."""
+        return int(np.prod(self.shape))
+    
+    def flatten(self, data : BoxArrayT) -> BoxArrayT:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.reshape(data, (-1,))
+    
+    def unflatten(self, data : BoxArrayT) -> BoxArrayT:
+        """Unflatten the data."""
+        return self.backend.array_api_namespace.reshape(data, self.shape)
 
     def is_bounded(self, manner: Literal["both", "below", "above"] = "both") -> bool:
         below = bool(self.backend.array_api_namespace.all(self.bounded_below))
@@ -205,6 +217,27 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             and self.backend.array_api_namespace.all(x <= self.high)
         )
 
+    def __repr__(self) -> str:
+        """A string representation of this space.
+
+        The representation will include bounds, shape and dtype.
+        If a bound is uniform, only the corresponding scalar will be given to avoid redundant and ugly strings.
+
+        Returns:
+            A representation of the space
+        """
+        return f"Box({self.backend.__name__}, {self.low}, {self.high}, {self.shape}, {self.dtype}, {self.device})"
+
+    def __eq__(self, other: Any) -> bool:
+        """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
+        return (
+            isinstance(other, Box)
+            and (self.shape == other.shape)
+            # and (self.dtype == other.dtype)
+            and self.backend.array_api_namespace.allclose(self.low, other.low)
+            and self.backend.array_api_namespace.allclose(self.high, other.high)
+        )
+    
     def to_jsonable(self, sample_n: Sequence[BoxArrayT]) -> list[np.ndarray]:
         """Convert a batch of samples from this space to a JSONable data type."""
         return [self.backend.to_numpy(sample).tolist() for sample in sample_n]
@@ -239,44 +272,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         return gym.spaces.Box(
             low=new_low,
             high=new_high,
-            dtype=new_low.dtype
-        )
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.Box,
-        backend : Type[ComputeBackend[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
-        dtype : Optional[_BoxBDTypeT] = None,
-        device : Optional[_BoxBDeviceT] = None,
-    ) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
-        assert isinstance(gym_space, gym.spaces.Box), f"Expects gym_space to be of type gym.spaces.Box, actual type: {type(gym_space)}"
-        return Box(
-            backend=backend,
-            low=gym_space.low,
-            high=gym_space.high,
-            dtype=dtype,
-            shape=gym_space.shape,
-            device=device
-        )
-
-    def __repr__(self) -> str:
-        """A string representation of this space.
-
-        The representation will include bounds, shape and dtype.
-        If a bound is uniform, only the corresponding scalar will be given to avoid redundant and ugly strings.
-
-        Returns:
-            A representation of the space
-        """
-        return f"Box({self.backend.__name__}, {self.low}, {self.high}, {self.shape}, {self.dtype}, {self.device})"
-
-    def __eq__(self, other: Any) -> bool:
-        """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
-        return (
-            isinstance(other, Box)
-            and (self.shape == other.shape)
-            # and (self.dtype == other.dtype)
-            and self.backend.array_api_namespace.allclose(self.low, other.low)
-            and self.backend.array_api_namespace.allclose(self.high, other.high)
+            dtype=new_low.dtype,
+            seed=self.np_rng.integers(0)
         )
 

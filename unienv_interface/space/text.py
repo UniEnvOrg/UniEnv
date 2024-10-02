@@ -2,7 +2,7 @@
 """Implementation of a space consisting of finitely many elements."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -15,7 +15,6 @@ alphanumeric: frozenset[str] = frozenset(
 _TextDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
 _TextDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
 _TextDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
-@register_space_to_gym_mapping(gym.spaces.Text)
 class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
     def __init__(
         self,
@@ -24,8 +23,8 @@ class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
         *,
         min_length: int = 1,
         charset: frozenset[str] | str = alphanumeric,
-        seed: Optional[int] = None,
         device : Optional[_TextDeviceT] = None,
+        seed: Optional[int] = None,
     ):
         self._gym_space = gym.spaces.Text(max_length=max_length, min_length=min_length, charset=charset, seed=seed)
         super().__init__(
@@ -94,6 +93,29 @@ class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
         """The flattened version is an integer array for each character, padded to the max character length."""
         return True
 
+    @property
+    def flat_dim(self) -> int:
+        return self.max_length
+    
+    def flatten(self, data : str) -> Any:
+        dat = self.backend.array_api_namespace.full(
+            (self.max_length,),
+            len(self.character_set),
+            device=self.device,
+        )
+        for i, char in enumerate(data):
+            dat[i] = self.character_index(char)
+        return dat
+
+    def unflatten(self, data : Any) -> str:
+        return "".join([
+            self.character_list[i] for i in data if i < len(self.character_list)
+        ])
+    
+    def seed(self, seed: int | None = None) -> None:
+        super().seed(seed)
+        self._gym_space.seed(seed)
+
     def sample(
         self
     ) -> str:
@@ -144,18 +166,3 @@ class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
 
     def to_gym_space(self) -> gym.spaces.Text:
         return self._gym_space
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.Text,
-        backend : Type[ComputeBackend[Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
-        dtype : Optional[_TextDeviceT] = None,
-        device : Optional[_TextDeviceT] = None,
-    ) -> "Text[_TextDeviceT, _TextDTypeT, _TextDRNGT]":
-        return Text(
-            backend=backend,
-            max_length=gym_space.max_length,
-            min_length=gym_space.min_length,
-            charset=gym_space.character_set,
-            device=device
-        )

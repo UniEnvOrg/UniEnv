@@ -1,7 +1,7 @@
 """Implementation of a space consisting of finitely many elements."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -11,7 +11,6 @@ _DiscreteBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _DiscreteBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _DiscreteBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.Discrete)
 class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]):
     r"""A space consisting of finitely many elements.
 
@@ -72,6 +71,18 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
     def is_flattenable(self):
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return True
+
+    @property
+    def flat_dim(self) -> int:
+        return 1
+    
+    def flatten(self, data : DiscreteArrayT) -> DiscreteArrayT:
+        """Flatten the data."""
+        return data
+    
+    def unflatten(self, data : DiscreteArrayT) -> DiscreteArrayT:
+        """Unflatten the data."""
+        return data
 
     def sample(self) -> DiscreteArrayT:
         """Generates a single random sample from this space.
@@ -169,21 +180,6 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
         """Convert this space to a gym space."""
         return gym.spaces.Discrete(
             self.n,
-            start=self.start
-        )
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.Discrete,
-        backend : Type[ComputeBackend[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
-        dtype : Optional[_DiscreteBDTypeT] = None,
-        device : Optional[_DiscreteBDeviceT] = None,
-    ) -> "Discrete[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]":
-        assert isinstance(gym_space, gym.spaces.Discrete), f"Expected gym_space to be of type gym.spaces.Discrete, got {type(gym_space)}"
-        return Discrete(
-            backend=backend,
-            n=int(gym_space.n),
-            start=int(gym_space.start),
-            dtype=dtype,
-            device=device
+            start=self.start,
+            seed=self.np_rng.integers(0)
         )

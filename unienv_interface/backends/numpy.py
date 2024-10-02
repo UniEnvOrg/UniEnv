@@ -6,6 +6,8 @@ import dlpack
 
 class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator]):
     array_api_namespace = array_api_compat.numpy
+    default_integer_dtype = int
+    default_floating_dtype = float
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:

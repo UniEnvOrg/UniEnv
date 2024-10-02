@@ -1,7 +1,7 @@
 """Implementation of a space that represents the cartesian product of `Discrete` spaces."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -12,34 +12,7 @@ _MultiDDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
 _MultiDDTypeT = TypeVar("_MultiBDTypeT", covariant=True)
 _MultiDDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.MultiDiscrete)
 class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]):
-    """This represents the cartesian product of arbitrary :class:`Discrete` spaces.
-
-    It is useful to represent game controllers or keyboards where each key can be represented as a discrete action space.
-
-    Note:
-        Some environment wrappers assume a value of 0 always represents the NOOP action.
-
-    e.g. Nintendo Game Controller - Can be conceptualized as 3 discrete action spaces:
-
-    1. Arrow Keys: Discrete 5  - NOOP[0], UP[1], RIGHT[2], DOWN[3], LEFT[4]  - params: min: 0, max: 4
-    2. Button A:   Discrete 2  - NOOP[0], Pressed[1] - params: min: 0, max: 1
-    3. Button B:   Discrete 2  - NOOP[0], Pressed[1] - params: min: 0, max: 1
-
-    It can be initialized as ``MultiDiscrete([ 5, 2, 2 ])`` such that a sample might be ``array([3, 1, 0])``.
-
-    Although this feature is rarely used, :class:`MultiDiscrete` spaces may also have several axes
-    if ``nvec`` has several axes:
-
-    Example:
-        >>> from gymnasium.spaces import MultiDiscrete
-        >>> import numpy as np
-        >>> observation_space = MultiDiscrete(np.array([[1, 2], [3, 4]]), seed=42)
-        >>> observation_space.sample()
-        array([[0, 0],
-               [2, 2]])
-    """
 
     def __init__(
         self,
@@ -50,18 +23,6 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         device : Optional[_MultiDDeviceT] = None,
         seed: Optional[int] = None,
     ):
-        """Constructor of :class:`MultiDiscrete` space.
-
-        The argument ``nvec`` will determine the number of values each categorical variable can take. If
-        ``start`` is provided, it will define the minimal values corresponding to each categorical variable.
-
-        Args:
-            nvec: vector of counts of each categorical variable. This will usually be a list of integers. However,
-                you may also pass a more complicated numpy array if you'd like the space to have several axes.
-            dtype: This should be some kind of integer type.
-            seed: Optionally, you can use this argument to seed the RNG that is used to sample from the space.
-            start: Optionally, the starting value the element of each class will take (defaults to 0).
-        """
         if dtype is not None:
             assert backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
             self.nvec = backend.array_api_namespace.astype(nvec, dtype, device=device)
@@ -112,6 +73,19 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
     def is_flattenable(self):
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return True
+
+    @property
+    def flat_dim(self) -> int:
+        """Return the shape of the space as an immutable property."""
+        return int(np.prod(self.nvec))
+    
+    def flatten(self, data : MultiDArrayT) -> MultiDArrayT:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.reshape(data, (-1,))
+    
+    def unflatten(self, data : MultiDArrayT) -> MultiDArrayT:
+        """Unflatten the data."""
+        return self.backend.array_api_namespace.reshape(data, self.shape)
 
     def sample(
         self
@@ -204,21 +178,4 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         return new_tensor
 
     def to_gym_space(self) -> gym.Space:
-        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start))
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.MultiDiscrete,
-        backend : Type[ComputeBackend[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
-        dtype : Optional[_MultiDDTypeT] = None,
-        device : Optional[_MultiDDeviceT] = None,
-    ) -> "MultiDiscrete[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]":
-        nvec = backend.from_numpy(gym_space.nvec, dtype=dtype, device=device)
-        start = backend.from_numpy(gym_space.start, dtype=dtype, device=device)
-        return MultiDiscrete(
-            backend=backend,
-            nvec=nvec,
-            start=start,
-            dtype=dtype,
-            device=device
-        )
+        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start), seed=self.np_rng.integers(0))

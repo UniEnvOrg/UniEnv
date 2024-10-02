@@ -1,7 +1,7 @@
 """Implementation of a space that represents the cartesian product of other spaces as a dictionary."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List, Dict as DictType
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -11,11 +11,10 @@ _DictBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _DictBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _DictBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.Dict)
 class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]):
     def __init__(
         self,
-        backend: Type[ComputeBackend[DictType[str, Any], _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]],
+        backend: Type[ComputeBackend[Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]],
         spaces: None | DictType[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]] | Sequence[tuple[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]]] = None,
         device : Optional[_DictBDeviceT] = None,
         seed: dict | int | np.random.Generator | None = None,
@@ -45,7 +44,6 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             spaces = dict(spaces)
         elif spaces is None:
             spaces = dict()
-            assert device is not None, "Device must be specified when spaces is None"
         else:
             raise TypeError(
                 f"Unexpected Dict space input, expecting dict, OrderedDict or Sequence, actual type: {type(spaces)}"
@@ -76,6 +74,29 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
     def is_flattenable(self):
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return all(space.is_flattenable for space in self.spaces.values())
+
+    @property
+    def flat_dim(self) -> Optional[int]:
+        """Return the shape of the space as an immutable property."""
+        if not self.is_flattenable:
+            return None
+        return sum(space.flat_dim for space in self.spaces.values())
+    
+    def flatten(self, data : DictType[str, Any]) -> Any:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.concat([
+            space.flatten(data[key]) for key, space in self.spaces.items()
+        ])
+    
+    def unflatten(self, data : Any) -> DictType[str, Any]:
+        """Unflatten the data."""
+        result = {}
+        start = 0
+        for key, space in self.spaces.items():
+            end = start + space.flat_dim
+            result[key] = space.unflatten(data[start:end])
+            start = end
+        return result
 
     def to_device(self, device : _DictBDeviceT) -> "Dict[_DictBDeviceT, _DictBDTypeT, _DictBDRNGT]":
         return Dict(
@@ -117,9 +138,8 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
         """Set the space that is associated to `key`."""
         assert isinstance(
             value, Space
-        ), f"Trying to set {key} to Dict space with value that is not a gymnasium space, actual type: {type(value)}"
-        assert value.device == self.device, f"Device mismatch: {value.device} != {self.device}"
-        self.spaces[key] = value
+        ), f"Trying to set {key} to Dict space with value that is not a Space, actual type: {type(value)}"
+        self.spaces[key] = value.to_device(self.device) if self.device is not None else value
 
     def __iter__(self):
         """Iterator through the keys of the subspaces."""
@@ -187,17 +207,6 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
 
     def to_gym_space(self) -> gym.Space:
         return gym.spaces.Dict(
-            {key: space.to_gym_space() for key, space in self.spaces.items()}
-        )
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.spaces.Dict,
-        backend : Type[ComputeBackend[Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]],
-        dtype : Optional[_DictBDTypeT] = None,
-        device : Optional[_DictBDeviceT] = None,
-    ) -> "Dict[_DictBDeviceT, _DictBDTypeT, _DictBDRNGT]":
-        return Dict(
-            {key: Space.from_gym_space(space, backend, dtype, device) for key, space in gym_space.spaces.items()},
-            device=device
+            {key: space.to_gym_space() for key, space in self.spaces.items()},
+            seed=self.seed,
         )

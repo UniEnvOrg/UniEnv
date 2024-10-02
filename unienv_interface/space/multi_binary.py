@@ -1,7 +1,7 @@
 """Implementation of a space consisting of finitely many elements."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
-from .space import Space, register_space_to_gym_mapping
+from .space import Space
 from unienv_interface.backends.base import ComputeBackend
 import array_api_compat
 import gymnasium as gym
@@ -11,14 +11,13 @@ _MultiBDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
 _MultiBDTypeT = TypeVar("_MultiBDTypeT", covariant=True)
 _MultiBDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
 
-@register_space_to_gym_mapping(gym.spaces.MultiBinary)
 class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]):
     def __init__(
         self,
         backend : Type[ComputeBackend[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
         shape: Sequence[int],
-        device : Optional[_MultiBDeviceT] = None,
         dtype: Optional[_MultiBDTypeT] = None,
+        device : Optional[_MultiBDeviceT] = None,
         seed: Optional[int] = None,
     ):
         assert dtype is None or backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
@@ -54,6 +53,17 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
     def is_flattenable(self):
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return True
+    
+    @property
+    def flat_dim(self) -> int:
+        """Return the shape of the space as an immutable property."""
+        return int(np.prod(self.shape))
+    
+    def flatten(self, data : MultiBArrayT) -> MultiBArrayT:
+        return self.backend.array_api_namespace.reshape(data, (-1,))
+    
+    def unflatten(self, data : MultiBArrayT) -> MultiBArrayT:
+        return self.backend.array_api_namespace.reshape(data, self.shape)
 
     def sample(self) -> MultiBArrayT:
         return self.backend.random_discrete_uniform(self.rng, self.shape, 0, 2, self.dtype, self.device)
@@ -65,6 +75,14 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
             and self.backend.array_api_namespace.all(self.backend.array_api_namespace.logical_or(x == 0, x == 1))
         )
 
+    def __repr__(self) -> str:
+        """Gives a string representation of this space."""
+        return f"MultiBinary({self.backend}, {self.shape}, {self.dtype}, {self.device})"
+
+    def __eq__(self, other: Any) -> bool:
+        """Check whether `other` is equivalent to this instance."""
+        return isinstance(other, MultiBinary) and self.shape == other.shape
+    
     def to_jsonable(self, sample_n: Sequence[MultiBArrayT]) -> list[Sequence[int]]:
         """Convert a batch of samples from this space to a JSONable data type."""
         return np.array([self.backend.to_numpy(sample) for sample in sample_n]).tolist()
@@ -96,27 +114,4 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
     
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
-        return gym.spaces.MultiBinary(self.shape)
-    
-    @staticmethod
-    def from_gym_space( 
-        gym_space : gym.spaces.MultiBinary,
-        backend : Type[ComputeBackend[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
-        dtype : Optional[_MultiBDTypeT] = None,
-        device : Optional[_MultiBDeviceT] = None,
-    ) -> "MultiBinary[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]":
-        assert isinstance(gym_space, gym.spaces.MultiBinary), f"Expected gym_space to be of type gym.spaces.MultiBinary, got {type(gym_space)}"
-        return MultiBinary(
-            backend=backend,
-            shape=gym_space.shape,
-            dtype=dtype,
-            device=device
-        )
-
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return f"MultiBinary({self.backend}, {self.shape}, {self.dtype}, {self.device})"
-
-    def __eq__(self, other: Any) -> bool:
-        """Check whether `other` is equivalent to this instance."""
-        return isinstance(other, MultiBinary) and self.n == other.n
+        return gym.spaces.MultiBinary(self.shape, seed=self.np_rng.integers(0))

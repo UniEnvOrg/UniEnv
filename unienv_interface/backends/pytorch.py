@@ -7,6 +7,8 @@ import dlpack
 
 class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str], torch.dtype, torch.Generator]):
     array_api_namespace = array_api_compat.torch
+    default_integer_dtype = torch.int
+    default_floating_dtype = torch.float
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
