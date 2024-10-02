@@ -136,20 +136,3 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
         raise NotImplementedError
-    
-    @staticmethod
-    def from_gym_space(
-        gym_space : gym.Space,
-        backend : Type[ComputeBackend[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
-        dtype : Optional[_SpaceBDTypeT] = None,
-        device : Optional[_SpaceBDeviceT] = None,
-    ) -> "Space[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
-        if type(gym_space) not in _gym_to_space_mappings:
-            raise NotImplementedError(f"Conversion from gym space of type {type(gym_space)} is not supported.")
-
-        return _gym_to_space_mappings[type(gym_space)].from_gym_space(
-            gym_space,
-            backend=backend,
-            dtype=dtype,
-            device=device
-        )
