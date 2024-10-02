@@ -15,10 +15,6 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
         return array_api_compat.is_torch_array(data)
     
     @classmethod
-    def is_backenddict(cls, data : Any) -> bool:
-        return isinstance(data, dict)
-
-    @classmethod
     def from_numpy(cls, data : np.ndarray, dtype : Optional[torch.dtype] = None, device : Optional[Union[torch.device, str]] = None) -> torch.Tensor:
         t = torch.from_numpy(data)
         if dtype is not None or device is not None:

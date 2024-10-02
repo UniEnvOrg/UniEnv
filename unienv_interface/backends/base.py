@@ -20,10 +20,10 @@ class ComputeBackend(abc.ABC, Generic[_BArrayType, _BDeviceType, _BDtypeType, _B
     def is_backendarray(cls, data : Any) -> bool:
         raise NotImplementedError
     
-    @classmethod
-    @abc.abstractmethod
-    def is_backenddict(cls, data : Any) -> bool:
-        raise NotImplementedError
+    # @classmethod
+    # @abc.abstractmethod
+    # def is_backenddict(cls, data : Any) -> bool:
+    #     raise NotImplementedError
 
     @classmethod
     @abc.abstractmethod
