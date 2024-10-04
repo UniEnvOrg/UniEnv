@@ -1,8 +1,10 @@
-from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat
+from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Type, Sequence
 import gymnasium as gym
 import numpy as np
 import copy
 from .env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from ..backends import ComputeBackend
+from ..backends.numpy import NumpyComputeBackend
 from ..space import Space
 from ..space import gym_utils
 
@@ -89,3 +91,115 @@ class ToGymnasiumEnv(
     def __str__(self):
         return f'{type(self).__name__}<{self.env}>'
 
+class FromGymnasiumEnv(
+    Env[ObsType, ActType, SupportsFloat, bool, RenderFrame, Any, np.random.Generator],
+    Generic[ObsType, ActType, RenderFrame]
+):
+    def __init__(
+        self,
+        env: gym.Env[Any, Any]
+    ):
+        self.env = env
+        self.backend = NumpyComputeBackend
+        self.device = None
+
+        self._metadata : Optional[Dict[str, Any]] = None
+        self._render_fps : Optional[int] = None
+
+        self.action_space = gym_utils.from_gym_space(env.action_space)
+        self.observation_space = gym_utils.from_gym_space(env.observation_space)
+
+        self._np_rng = env.np_random
+        self._rng = env.np_random
+    
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        if self._metadata is None:
+            return self.env.metadata
+        else:
+            return self._metadata
+
+    @metadata.setter
+    def metadata(self, value: Dict[str, Any]):
+        self._metadata = value
+    
+    @property
+    def render_mode(self) -> Optional[str]:
+        return self.env.render_mode
+    
+    @render_mode.setter
+    def render_mode(self, value: Optional[str]):
+        self.env.render_mode = value
+
+    @property
+    def render_fps(self) -> Optional[int]:
+        if self._render_fps is None:
+            return self.env.metadata.get("render_fps", None)
+        else:
+            return self._render_fps
+
+    @render_fps.setter
+    def render_fps(self, value: Optional[int]):
+        self._render_fps = value
+
+    @property
+    def np_rng(self) -> np.random.Generator:
+        return self._np_rng
+    
+    @property
+    def rng(self) -> np.random.Generator:
+        return self._rng
+
+    def step(
+        self, action: ActType
+    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
+        c_action = gym_utils.to_gym_data(
+            self.env.action_space, action
+        )
+        obs, rew, terminated, truncated, info = self.env.step(c_action)
+        c_obs = gym_utils.from_gym_data(self.env.observation_space, obs)
+        c_rew = rew
+        c_terminated = terminated
+        c_truncated = truncated
+        return c_obs, c_rew, c_terminated, c_truncated, info
+
+    def reset(
+        self,
+        *args,
+        seed: Optional[int] = None,
+        **kwargs,
+    ) -> Tuple[ObsType, Dict[str, Any]]:
+        obs, info = self.env.reset(*args, seed=seed, **kwargs)
+        c_obs = gym_utils.from_gym_data(self.env.observation_space, obs)
+        return c_obs, info
+
+    def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
+        return self.env.render()
+
+    def close(self):
+        self.env.close()
+    
+    def __str__(self):
+        return f'{type(self).__name__}<{self.env}>'
+
+    def has_wrapper_attr(self, name: str) -> bool:
+        return hasattr(self, name) or (
+            hasattr(self.env, name) or
+            (hasattr(self.env, 'has_wrapper_attr' and self.env.has_wrapper_attr(name)))
+        )
+
+    def get_wrapper_attr(self, name: str) -> Any:
+        if hasattr(self, name):
+            return getattr(self, name)
+        elif hasattr(self.env, 'get_wrapper_attr'):
+            return self.env.get_wrapper_attr(name)
+        else:
+            return getattr(self.env, name)
+    
+    def set_wrapper_attr(self, name: str, value: Any):
+        if hasattr(self, name):
+            setattr(self, name, value)
+        elif hasattr(self.env, 'set_wrapper_attr'):
+            self.env.set_wrapper_attr(name, value)
+        else:
+            setattr(self.env, name, value)
