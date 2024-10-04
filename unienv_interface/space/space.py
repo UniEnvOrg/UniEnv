@@ -1,6 +1,6 @@
 from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Type, List
 import numpy as np
-from unienv_interface.backends.base import ComputeBackend
+from unienv_interface.backends import ComputeBackend
 import gymnasium as gym
 import abc
 

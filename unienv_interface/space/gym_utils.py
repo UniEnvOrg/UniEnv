@@ -7,7 +7,7 @@ from typing import Optional, Any, Iterable, Iterator
 import gymnasium as gym
 
 import numpy as np
-from unienv_interface.backends.base import ComputeBackend
+from unienv_interface.backends import ComputeBackend
 from unienv_interface.space import (
     Box,
     Dict,

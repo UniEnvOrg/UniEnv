@@ -3,7 +3,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List
 import numpy as np
 from .space import Space
-from unienv_interface.backends.base import ComputeBackend
+from unienv_interface.backends import ComputeBackend
 import array_api_compat
 import gymnasium as gym
 from .discrete import Discrete
