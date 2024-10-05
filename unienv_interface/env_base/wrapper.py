@@ -41,16 +41,11 @@ class Wrapper(
     ) -> Tuple[WrapperObsType, Dict[str, Any]]:
         return self.env.reset(seed=seed)
 
-    def render(self) -> RenderFrame | list[RenderFrame] | None:
+    def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         return self.env.render()
 
     def close(self):
         return self.env.close()
-
-    @property
-    def np_random_seed(self) -> int | None:
-        """Returns the base environment's :attr:`np_random_seed`."""
-        return self.env.np_random_seed
 
     @property
     def unwrapped(self) -> Env[ObsType, ActType]:
