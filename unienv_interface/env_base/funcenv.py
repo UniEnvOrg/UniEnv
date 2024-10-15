@@ -36,15 +36,13 @@ class FuncEnv(
         "render_modes": []
     }
 
-    is_batched : bool = False
-
     backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
 
     observation_space: Space[Any, Any, BDeviceT, Any, BRngT]
     action_space: Space[Any, Any, BDeviceT, Any, BRngT]
 
     @abc.abstractmethod
-    def initial(self, *, seed : int, device : Optional[BDeviceT] = None) -> Tuple[
+    def initial(self, *, seed : int) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
         ObsType,
@@ -141,7 +139,6 @@ class StatefulSingleFuncEnv(Env[
         device : Optional[BDeviceT] = None,
         seed : int = 0,
     ):
-        assert not self.func_env.is_batched, "StatefulSingleFuncEnv only supports single instance environments."
         self.func_env = func_env
         self.device = device
         
