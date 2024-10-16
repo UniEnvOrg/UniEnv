@@ -1,2 +1,3 @@
 from .camera import MujocoFuncCameraSensor
 from .windowed_view import MujocoFuncWindowedViewSensor
+from .generic_sensor import MujocoFuncGenericSensor
