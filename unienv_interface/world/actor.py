@@ -8,6 +8,12 @@ from .sensor import Sensor, FuncSensor
 from dataclasses import dataclass
 
 ActorActT = TypeVar("ActorActT", covariant=True)
+
+"""
+Actor Interface
+
+Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
+"""
 class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     onboard_observation_space : DictSpace[BDeviceType, BDtypeType, BRNGType]
     action_space : Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]
@@ -38,27 +44,30 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
         return self.observation_space.backend
 
-    def update(self) -> None:
-        self.update_onboard()
-        self.update_sensors()
+    def update(self, last_step_elapsed : float) -> None:
+        self.update_onboard(last_step_elapsed=last_step_elapsed)
+        self.update_sensors(last_step_elapsed=last_step_elapsed)
     
-    def get_data(self) -> Optional[Dict[str, Any]]:
+    @property
+    @abstractmethod
+    def is_actionable(self) -> bool:
+        return False
+
+    def get_data(self) -> Dict[str, Any]:
         onboard_data = self.get_onboard_data()
         sensors_data = self.get_sensors_data()
-        if onboard_data is None or sensors_data is None:
-            return None
         onboard_data.update(sensors_data)
         return onboard_data
 
     @abstractmethod
-    def update_onboard(self) -> None:
+    def update_onboard(self, last_step_elapsed : float) -> None:
         """
         Update the onboard observations with a new state (e.g. from the environment).
         """
         raise NotImplementedError
 
     @abstractmethod
-    def get_onboard_data(self) -> Optional[Dict[str, Any]]:
+    def get_onboard_data(self) -> Dict[str, Any]:
         """Get the data from the sensor."""
         raise NotImplementedError
     
@@ -66,18 +75,14 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     def sensors(self) -> Dict[str, Sensor]:
         return self._sensors
 
-    def update_sensors(self) -> None:
+    def update_sensors(self, last_step_elapsed : float) -> None:
         for sensor in self._sensors.values():
-            sensor.update()
+            sensor.update(last_step_elapsed=last_step_elapsed)
     
-    def get_sensors_data(self) -> Optional[Dict[str, Any]]:
+    def get_sensors_data(self) -> Dict[str, Any]:
         ret = {}
         for key, sensor in self._sensors.items():
-            dat = sensor.get_data()
-            if dat is not None:
-                ret[key] = dat
-            else:
-                return None
+            ret[key] = sensor.get_data()
         return ret
 
     @abstractmethod
@@ -87,6 +92,9 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
         This method should be called before the environment steps, and should be non-blocking.
         """
         raise NotImplementedError
+    
+    def pre_environment_step(self, last_step_elapsed : float) -> None:
+        pass
 
     def reset(self) -> None:
         for sensor in self._sensors.values():
@@ -100,14 +108,23 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     def __del__(self) -> None:
         self.close()
 
-
 ActorStateT = TypeVar("ActorStateT")
 
-@dataclass
-class FuncActorCombinedState(Generic[ActorStateT]):
+@dataclass(frozen=True)
+class FuncActorSingleState(Generic[ActorStateT]):
     actor_state : ActorStateT
+    remaining_time_until_action : float
+
+@dataclass(frozen=True)
+class FuncActorCombinedState(Generic[ActorStateT]):
+    actor_single_state : FuncActorSingleState[ActorStateT]
     sensor_states : Dict[str, Any]
 
+"""
+FuncActor Interface
+
+Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
+"""
 class FuncActor(
     ABC,
     Generic[StateType, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType]
@@ -153,7 +170,7 @@ class FuncActor(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        ActorStateT,
+        FuncActorSingleState[ActorStateT],
         Dict[str, Any] # Onboard Observation
     ]:
         raise NotImplementedError
@@ -163,11 +180,11 @@ class FuncActor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state : ActorStateT
+        actor_single_state : FuncActorSingleState[ActorStateT]
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        ActorStateT,
+        FuncActorSingleState[ActorStateT],
         Dict[str, Any] # Onboard Observation
     ]:
         raise NotImplementedError
@@ -177,13 +194,46 @@ class FuncActor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state : ActorStateT,
+        actor_single_state : FuncActorSingleState[ActorStateT],
+        last_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        FuncActorSingleState[ActorStateT]
+    ]:
+        raise NotImplementedError
+    
+    def is_actionable(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_single_state : FuncActorSingleState[ActorStateT]
+    ) -> bool:
+        return actor_single_state.remaining_time_until_action <= 0
+
+    @abstractmethod
+    def get_data_onboard(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_single_state : FuncActorSingleState[ActorStateT]
+    ) -> Dict[str, Any]:
+        """
+        Reads the data when the actor is actionable.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_next_action(
+        self, 
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_single_state : FuncActorSingleState[ActorStateT],
         action : ActorActT
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        ActorStateT,
-        Dict[str, Any], # Onboard Observation
+        FuncActorSingleState[ActorStateT]
     ]:
         raise NotImplementedError
     
@@ -192,7 +242,7 @@ class FuncActor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state : ActorStateT
+        actor_single_state : FuncActorSingleState[ActorStateT]
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType]
@@ -210,10 +260,9 @@ class FuncActor(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncActorCombinedState[ActorStateT],
-        Dict[str, Any] # All observations
+        FuncActorCombinedState[ActorStateT]
     ]:
-        state, common_state, actor_state, onboard_obs = self.onboard_initial(
+        state, common_state, actor_single_state = self.onboard_initial(
             state=state,
             common_state=common_state,
             *onboard_args,
@@ -222,28 +271,23 @@ class FuncActor(
         )
         
         sensor_states = {}
-        sensor_obss = {}
         for key, sensor in self._sensors.items():
             current_sensor_kwargs = sensor_kwargs[key] if sensor_kwargs is not None and key in sensor_kwargs.keys() else {}
-            state, common_state, sensor_state, sensor_obs = sensor.initial(
+            state, common_state, sensor_single_state = sensor.initial(
                 state=state,
                 common_state=common_state,
                 seed=seed,
                 **current_sensor_kwargs
             )
-            sensor_states[key] = sensor_state
-            sensor_obss[key] = sensor_obs
+            sensor_states[key] = sensor_single_state
         
-        combined_obs = onboard_obs.copy()
-        combined_obs.update(sensor_obss)
         return (
             state,
             common_state,
             FuncActorCombinedState(
-                actor_state=actor_state, 
+                actor_single_state=actor_single_state,
                 sensor_states=sensor_states
-            ),
-            combined_obs
+            )
         )
     
     def reset(
@@ -254,36 +298,30 @@ class FuncActor(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncActorCombinedState[ActorStateT],
-        Dict[str, Any] # All observations
+        FuncActorCombinedState[ActorStateT]
     ]:
-        state, common_state, actor_state, onboard_obs = self.onboard_reset(
+        state, common_state, actor_single_state = self.onboard_reset(
             state=state,
             common_state=common_state,
-            actor_state=combined_state.actor_state
+            actor_single_state=combined_state.actor_single_state
         )
         
-        sensor_obss = {}
         sensor_states = {}
         for key, sensor in self._sensors.items():
-            state, common_state, sensor_state, sensor_obs = sensor.reset(
+            state, common_state, sensor_single_state = sensor.reset(
                 state=state,
                 common_state=common_state,
-                sensor_state=combined_state.sensor_states[key]
+                sensor_single_state=combined_state.sensor_states[key]
             )
-            sensor_obss[key] = sensor_obs
-            sensor_states[key] = sensor_state
+            sensor_states[key] = sensor_single_state
         
-        combined_obs = onboard_obs.copy()
-        combined_obs.update(sensor_obss)
         return (
             state,
             common_state,
             FuncActorCombinedState(
-                actor_state=actor_state, 
+                actor_single_state=actor_single_state, 
                 sensor_states=sensor_states
-            ),
-            combined_obs
+            )
         )
 
     def step(
@@ -291,42 +329,69 @@ class FuncActor(
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         combined_state : FuncActorCombinedState[ActorStateT],
-        action : ActorActT
+        last_step_elapsed : float
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncActorCombinedState[ActorStateT],
-        Dict[str, Any] # All observations
+        FuncActorCombinedState[ActorStateT]
     ]:
-        state, common_state, actor_state, onboard_obs = self.onboard_step(
+        state, common_state, actor_single_state = self.onboard_step(
             state=state,
             common_state=common_state,
-            actor_state=combined_state.actor_state,
-            action=action
+            actor_single_state=combined_state.actor_single_state,
+            last_step_elapsed=last_step_elapsed
         )
         
-        sensor_obss = {}
         sensor_states = {}
         for key, sensor in self._sensors.items():
-            state, common_state, sensor_state, sensor_obs = sensor.step(
+            state, common_state, sensor_single_state = sensor.step(
                 state=state,
                 common_state=common_state,
-                sensor_state=combined_state.sensor_states[key]
+                sensor_single_state=combined_state.sensor_states[key],
+                last_step_elapsed=last_step_elapsed
             )
-            sensor_obss[key] = sensor_obs
-            sensor_states[key] = sensor_state
+            sensor_states[key] = sensor_single_state
         
-        combined_obs = onboard_obs.copy()
-        combined_obs.update(sensor_obss)
         return (
             state,
             common_state,
             FuncActorCombinedState(
-                actor_state=actor_state, 
+                actor_single_state=actor_single_state, 
                 sensor_states=sensor_states
-            ),
-            combined_obs
+            )
         )
+    
+    def get_data(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        combined_state : FuncActorCombinedState[ActorStateT]
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        FuncActorCombinedState[ActorStateT],
+        Dict[str, Any]
+    ]:
+        onboard_data = self.get_data_onboard(
+            state=state,
+            common_state=common_state,
+            actor_single_state=combined_state.actor_single_state
+        )
+        
+        sensors_state = {}
+        sensors_data = {}
+        for key, sensor in self._sensors.items():
+            state, common_state, sensors_state[key], sensors_data[key] = sensor.get_data(
+                state=state,
+                common_state=common_state,
+                sensor_state=combined_state.sensor_states[key]
+            )
+        
+        onboard_data.update(sensors_data)
+        return state, common_state, FuncActorCombinedState(
+            actor_single_state=combined_state.actor_single_state,
+            sensor_states=sensors_state
+        ), onboard_data
     
     def close(
         self,
@@ -340,7 +405,7 @@ class FuncActor(
         state, common_state = self.onboard_close(
             state=state,
             common_state=common_state,
-            actor_state=combined_state.actor_state
+            actor_single_state=combined_state.actor_single_state
         )
         
         for key, sensor in self._sensors.items():

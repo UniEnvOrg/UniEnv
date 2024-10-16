@@ -6,6 +6,8 @@ from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 from abc import ABC, abstractmethod
 
 class World(ABC):
+    """The physical timestep in seconds, if None, the world is asynchronous (real-time)"""
+    world_subtimestep : Optional[float]
 
     """The world timestep in seconds, if None, the world is asynchronous (real-time)"""
     world_timestep : Optional[float]
@@ -28,6 +30,7 @@ class FuncWorld(
     ABC,
     Generic[StateType, BDeviceType, BRNGType]
 ):
+    world_subtimestep : Optional[float]
     world_timestep : Optional[float]
     is_real : bool
 
