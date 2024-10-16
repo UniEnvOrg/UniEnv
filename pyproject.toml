@@ -1,5 +1,5 @@
 [project]
-name = "unienv_interface"
+name = "unienv"
 version = "0.0.1a"
 requires-python = ">= 3.10"
 dependencies = [
