@@ -81,7 +81,7 @@ class WorldBasedFuncEnv(
         ]] = None, # Either a sensor or the name of the attached sensor
         info_callback : Optional[WorldBasedFuncEnvInfoCallback] = None
     ):
-        if render_sensor in self.actor._sensors.values():
+        if render_sensor in self.actor.sensors.values():
             raise ValueError("The render sensor should not be attached to the actor. If you want to use the actor's sensors, use the actor's sensor names.")
         assert actor.backend == world.backend, "The actor and the world should have the same backend."
 
@@ -131,7 +131,7 @@ class WorldBasedFuncEnv(
         if self.render_sensor is None:
             return None
         elif isinstance(self.render_sensor, str):
-            return self.actor._sensors[self.render_sensor]
+            return self.actor.sensors[self.render_sensor]
         else:
             return self.render_sensor
     
