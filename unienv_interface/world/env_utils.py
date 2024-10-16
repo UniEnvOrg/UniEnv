@@ -1,0 +1,486 @@
+from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable
+from dataclasses import dataclass, replace as dataclass_replace
+from unienv_interface.backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space, Dict as DictSpace
+from unienv_interface.env_base.env import Env, RewardType, TerminationType
+from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderState, FuncEnvCommonState
+from .world import World, FuncWorld
+from .sensor import Sensor, FuncSensor, FuncSensorSingleState
+from .actor import Actor, FuncActor, ActorActT, ActorStateT, FuncActorCombinedState
+from .sensors import CameraSensor, FuncCameraSensor, WindowedViewSensor, FuncWindowedViewSensor
+from .task import Task, FuncTask, TaskStateT
+import copy
+
+WorldStateT = TypeVar("WorldStateT")
+RenderSensorStateT = TypeVar("RenderSensorStateT")
+RenderSensorDataT = TypeVar("RenderSensorDataT")
+
+
+@dataclass(frozen=True)
+class WorldBasedFuncEnvState(
+    Generic[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT]
+):
+    world_state : WorldStateT
+    actor_state : FuncActorCombinedState[ActorStateT]
+    task_state : Optional[TaskStateT] = None
+    render_sensor_state : Optional[FuncSensorSingleState[RenderSensorStateT]]
+    render_sensor_data : Optional[RenderSensorDataT] = None
+
+@dataclass(frozen=True)
+class WorldBasedFuncEnvRenderState(
+    Generic[RenderSensorDataT]
+):
+    render_sensor_data : Optional[RenderSensorDataT]
+
+WorldBasedFuncEnvInfoCallback = Callable[[
+    FuncWorld[WorldStateT, BDeviceType, BRNGType],
+    FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
+    WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+    FuncEnvCommonState[BDeviceType, BRNGType],
+    Dict[str, Any], # Observation
+    Optional[ActorActT], # Optional Action (When stepping)
+], Union[
+    Dict[str, Any],
+    Sequence[Dict[str, Any]]
+]]
+
+class WorldBasedFuncEnv(
+    FuncEnv[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
+        WorldBasedFuncEnvRenderState[RenderSensorDataT], 
+        DictSpace[BDeviceType, BDtypeType, BRNGType], 
+        ActorActT,
+        RewardType,
+        TerminationType,
+        RenderSensorDataT,
+        BDeviceType,
+        BRNGType
+    ],
+    Generic[
+        WorldStateT,
+        ActorStateT,
+        TaskStateT,
+        RenderSensorStateT,
+        RenderSensorDataT,
+        ActorActT,
+        RewardType,
+        TerminationType,
+        BDeviceType,
+        BDtypeType,
+        BRNGType
+    ]
+):
+    def __init__(
+        self,
+        world : FuncWorld[WorldStateT, BDeviceType, BRNGType],
+        actor : FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
+        task : FuncTask[WorldStateT, TaskStateT, RewardType, TerminationType],
+        render_sensor : Optional[Union[
+            FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType],
+            str
+        ]] = None, # Either a sensor or the name of the attached sensor
+        info_callback : Optional[WorldBasedFuncEnvInfoCallback] = None
+    ):
+        if render_sensor in self.actor._sensors.values():
+            raise ValueError("The render sensor should not be attached to the actor. If you want to use the actor's sensors, use the actor's sensor names.")
+        assert actor.backend == world.backend, "The actor and the world should have the same backend."
+
+        self.world = world
+        self.actor = actor
+        self.task = task
+        self.render_sensor = render_sensor
+        self.info_callback = info_callback
+
+        assert world.world_timestep is None or actor.control_timestep % world.world_timestep == 0, "The actor's control timestep should be dividable by the world's timestep."
+        self._n_world_step = int(actor.control_timestep / world.world_timestep) if world.world_timestep is not None else None
+        self._need_update_render_sensor = render_sensor is not None and not isinstance(render_sensor, str)
+        real_render_sensor = self.get_render_sensor_instance()
+        if real_render_sensor is None:
+            self.render_mode = None
+        elif isinstance(real_render_sensor, CameraSensor):
+            self.render_mode = real_render_sensor.camera_mode
+        else:
+            self.render_mode = "human"
+        
+        self.metadata = {
+            "render_modes": [] if self.render_mode is None else [self.render_mode]
+        }
+
+    @property
+    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
+        return self.world.backend
+    
+    @property
+    def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
+        if self.task.observation_space is None:
+            return self.actor.observation_space
+
+        actor_dict = self.actor.observation_space.spaces
+        task_dict = self.task.observation_space.spaces
+        return DictSpace(
+            backend=self.backend,
+            spaces={**actor_dict, **task_dict},
+            device=self.actor.device,
+        )
+    
+    @property
+    def action_space(self) -> Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]:
+        return self.actor.action_space
+
+    def get_render_sensor_instance(self) -> Optional[FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType]]:
+        if self.render_sensor is None:
+            return None
+        elif isinstance(self.render_sensor, str):
+            return self.actor._sensors[self.render_sensor]
+        else:
+            return self.render_sensor
+    
+    def initial(
+        self,
+        seed : int,
+        world_kwargs : Dict[str, Any] = {},
+        actor_kwargs : Dict[str, Any] = {},
+        task_kwargs : Dict[str, Any] = {},
+        render_sensor_kwargs : Dict[str, Any] = {},
+    ) -> Tuple[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        Dict[str, Any],
+        Dict[str, Any] | Sequence[Dict[str, Any]]
+    ]:
+        world_state, common_state = self.world.initial(
+            seed=seed, **world_kwargs
+        )
+        world_state, common_state, actor_combined_state = self.actor.initial(
+            world_state, common_state, seed=seed, **actor_kwargs
+        )
+        world_state, common_state, task_state, task_obs = self.task.initial(
+            world_state, common_state, seed=seed, **task_kwargs
+        )
+        if self._need_update_render_sensor:
+            world_state, common_state, render_sensor_state = self.get_render_sensor_instance().initial(
+                world_state, common_state, seed=seed, **render_sensor_kwargs
+            )
+        else:
+            render_sensor_state = None
+        assert self.actor.is_readable(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        if isinstance(self.render_sensor, str):
+            render_sensor_data = obs[self.render_sensor]
+        else:
+            render_sensor_data = None
+
+        if self.task.observation_space is not None:
+            task_obs = self.task.get_data(
+                world_state, common_state, task_state
+            )
+            obs.update(task_obs)
+        
+        env_state = WorldBasedFuncEnvState(
+            world_state=world_state,
+            actor_state=actor_combined_state,
+            task_state=task_state,
+            render_sensor_state=render_sensor_state,
+            render_sensor_data=render_sensor_data
+        )
+        if self.info_callback is not None:
+            info = self.info_callback(
+                self.world,
+                self.actor,
+                env_state,
+                common_state,
+                obs,
+                None # No action
+            )
+        else:
+            info = {}
+        return env_state, common_state, obs, info
+
+    def reset(
+        self,
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+    ) -> Tuple[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        Dict[str, Any],
+        Dict[str, Any] | Sequence[Dict[str, Any]]
+    ]:
+        world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
+        world_state, common_state = self.world.reset(
+            world_state, common_state
+        )
+        world_state, common_state, actor_combined_state = self.actor.reset(
+            world_state, common_state, actor_combined_state
+        )
+        world_state, common_state, task_state = self.task.reset(
+            world_state, common_state, task_state
+        )
+        if self._need_update_render_sensor:
+            world_state, common_state, render_sensor_state = self.get_render_sensor_instance().reset(
+                world_state, common_state, render_sensor_state
+            )
+        else:
+            render_sensor_state = None
+        assert self.actor.is_readable(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+
+        if isinstance(self.render_sensor, str):
+            render_sensor_data = obs[self.render_sensor]
+        else:
+            render_sensor_data = None
+        
+        if self.task.observation_space is not None:
+            task_obs = self.task.get_data(
+                world_state, common_state, task_state
+            )
+            obs.update(task_obs)
+
+        env_state = WorldBasedFuncEnvState(
+            world_state=world_state,
+            actor_state=actor_combined_state,
+            task_state=task_state,
+            render_sensor_state=render_sensor_state,
+            render_sensor_data=render_sensor_data
+        )
+        if self.info_callback is not None:
+            info = self.info_callback(
+                self.world,
+                self.actor,
+                env_state,
+                common_state,
+                obs,
+                None # No action
+            )
+        else:
+            info = {}
+        return env_state, common_state, obs, info
+
+    def step(
+        self,
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        action : ActorActT
+    ) -> Tuple[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        Dict[str, Any],
+        RewardType,
+        TerminationType,
+        TerminationType,
+        Dict[str, Any] | Sequence[Dict[str, Any]]
+    ]:
+        world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
+        if self._n_world_step is None:
+            total_elapsed = 0.0
+            while total_elapsed < self.actor.control_timestep:
+                elapsed_seconds, world_state, common_state = self.world.step(
+                    world_state, common_state
+                )
+                total_elapsed += elapsed_seconds
+                world_state, common_state, actor_combined_state = self.actor.step(
+                    world_state, common_state, actor_combined_state, elapsed_seconds
+                )
+                world_state, common_state, task_state = self.task.step(
+                    world_state, common_state, task_state, elapsed_seconds
+                )
+                if self._need_update_render_sensor:
+                    world_state, common_state, render_sensor_state = self.get_render_sensor_instance().step(
+                        world_state, common_state, render_sensor_state, elapsed_seconds
+                    )
+        else:
+            total_elapsed = self.actor.control_timestep
+            for i in range(self._n_world_step):
+                elapsed_seconds, world_state, common_state = self.world.step(
+                    world_state, common_state
+                )
+                world_state, common_state, actor_combined_state = self.actor.step(
+                    world_state, common_state, actor_combined_state, elapsed_seconds
+                )
+                world_state, common_state, task_state = self.task.step(
+                    world_state, common_state, task_state, elapsed_seconds
+                )
+                if self._need_update_render_sensor:
+                    world_state, common_state, render_sensor_state = self.get_render_sensor_instance().step(
+                        world_state, common_state, render_sensor_state, elapsed_seconds
+                    )
+        assert self.actor.is_actionable(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        world_state, common_state, actor_single_state = self.actor.set_next_action(
+            world_state,
+            common_state,
+            actor_combined_state.actor_single_state,
+            action
+        )
+        actor_combined_state = dataclass_replace(
+            actor_combined_state,
+            actor_single_state=actor_single_state
+        )
+        assert self.actor.is_readable(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+            world_state,
+            common_state,
+            actor_combined_state
+        )
+        if isinstance(self.render_sensor, str):
+            render_sensor_data = obs[self.render_sensor]
+        else:
+            render_sensor_data = None
+
+        world_state, common_state, task_state, reward, task_termination, task_truncation = self.task.control_step(
+            world_state, common_state, task_state, total_elapsed
+        )
+        if self.task.observation_space is not None:
+            task_obs = self.task.get_data(
+                world_state, common_state, task_state
+            )
+            obs.update(task_obs)
+        
+        env_state = WorldBasedFuncEnvState(
+            world_state=world_state,
+            actor_state=actor_combined_state,
+            render_sensor_state=render_sensor_state,
+            render_sensor_data=render_sensor_data
+        )
+        if self.info_callback is not None:
+            info = self.info_callback(
+                self.world,
+                self.actor,
+                env_state,
+                common_state,
+                obs,
+                action
+            )
+        else:
+            info = {}
+        
+        return env_state, common_state, obs, reward, task_termination, task_truncation, info
+
+    def close(
+        self,
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+    ) -> None:
+        world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
+        world_state, common_state = self.task.close(
+            world_state, common_state, task_state
+        )
+        if self._need_update_render_sensor:
+            world_state, common_state = self.get_render_sensor_instance().close(
+                world_state, common_state, render_sensor_state
+            )
+        world_state, common_state = self.actor.close(
+            world_state, common_state, actor_combined_state
+        )
+        self.world.close(
+            world_state, common_state
+        )
+    
+    def render_init(
+        self, 
+        state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
+        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        *, 
+        render_mode: str | None = None
+    ) -> Tuple[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        WorldBasedFuncEnvRenderState[RenderSensorDataT],
+        FuncEnvCommonRenderState
+    ]:
+        assert render_mode == self.render_mode or render_mode is None, "The render mode should be the same as the render sensor's mode."
+        assert self.render_sensor is not None, "The render sensor is not available."
+
+        if self._need_update_render_sensor:
+            world_state, render_sensor_state = state.world_state, state.render_sensor_state
+            real_render_sensor = self.get_render_sensor_instance()
+            world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
+                world_state, common_state, render_sensor_state
+            )
+            return dataclass_replace(
+                state,
+                world_state=world_state,
+                render_sensor_state=render_sensor_state,
+                render_sensor_data=None
+            ), common_state, WorldBasedFuncEnvRenderState(
+                render_sensor_data=render_sensor_data
+            ), FuncEnvCommonRenderState(
+                render_mode=render_mode,
+                render_fps=int(round(1/self.actor.control_timestep))
+            )
+        else:
+            return state, common_state, WorldBasedFuncEnvRenderState(
+                render_sensor_data=None
+            ), FuncEnvCommonRenderState(
+                render_mode=render_mode,
+                render_fps=int(round(1/self.actor.control_timestep))
+            )
+    
+    def render_image(
+        self, 
+        state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
+        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        render_state: WorldBasedFuncEnvRenderState[RenderSensorDataT], 
+        render_common_state: FuncEnvCommonRenderState
+    ) -> Tuple[
+        RenderSensorDataT | Sequence[RenderSensorDataT] | None,
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
+        FuncEnvCommonState[BDeviceType, BRNGType], 
+        WorldBasedFuncEnvRenderState[RenderSensorDataT],
+        FuncEnvCommonRenderState
+    ]:
+        if self._need_update_render_sensor:
+            world_state, render_sensor_state = state.world_state, state.render_sensor_state
+            real_render_sensor = self.get_render_sensor_instance()
+            if not real_render_sensor.is_readable(world_state, common_state, render_sensor_state):
+                return render_state.render_sensor_data, state, common_state, render_state, render_common_state
+
+            world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
+                world_state, common_state, render_sensor_state
+            )
+            return render_sensor_data, dataclass_replace(
+                state,
+                world_state=world_state,
+                render_sensor_state=render_sensor_state,
+                render_sensor_data=None
+            ), common_state, dataclass_replace(
+                render_state,
+                render_sensor_data=render_sensor_data
+            ), render_common_state
+        else:
+            return state.render_sensor_data, state, common_state, render_state, render_common_state
+
+    def render_close(
+        self, 
+        state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
+        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        render_state: WorldBasedFuncEnvRenderState[RenderSensorDataT], 
+        render_common_state: FuncEnvCommonRenderState
+    ) -> Tuple[
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
+        FuncEnvCommonState[BDeviceType, BRNGType]
+    ]:
+        return state, common_state

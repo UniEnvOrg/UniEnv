@@ -114,6 +114,7 @@ ActorStateT = TypeVar("ActorStateT")
 class FuncActorSingleState(Generic[ActorStateT]):
     actor_state : ActorStateT
     remaining_time_until_action : float
+    remaining_time_until_read : float
 
 @dataclass(frozen=True)
 class FuncActorCombinedState(Generic[ActorStateT]):
@@ -207,9 +208,18 @@ class FuncActor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_single_state : FuncActorSingleState[ActorStateT]
+        actor_combined_state : FuncActorCombinedState[ActorStateT]
     ) -> bool:
-        return actor_single_state.remaining_time_until_action <= 0
+        return actor_combined_state.actor_single_state.remaining_time_until_action <= 0
+
+    def is_readable(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_combined_state : FuncActorCombinedState[ActorStateT]
+    ) -> bool:
+        """Check if the sensor is readable (control_timestep is reached)."""
+        return actor_combined_state.actor_single_state.remaining_time_until_read <= 0
 
     @abstractmethod
     def get_data_onboard(
@@ -217,7 +227,12 @@ class FuncActor(
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_single_state : FuncActorSingleState[ActorStateT]
-    ) -> Dict[str, Any]:
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        FuncActorSingleState[ActorStateT],
+        Dict[str, Any]
+    ]:
         """
         Reads the data when the actor is actionable.
         """
@@ -372,7 +387,7 @@ class FuncActor(
         FuncActorCombinedState[ActorStateT],
         Dict[str, Any]
     ]:
-        onboard_data = self.get_data_onboard(
+        state, common_state, actor_single_state, onboard_data = self.get_data_onboard(
             state=state,
             common_state=common_state,
             actor_single_state=combined_state.actor_single_state
@@ -389,7 +404,7 @@ class FuncActor(
         
         onboard_data.update(sensors_data)
         return state, common_state, FuncActorCombinedState(
-            actor_single_state=combined_state.actor_single_state,
+            actor_single_state=actor_single_state,
             sensor_states=sensors_state
         ), onboard_data
     

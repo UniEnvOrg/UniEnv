@@ -1,17 +1,29 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
-from ..space import Space
+from ..space import Space, Dict as DictSpace
 from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from ..env_base.env import RewardType, TerminationType
 from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 
 
 class Task(ABC, Generic[RewardType, TerminationType]):
+    observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
+
     @abstractmethod
-    def update(self) -> None:
+    def update(self, last_step_elapsed : float) -> None:
         """Update the task with a new state (e.g. from the environment)."""
         raise NotImplementedError
     
+    @abstractmethod
+    def control_update(self, last_control_step_elapsed : float) -> None:
+        """Update the task with a new state (e.g. from the environment)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_data(self) -> Optional[Dict[str, Any]]:
+        """Get the optional Obs from the task. This is called after control_update or reset / init."""
+        raise NotImplementedError
+
     @abstractmethod
     def get_reward(self) -> RewardType:
         """Calculate the reward of the task."""
@@ -42,6 +54,7 @@ class FuncTask(
     ABC,
     Generic[StateType, TaskStateT, RewardType, TerminationType]
 ):
+    observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
     @abstractmethod
     def initial(
         self, 
@@ -77,6 +90,22 @@ class FuncTask(
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         task_state : TaskStateT,
+        last_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        TaskStateT
+    ]:
+        """Transition."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    def control_step(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        task_state : TaskStateT,
+        last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
@@ -87,7 +116,17 @@ class FuncTask(
     ]:
         """Transition."""
         raise NotImplementedError
-    
+
+    @abstractmethod
+    def get_data(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        task_state : TaskStateT
+    ) -> Optional[Dict[str, Any]]:
+        """Get the data."""
+        raise NotImplementedError
+
     @abstractmethod
     def close(
         self,

@@ -13,8 +13,13 @@ class CameraSensor(
 ):
     observation_space : Box[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     
+    """Mode of the camera (rgb_array, depth_array, segmentation_array) """
+    camera_mode : str
+
     width : int
+    
     height : int
+
     channels : int
 
     def to_image(self, data : BArrayType) -> PIL.Image:
@@ -26,8 +31,13 @@ class FuncCameraSensor(
 ):
     observation_space : Box[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     
+    """Mode of the camera (rgb_array, depth_array, segmentation_array) """
+    camera_mode : str
+
     width : int
+    
     height : int
+    
     channels : int
 
     def to_image(self, data : BArrayType) -> PIL.Image:

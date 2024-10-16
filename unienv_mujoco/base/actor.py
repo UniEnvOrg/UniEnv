@@ -6,7 +6,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box
 import mujoco
 from dm_control import mjcf
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 import numpy as np
 from .. import mjcf_util
 from .world import MujocoFuncWorldState, MujocoFuncWorld
@@ -61,7 +61,8 @@ class MujocoDefaultFuncActor(
     ]:
         return state, common_state, FuncActorSingleState(
             actor_state=None,
-            remaining_time_until_action=0
+            remaining_time_until_action=self.control_timestep,
+            remaining_time_until_read=0
         )
     
     def onboard_reset(
@@ -76,7 +77,8 @@ class MujocoDefaultFuncActor(
     ]:
         return state, common_state, FuncActorSingleState(
             actor_state=None,
-            remaining_time_until_action=0
+            remaining_time_until_action=self.control_timestep,
+            remaining_time_until_read=0
         )
 
     def onboard_step(
@@ -98,9 +100,17 @@ class MujocoDefaultFuncActor(
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_state: FuncActorSingleState[None]
-    ) -> Dict[str, Any]:
-        return {}
+        actor_single_state: FuncActorSingleState[None]
+    ) -> Tuple[
+        MujocoFuncWorldState,
+        FuncEnvCommonState[Any, np.random.Generator],
+        FuncActorSingleState[None],
+        Dict[str, Any]
+    ]:
+        return state, common_state, dataclass_replace(
+            actor_single_state,
+            remaining_time_until_read=self.control_timestep,
+        ) , {}
 
     def set_next_action(
         self, 
@@ -120,7 +130,8 @@ class MujocoDefaultFuncActor(
             mj_model=state.mj_model,
             data=mjdata
         )
-        return new_state, common_state, FuncActorSingleState(
+        return new_state, common_state, dataclass_replace(
+            actor_single_state,
             remaining_time_until_action=self.control_timestep
         )
 

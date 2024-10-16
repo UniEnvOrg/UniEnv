@@ -51,13 +51,10 @@ class FuncEnv(
         """Initial state."""
         raise NotImplementedError
     
-    @abc.abstractmethod
     def reset(
         self, 
         state : StateType, 
-        common_state : FuncEnvCommonState[BDeviceT, BRngT],
-        *args,
-        **kwargs
+        common_state : FuncEnvCommonState[BDeviceT, BRngT]
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
@@ -65,7 +62,9 @@ class FuncEnv(
         Dict[str, Any] | Sequence[Dict[str, Any]]
     ]:
         """Reset the environment."""
-        raise NotImplementedError
+        return self.initial(
+            seed=common_state.np_rng.integers(0)
+        )
 
     @abc.abstractmethod
     def step(self, state: StateType, common_state : FuncEnvCommonState[BDeviceT, BRngT], action : ActType) -> Tuple[
@@ -84,6 +83,7 @@ class FuncEnv(
         """Close the environment."""
         return
 
+    @abc.abstractmethod
     def render_image(
         self, 
         state : StateType,
@@ -92,6 +92,7 @@ class FuncEnv(
         render_common_state : FuncEnvCommonRenderState
     ) -> Tuple[
         RenderFrame | Sequence[RenderFrame] | None, 
+        StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
         RenderStateType,
         FuncEnvCommonRenderState
@@ -99,6 +100,7 @@ class FuncEnv(
         """Show the state."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def render_init(
         self, 
         state : StateType, 
@@ -106,6 +108,7 @@ class FuncEnv(
         *,
         render_mode : Optional[str] = None, 
     ) -> Tuple[
+        StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
         RenderStateType,
         FuncEnvCommonRenderState
@@ -113,13 +116,17 @@ class FuncEnv(
         """Initialize the render state."""
         raise NotImplementedError
 
+    @abc.abstractmethod
     def render_close(
         self, 
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceT, BRngT],
         render_state : RenderStateType,
         render_common_state : FuncEnvCommonRenderState
-    ) -> None:
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceT, BRngT]
+    ]:
         """Close the render state."""
         raise NotImplementedError
 
@@ -164,6 +171,7 @@ class StatefulSingleFuncEnv(Env[
             return
         
         (
+            self.state,
             self.common_state,
             self.render_state,
             self.render_common_state
@@ -216,14 +224,11 @@ class StatefulSingleFuncEnv(Env[
     
     def reset(
         self,
-        *args,
         seed : Optional[int] = None,
-        **kwargs,
     ) -> Tuple[ObsType, Dict[str, Any]]:
         if (
             self._first_instance_obs_info is not None and
-            seed is None and
-            len(args) == 0 and len(kwargs) == 0
+            seed is None
         ):
             obs, info = self._first_instance_obs_info
             self._first_instance_obs_info = None
@@ -245,13 +250,14 @@ class StatefulSingleFuncEnv(Env[
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         self._init_render()
-        return self.func_env.render_image(
+        image, self.state, self.common_state, self.render_state, self.render_common_state = self.func_env.render_image(
             self.state, self.common_state, self.render_state, self.render_common_state
         )
+        return image
     
     def close(self) -> None:
         if self.render_state is not None:
-            self.func_env.render_close(
+            self.state, self.common_state = self.func_env.render_close(
                 self.state, self.common_state, self.render_state, self.render_common_state
             )
         self.func_env.close(self.state, self.common_state)

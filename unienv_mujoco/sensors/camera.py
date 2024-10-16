@@ -1,7 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, Literal
 from abc import ABC, abstractmethod
 
-import PIL.Image
 from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.camera import FuncCameraSensor
 from unienv_interface.world.sensor import FuncSensorSingleState
@@ -12,6 +11,7 @@ from dm_control import mjcf
 from dataclasses import dataclass
 import numpy as np
 import PIL
+import PIL.Image
 from .. import mjcf_util
 from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
 
@@ -33,7 +33,7 @@ class MujocoFuncCameraSensor(
         camera : Union[int, str],
         width : int,
         height : int,
-        render_mode : Literal['rgb_array', 'depth_array', 'segmentation_array'],
+        camera_mode : Literal['rgb_array', 'depth_array', 'segmentation_array'],
         control_timestep : float,
         seed : Optional[int] = None,
     ):
@@ -41,13 +41,13 @@ class MujocoFuncCameraSensor(
         self.control_timestep = control_timestep
         
         assert width > 0 and height > 0
-        self._render_mode = render_mode
-        channels = 3 if render_mode == 'rgb_array' else 1
-        if render_mode == 'depth_array':
+        self._camera_mode = camera_mode
+        channels = 3 if camera_mode == 'rgb_array' else 1
+        if camera_mode == 'depth_array':
             observation_dtype = np.float32
             observation_min = 0.0
             observation_max = np.inf
-        elif render_mode == 'segmentation_array':
+        elif camera_mode == 'segmentation_array':
             observation_dtype = int
             observation_min = -1
             observation_max = np.iinfo(int).max
@@ -80,11 +80,11 @@ class MujocoFuncCameraSensor(
         return self.observation_space.shape[2]
 
     @property
-    def render_mode(self) -> Literal['rgb_array', 'depth_array', 'segmentation_array']:
-        return self._render_mode
+    def camera_mode(self) -> Literal['rgb_array', 'depth_array', 'segmentation_array']:
+        return self._camera_mode
 
     def to_image(self, data : np.ndarray) -> PIL.Image:
-        if self.render_mode == 'depth_array':
+        if self.camera_mode == 'depth_array':
             min_depth = np.min(data)
             max_depth = np.max(data)
             data = np.clip((data - min_depth) / (max_depth - min_depth), 0.0, 1.0)
@@ -92,7 +92,7 @@ class MujocoFuncCameraSensor(
                 (data * 255).astype(np.uint8),
                 mode='L'
             )
-        elif self.render_mode == 'segmentation_array':
+        elif self.camera_mode == 'segmentation_array':
             # Since Infinity is mapped to -1, we need to map it to 0
             data = data.astype(np.float64) + 1
 
@@ -127,9 +127,9 @@ class MujocoFuncCameraSensor(
             width=self.width,
             max_geom=max_geom,
         )
-        if self.render_mode == 'depth_array':
+        if self.camera_mode == 'depth_array':
             renderer.enable_depth_rendering()
-        elif self.render_mode == 'segmentation_array':
+        elif self.camera_mode == 'segmentation_array':
             renderer.enable_segmentation_rendering()
         else:
             renderer.disable_depth_rendering()
@@ -206,10 +206,10 @@ class MujocoFuncCameraSensor(
         if render_state.scene_callback is not None:
             render_state.scene_callback(render_state.renderer.scene)
         rendered_image = render_state.renderer.render(**render_state.render_kwargs)
-        if self.render_mode == 'segmentation_array':
+        if self.camera_mode == 'segmentation_array':
             # For segmentation, channel 0 is the geom id, 1 is the object type (site, geom, etc.)
             rendered_image = rendered_image[:, :, 0:1]
-        elif self.render_mode == 'depth_array':
+        elif self.camera_mode == 'depth_array':
             rendered_image = rendered_image[:, :, np.newaxis]
         return state, common_state, FuncSensorSingleState(
             sensor_state=render_state,
