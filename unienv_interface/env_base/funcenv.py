@@ -42,7 +42,7 @@ class FuncEnv(
     action_space: Space[Any, Any, BDeviceT, Any, BRngT]
 
     @abc.abstractmethod
-    def initial(self, *, seed : int) -> Tuple[
+    def initial(self, *, seed : int, device : Optional[BDeviceT] = None) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
         ObsType,

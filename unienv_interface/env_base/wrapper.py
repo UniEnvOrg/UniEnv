@@ -8,7 +8,7 @@ import numpy as np
 
 WrapperObsType = TypeVar("WrapperObsType")
 WrapperActType = TypeVar("WrapperActType")
-WrapperRewardType = TypeVar("WrapperRewardType", SupportsFloat)
+WrapperRewardType = TypeVar("WrapperRewardType", bound=SupportsFloat)
 WrapperTerminationType = TypeVar("WrapperTerminationType")
 WrapperBDeviceT = TypeVar("WrapperBDeviceT")
 WrapperBRngT = TypeVar("WrapperBRngT")
@@ -48,7 +48,7 @@ class Wrapper(
         return self.env.close()
 
     @property
-    def unwrapped(self) -> Env[ObsType, ActType]:
+    def unwrapped(self) -> Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
         """Returns the base environment of the wrapper.
 
         This will be the bare :class:`gymnasium.Env` environment, underneath all layers of wrappers.

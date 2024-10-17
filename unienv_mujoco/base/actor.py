@@ -48,6 +48,8 @@ class MujocoDefaultFuncActor(
         assert control_timestep > 0
         self.control_timestep = control_timestep
 
+        super().__init__()
+
     def onboard_initial(
         self, 
         state: MujocoFuncWorldState, 

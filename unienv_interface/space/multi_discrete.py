@@ -25,13 +25,14 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
     ):
         if dtype is not None:
             assert backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
-            self.nvec = backend.array_api_namespace.astype(nvec, dtype, device=device)
-            self.start = backend.array_api_namespace.astype(start, dtype, device=device) if start is not None else None
-        elif device is not None:
-            self.nvec = array_api_compat.to_device(nvec, device)
-            self.start = array_api_compat.to_device(start, device) if start is not None else None
-        else:
-            self.nvec = nvec
+            nvec = backend.array_api_namespace.astype(nvec, dtype)
+            start = backend.array_api_namespace.astype(start, dtype) if start is not None else None
+        if device is not None:
+            nvec = array_api_compat.to_device(nvec, device)
+            start = array_api_compat.to_device(start, device) if start is not None else None
+        
+        self.nvec = nvec
+        self.start = start
         
         if self.start is None:
             self.start = backend.array_api_namespace.zeros_like(self.nvec, dtype=dtype, device=device)
@@ -94,9 +95,12 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         scaled_sample = uniform_sample * self.nvec + self.start
         floored_sample = self.backend.array_api_namespace.floor(scaled_sample)
         if self.dtype is not None:
-            return self.backend.array_api_namespace.astype(floored_sample, self.dtype, device=self.device)
+            samp = self.backend.array_api_namespace.astype(floored_sample, self.dtype)
         else:
-            return self.backend.array_api_namespace.astype(floored_sample, self.nvec.dtype, device=self.device)
+            samp = self.backend.array_api_namespace.astype(floored_sample, self.nvec.dtype)
+        if self.device is not None:
+            samp = array_api_compat.to_device(samp, device=self.device)
+        return samp
 
     def contains(self, x: MultiDArrayT) -> bool:
         return bool(
@@ -171,8 +175,8 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
     def from_same_backend(self, other_data : MultiDArrayT) -> MultiDArrayT:
         new_tensor = other_data
         if self.dtype is not None:
-            new_tensor = self.backend.array_api_namespace.astype(new_tensor, dtype=self.dtype, device=self.device)
-        elif self.device is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
+        if self.device is not None:
             new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
         
         return new_tensor

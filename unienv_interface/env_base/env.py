@@ -7,7 +7,7 @@ import numpy as np
 
 ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
-RewardType = TypeVar("RewardType", SupportsFloat)
+RewardType = TypeVar("RewardType", bound=SupportsFloat)
 TerminationType = TypeVar("TerminationType")
 RenderFrame = TypeVar("RenderFrame")
 BDeviceT = TypeVar("BDeviceT")

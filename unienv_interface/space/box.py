@@ -30,7 +30,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         self.dtype = dtype
         self._dtype_is_float = backend.dtype_is_real_floating(self.dtype)
 
-        array_api_workspace = self.backend.array_api_namespace
+        array_api_workspace = backend.array_api_namespace
 
         # determine shape if it isn't provided directly
         if shape is not None:
@@ -57,7 +57,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         self.bounded_above = array_api_workspace.inf > _high
 
         assert not array_api_workspace.any(array_api_workspace.isnan(_low)), f"low contains NaN values: {_low}"
-        assert not array_api_workspace.isnan(_high), f"high contains NaN values: {_high}"
+        assert not array_api_workspace.any(array_api_workspace.isnan(_high)), f"high contains NaN values: {_high}"
 
         assert (
             _low.shape == shape
@@ -68,8 +68,11 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
 
         self._shape: tuple[int, ...] = shape
 
-        self.low = array_api_workspace.astype(_low, dtype=self.dtype, device=device)
-        self.high = array_api_workspace.astype(_high, dtype=self.dtype, device=device)
+        self.low = array_api_workspace.astype(_low, self.dtype)
+        self.high = array_api_workspace.astype(_high, self.dtype)
+        if device is not None:
+            self.low = array_api_compat.to_device(self.low, device=device)
+            self.high = array_api_compat.to_device(self.high, device=device)
 
         super().__init__(
             backend=backend,
@@ -256,8 +259,8 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
     def from_same_backend(self, other_data: BoxArrayT) -> BoxArrayT:
         new_tensor = other_data
         if self.dtype is not None:
-            new_tensor = self.backend.array_api_namespace.astype(new_tensor, dtype=self.dtype, device=self.device)
-        elif self.device is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
+        if self.device is not None:
             new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
         
         return new_tensor

@@ -115,7 +115,6 @@ class FuncSensor(
         """Get the data from the sensor if the sensor is readable."""
         raise NotImplementedError
 
-    @abstractmethod
     def close(
         self,
         state : StateType,
@@ -125,4 +124,4 @@ class FuncSensor(
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType]
     ]:
-        raise NotImplementedError
+        return state, common_state

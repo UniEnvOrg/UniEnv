@@ -41,8 +41,8 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        render_kwargs : Dict[str, Any],
         seed : int,
+        render_kwargs : Dict[str, Any] = {},
         scene_option : Optional[mujoco.MjvOption] = None
     ) -> Tuple[
         MujocoFuncWorldState,

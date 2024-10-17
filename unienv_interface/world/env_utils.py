@@ -36,7 +36,7 @@ class WorldBasedFuncEnvRenderState(
 WorldBasedFuncEnvInfoCallback = Callable[[
     FuncWorld[WorldStateT, BDeviceType, BRNGType],
     FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
-    WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+    WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
     FuncEnvCommonState[BDeviceType, BRNGType],
     Dict[str, Any], # Observation
     Optional[ActorActT], # Optional Action (When stepping)
@@ -82,7 +82,7 @@ class WorldBasedFuncEnv(
         ]] = None, # Either a sensor or the name of the attached sensor
         info_callback : Optional[WorldBasedFuncEnvInfoCallback] = None
     ):
-        if render_sensor in self.actor.sensors.values():
+        if render_sensor in actor.sensors.values():
             raise ValueError("The render sensor should not be attached to the actor. If you want to use the actor's sensors, use the actor's sensor names.")
         assert actor.backend == world.backend, "The actor and the world should have the same backend."
 
@@ -143,8 +143,9 @@ class WorldBasedFuncEnv(
         actor_kwargs : Dict[str, Any] = {},
         task_kwargs : Dict[str, Any] = {},
         render_sensor_kwargs : Dict[str, Any] = {},
+        device : Optional[BDeviceType] = None
     ) -> Tuple[
-        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],
         Dict[str, Any],
         Dict[str, Any] | Sequence[Dict[str, Any]]
@@ -155,7 +156,7 @@ class WorldBasedFuncEnv(
         world_state, common_state, actor_combined_state = self.actor.initial(
             world_state, common_state, seed=seed, **actor_kwargs
         )
-        world_state, common_state, task_state, task_obs = self.task.initial(
+        world_state, common_state, task_state = self.task.initial(
             world_state, common_state, seed=seed, **task_kwargs
         )
         if self._need_update_render_sensor:
@@ -164,11 +165,6 @@ class WorldBasedFuncEnv(
             )
         else:
             render_sensor_state = None
-        assert self.actor.is_readable(
-            world_state,
-            common_state,
-            actor_combined_state
-        )
         world_state, common_state, actor_combined_state, obs = self.actor.get_data(
             world_state,
             common_state,
@@ -209,10 +205,10 @@ class WorldBasedFuncEnv(
 
     def reset(
         self,
-        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
     ) -> Tuple[
-        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],
         Dict[str, Any],
         Dict[str, Any] | Sequence[Dict[str, Any]]
@@ -275,11 +271,11 @@ class WorldBasedFuncEnv(
 
     def step(
         self,
-        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         action : ActorActT
     ) -> Tuple[
-        WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],
         Dict[str, Any],
         RewardType,
@@ -376,7 +372,7 @@ class WorldBasedFuncEnv(
 
     def close(
         self,
-        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, RenderSensorStateT],
+        state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
     ) -> None:
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state

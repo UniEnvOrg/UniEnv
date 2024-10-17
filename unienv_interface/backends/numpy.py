@@ -11,7 +11,7 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
-        return array_api_compat.is_torch_array(data)
+        return array_api_compat.is_numpy_array(data)
 
     @classmethod
     def from_numpy(cls, data : np.ndarray, dtype : Optional[np.dtype] = None, device : Optional[Any] = None) -> np.ndarray:

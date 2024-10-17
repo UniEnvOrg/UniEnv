@@ -11,7 +11,7 @@ _DiscreteBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
 _DiscreteBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
 _DiscreteBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
 
-class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]):
+class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]):
     r"""A space consisting of finitely many elements.
 
     This class represents a finite subset of integers, more specifically a set of the form :math:`\{ a, a+1, \dots, a+n-1 \}`.
@@ -167,8 +167,8 @@ class Discrete(Space[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _Discr
     def from_same_backend(self, other_data : DiscreteArrayT) -> DiscreteArrayT:
         new_tensor = other_data
         if self.dtype is not None:
-            new_tensor = self.backend.array_api_namespace.astype(new_tensor, dtype=self.dtype, device=self.device)
-        elif self.device is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
+        if self.device is not None:
             new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
         return new_tensor
 

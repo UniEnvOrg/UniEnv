@@ -50,7 +50,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             )
 
         new_spaces: DictType[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]] = {}
-        for key, space in spaces:
+        for key, space in spaces.items():
             assert isinstance(
                 space, Space
             ), f"Dict space element is not an instance of Space: key='{key}', space={space}"
@@ -63,7 +63,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
 
         # None for shape and dtype, since it'll require special handling
         super().__init__(
-            backend=space.backend,
+            backend=backend,
             shape=None,
             device=device,
             dtype=None,
@@ -126,7 +126,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
 
-    def __getitem__(self, key: str) -> Space[Any]:
+    def __getitem__(self, key: str) -> Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]:
         """Get the space that is associated to `key`."""
         return self.spaces[key]
 
@@ -134,7 +134,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
         """Returns the keys of the Dict."""
         return KeysView(self.spaces)
 
-    def __setitem__(self, key: str, value: Space[Any]):
+    def __setitem__(self, key: str, value: Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]) -> None:
         """Set the space that is associated to `key`."""
         assert isinstance(
             value, Space

@@ -65,6 +65,20 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
             start = end
         return result
 
+    def to_device(self, device : _TupleBDeviceT) -> "Tuple[_TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]":
+        return Tuple(
+            backend=self.backend,
+            spaces=[space.to_device(device) for space in self.spaces],
+            device=device
+        )
+
+    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Tuple":
+        return Tuple(
+            backend=backend,
+            spaces=[space.to_backend(backend, device) for space in self.spaces],
+            device=device
+        )
+
     def seed(self, seed: Optional[int] = None) -> None:
         for space in self.spaces:
             space.seed(seed=seed)
@@ -83,7 +97,7 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
         """Gives a string representation of this space."""
         return "Tuple(" + ", ".join([str(s) for s in self.spaces]) + ")"
 
-    def __getitem__(self, index: int) -> Space[Any]:
+    def __getitem__(self, index: int) -> Space[Any, Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]:
         """Get the subspace at specific `index`."""
         return self.spaces[index]
 

@@ -14,7 +14,7 @@ class WindowedViewSensor(
     observation_space : TupleSpace[BDeviceType, BDtypeType, BRNGType]
 
 class FuncWindowedViewSensor(
-    FuncSensor[StateType, SensorStateT, BDeviceType, BDtypeType, BRNGType],
+    FuncSensor[StateType, SensorStateT, Tuple, BDeviceType, BDtypeType, BRNGType],
     Generic[StateType, SensorStateT, BDeviceType, BDtypeType, BRNGType]
 ):
     observation_space : TupleSpace[BDeviceType, BDtypeType, BRNGType]

@@ -137,11 +137,11 @@ class FuncActor(
 
     @property
     def device(self) -> Optional[BDeviceType]:
-        return self.observation_space.device
+        return self.onboard_observation_space.device
     
     @property
     def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
-        return self.observation_space.backend
+        return self.onboard_observation_space.backend
     
     @property
     def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
@@ -417,7 +417,6 @@ ActorWrapperBDeviceType = TypeVar("ActorWrapperBDeviceType")
 ActorWrapperBDtypeType = TypeVar("ActorWrapperBDtypeType")
 ActorWrapperBRNGType = TypeVar("ActorWrapperBRNGType")
 class FuncActorWrapper(
-    ABC,
     Generic[
         StateType, ActorWrapperStateT, ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
         ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType    

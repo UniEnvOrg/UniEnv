@@ -21,11 +21,11 @@ class MujocoFuncGenericSensor(
         self,
         model : mujoco.MjModel,
         sensor_name : str,
-        control_timestamp : float,
+        control_timestep : float,
         seed : Optional[int] = None,
     ):
-        assert control_timestamp > 0.0
-        self.control_timestamp = control_timestamp
+        assert control_timestep > 0.0
+        self.control_timestep = control_timestep
 
         self._sensor_name = sensor_name
         ndim = model.sensor(sensor_name).dim

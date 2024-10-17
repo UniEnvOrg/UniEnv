@@ -1,0 +1,85 @@
+from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, Literal
+from abc import ABC, abstractmethod
+
+from unienv_interface.env_base.funcenv import FuncEnvCommonState
+from unienv_interface.world.sensors.lambda_sensor import FuncLambdaSensor
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.space import Dict as DictSpace, Box
+import mujoco
+from dm_control import mjcf
+from dataclasses import dataclass
+import numpy as np
+from .. import mjcf_util
+from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+
+
+class MujocoFuncJointPosSensor(
+    FuncLambdaSensor[MujocoFuncWorldState, np.ndarray, Any, np.dtype, np.random.Generator]
+):
+    def __init__(
+        self,
+        world : MujocoFuncWorld,
+        control_timestep : float,
+        joint_names : Sequence[str],
+        seed : Optional[int] = None,
+    ):
+        assert len(joint_names) > 0
+        self.joint_names = joint_names
+        observation_limits = np.zeros((len(joint_names), 2), dtype=np.float32)
+        for i, joint_name in enumerate(joint_names):
+            joint = world._mjmodel.joint(joint_name)
+            observation_limits[i] = joint.range
+        observation_space = Box(
+            backend=NumpyComputeBackend,
+            low=observation_limits[:, 0],
+            high=observation_limits[:, 1],
+            dtype=np.float32,
+            device=None,
+            seed=seed
+        )
+        super().__init__(
+            observation_space=observation_space,
+            control_timestep=control_timestep,
+            data_fn=self.read_joint_positions
+        )
+    
+    def read_joint_positions(self, state : MujocoFuncWorldState) -> np.ndarray:
+        qpos = np.zeros(len(self.joint_names), dtype=np.float32)
+        for i, joint_name in enumerate(self.joint_names):
+            qpos[i] = state.data.joint(joint_name).qpos[0]
+        return qpos
+    
+class MujocoFuncJointVelSensor(
+    FuncLambdaSensor[MujocoFuncWorldState, np.ndarray, Any, np.dtype, np.random.Generator]
+):
+    def __init__(
+        self,
+        world : MujocoFuncWorld,
+        control_timestep : float,
+        joint_names : Sequence[str],
+        seed : Optional[int] = None
+    ):
+        assert len(joint_names) > 0
+        self.joint_names = joint_names
+
+        observation_space = Box(
+            backend=NumpyComputeBackend,
+            low=-np.inf,
+            high=np.inf,
+            dtype=np.float32,
+            device=None,
+            shape=(len(joint_names),),
+            seed=seed
+        )
+        super().__init__(
+            observation_space=observation_space,
+            control_timestep=control_timestep,
+            data_fn=self.read_joint_velocities
+        )
+    
+    def read_joint_velocities(self, state : MujocoFuncWorldState) -> np.ndarray:
+        qvel = np.zeros(len(self.joint_names), dtype=np.float32)
+        for i, joint_name in enumerate(self.joint_names):
+            qvel[i] = state.data.joint(joint_name).qvel[0]
+        return qvel
+    

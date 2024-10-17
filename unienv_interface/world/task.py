@@ -117,7 +117,6 @@ class FuncTask(
         """Transition."""
         raise NotImplementedError
 
-    @abstractmethod
     def get_data(
         self,
         state : StateType,
@@ -125,9 +124,8 @@ class FuncTask(
         task_state : TaskStateT
     ) -> Optional[Dict[str, Any]]:
         """Get the data."""
-        raise NotImplementedError
+        return None
 
-    @abstractmethod
     def close(
         self,
         state : StateType,
@@ -138,4 +136,4 @@ class FuncTask(
         FuncEnvCommonState[BDeviceType, BRNGType]
     ]:
         """Close the task."""
-        raise NotImplementedError
+        return state, common_state
