@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 import mujoco.viewer
 
 from unienv_interface.env_base.funcenv import FuncEnvCommonState
-from unienv_interface.world.sensor import FuncSensorSingleState, FuncSensor
+from unienv_interface.world.sensor import FuncSensor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Space, Box
 import mujoco
@@ -51,66 +51,55 @@ class MujocoFuncGenericSensor(
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[None]
+        None
     ]:
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=None,
-            remaining_time_until_read=0
-        )
+        return state, common_state, None
 
     def reset(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[None]
+        sensor_state : None
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[None]
+        None
     ]:
-        return state, common_state, dataclass_replace(
-            sensor_single_state,
-            remaining_time_until_read=0
-        )
+        return state, common_state, None
 
     def step(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[None],
+        sensor_state : None,
         last_step_elapsed : float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[None]
+        None
     ]:
-        return state, common_state, dataclass_replace(
-            sensor_single_state,
-            remaining_time_until_read=sensor_single_state.remaining_time_until_read - last_step_elapsed
-        )
+        return state, common_state, None
     
     def get_data(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[None]
+        sensor_state: None,
+        last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 
-        FuncSensorSingleState[None], 
+        None, 
         np.ndarray
     ]:
         sensor_data = state.data.sensor(self.sensor_name).data.astype(np.float32).copy()
-        return state, common_state, dataclass_replace(
-            sensor_single_state,
-            remaining_time_until_read=self.control_timestamp
-        ), sensor_data
+        return state, common_state, None, sensor_data
 
     def close(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[None]
+        sensor_state: None
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator]

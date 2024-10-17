@@ -1,7 +1,7 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
 from unienv_interface.env_base.funcenv import FuncEnvCommonState
-from unienv_interface.world.actor import Actor, FuncActor, FuncActorSingleState
+from unienv_interface.world.actor import Actor, FuncActor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box
 import mujoco
@@ -57,71 +57,60 @@ class MujocoDefaultFuncActor(
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncActorSingleState[None]
+        None
     ]:
-        return state, common_state, FuncActorSingleState(
-            actor_state=None,
-            remaining_time_until_action=self.control_timestep,
-            remaining_time_until_read=0
-        )
+        return state, common_state, None
     
     def onboard_reset(
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_single_state: FuncActorSingleState[None]
+        actor_state: None
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncActorSingleState[None]
+        None
     ]:
-        return state, common_state, FuncActorSingleState(
-            actor_state=None,
-            remaining_time_until_action=self.control_timestep,
-            remaining_time_until_read=0
-        )
+        return state, common_state, None
 
     def onboard_step(
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_single_state: FuncActorSingleState[None],
+        actor_state: None,
         last_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncActorSingleState[None]
+        None
     ]:
-        return state, common_state, FuncActorSingleState(
-            remaining_time_until_action=actor_single_state.remaining_time_until_action - last_step_elapsed
-        )
+        return state, common_state, None
     
     def get_data_onboard(
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_single_state: FuncActorSingleState[None]
+        actor_state: None,
+        last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncActorSingleState[None],
+        None,
         Dict[str, Any]
     ]:
-        return state, common_state, dataclass_replace(
-            actor_single_state,
-            remaining_time_until_read=self.control_timestep,
-        ) , {}
+        return state, common_state, None , {}
 
     def set_next_action(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        actor_single_state: FuncActorSingleState[None],
-        action: np.ndarray
+        actor_state: None,
+        action: np.ndarray,
+        last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 
-        FuncActorSingleState[None]
+        None
     ]:
         mjdata = state.data
         mjdata.ctrl[:] = action
@@ -130,16 +119,13 @@ class MujocoDefaultFuncActor(
             mj_model=state.mj_model,
             data=mjdata
         )
-        return new_state, common_state, dataclass_replace(
-            actor_single_state,
-            remaining_time_until_action=self.control_timestep
-        )
+        return new_state, common_state, None
 
     def onboard_close(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_single_state: FuncActorSingleState[None]
+        actor_state: None
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator]

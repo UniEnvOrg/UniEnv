@@ -5,7 +5,6 @@ import mujoco.viewer
 
 from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.windowed_view import FuncWindowedViewSensor
-from unienv_interface.world.sensor import FuncSensorSingleState
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Tuple as TupleSpace, Box
 import mujoco
@@ -48,7 +47,7 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        MujocoFuncWindowedViewSensorState
     ]:
         passive_viewer = mujoco.viewer.launch_passive(
             model=state.mj_model,
@@ -63,74 +62,69 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
             passive_viewer.opt.geomgroup = scene_option.geomgroup
             passive_viewer.opt.sitegroup = scene_option.sitegroup
             passive_viewer.opt.frame = scene_option.frame
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=MujocoFuncWindowedViewSensorState(
-                viewer=passive_viewer,
-                render_kwargs=render_kwargs,
-                scene_option=scene_option
-            ),
-            remaining_time_until_read=0.0,
+        return state, common_state, MujocoFuncWindowedViewSensorState(
+            viewer=passive_viewer,
+            render_kwargs=render_kwargs,
+            scene_option=scene_option
         )
 
     def reset(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        sensor_state : MujocoFuncWindowedViewSensorState
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        MujocoFuncWindowedViewSensorState
     ]:
         # We may need to close and re-open the viewer here, since mjdata handle might have been re-created
-        state, common_state = self.close(state, common_state, sensor_single_state)
-        state, common_state, sensor_single_state = self.initial(
+        state, common_state = self.close(state, common_state, sensor_state)
+        state, common_state, sensor_state = self.initial(
             state=state,
             common_state=common_state,
-            render_kwargs=sensor_single_state.sensor_state.render_kwargs,
+            render_kwargs=sensor_state.render_kwargs,
             seed=common_state.np_rng.integers(0),
-            scene_option=sensor_single_state.sensor_state.scene_option
+            scene_option=sensor_state.scene_option
         )
-        return state, common_state, sensor_single_state
+        return state, common_state, sensor_state
 
     def step(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[MujocoFuncWindowedViewSensorState],
+        sensor_state : MujocoFuncWindowedViewSensorState,
         last_step_elapsed : float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        MujocoFuncWindowedViewSensorState
     ]:
-        sensor_single_state.sensor_state.viewer.sync()
-        return state, common_state, dataclass_replace(
-            sensor_single_state,
-            remaining_time_until_read=sensor_single_state.remaining_time_until_read - last_step_elapsed
-        )
+        sensor_state.viewer.sync()
+        return state, common_state, sensor_state
     
     def get_data(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        sensor_state: MujocoFuncWindowedViewSensorState,
+        last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 
-        FuncSensorSingleState[MujocoFuncWindowedViewSensorState], 
+        MujocoFuncWindowedViewSensorState, 
         Tuple
     ]:
-        return state, common_state, sensor_single_state, ()
+        return state, common_state, sensor_state, ()
     
     def close(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[MujocoFuncWindowedViewSensorState]
+        sensor_state: MujocoFuncWindowedViewSensorState
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator]
     ]:
-        sensor_single_state.sensor_state.viewer.close()
+        sensor_state.viewer.close()
         return state, common_state

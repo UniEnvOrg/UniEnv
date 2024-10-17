@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 
 from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.camera import FuncCameraSensor
-from unienv_interface.world.sensor import FuncSensorSingleState
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box
 import mujoco
@@ -119,7 +118,7 @@ class MujocoFuncCameraSensor(
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncCameraSensorState]
+        MujocoFuncCameraSensorState
     ]:
         renderer = mujoco.Renderer(
             model=state.mj_model,
@@ -150,80 +149,67 @@ class MujocoFuncCameraSensor(
             scene_option=scene_option,
             scene_callback=scene_callback
         )
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=camera_state,
-            remaining_time_until_read=0.0,
-        )
+        return state, common_state, camera_state
 
     def reset(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[MujocoFuncCameraSensorState]
+        sensor_state : MujocoFuncCameraSensorState
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncCameraSensorState]
+        MujocoFuncCameraSensorState
     ]:
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=sensor_single_state.sensor_state,
-            remaining_time_until_read=0.0,
-        )
+        return state, common_state, sensor_state
 
     def step(
         self,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
-        sensor_single_state : FuncSensorSingleState[MujocoFuncCameraSensorState],
+        sensor_state : MujocoFuncCameraSensorState,
         last_step_elapsed : float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        FuncSensorSingleState[MujocoFuncCameraSensorState]
+        MujocoFuncCameraSensorState
     ]:
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=sensor_single_state.sensor_state,
-            remaining_time_until_read=sensor_single_state.remaining_time_until_read - last_step_elapsed,
-        )
+        return state, common_state, sensor_state
     
     def get_data(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[MujocoFuncCameraSensorState]
+        sensor_state: MujocoFuncCameraSensorState
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 
-        FuncSensorSingleState[MujocoFuncCameraSensorState], 
+        MujocoFuncCameraSensorState, 
         np.ndarray
     ]:
-        render_state = sensor_single_state.sensor_state
-        render_state.renderer.update_scene(
+        sensor_state.renderer.update_scene(
             data=state.data,
-            camera=render_state.camera,
-            scene_option=render_state.scene_option
+            camera=sensor_state.camera,
+            scene_option=sensor_state.scene_option
         )
-        if render_state.scene_callback is not None:
-            render_state.scene_callback(render_state.renderer.scene)
-        rendered_image = render_state.renderer.render(**render_state.render_kwargs)
+        if sensor_state.scene_callback is not None:
+            sensor_state.scene_callback(sensor_state.renderer.scene)
+        rendered_image = sensor_state.renderer.render(**sensor_state.render_kwargs)
         if self.camera_mode == 'segmentation_array':
             # For segmentation, channel 0 is the geom id, 1 is the object type (site, geom, etc.)
             rendered_image = rendered_image[:, :, 0:1]
         elif self.camera_mode == 'depth_array':
             rendered_image = rendered_image[:, :, np.newaxis]
-        return state, common_state, FuncSensorSingleState(
-            sensor_state=render_state,
-            remaining_time_until_read=self.control_timestep,
-        ), rendered_image
+        return state, common_state, sensor_state, rendered_image
     
     def close(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_single_state: FuncSensorSingleState[MujocoFuncCameraSensorState]
+        sensor_state: MujocoFuncCameraSensorState
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator]
     ]:
-        sensor_single_state.sensor_state.renderer.close()
+        sensor_state.renderer.close()
         return state, common_state

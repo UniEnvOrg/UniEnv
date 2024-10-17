@@ -5,7 +5,7 @@ from unienv_interface.space import Space, Dict as DictSpace
 from unienv_interface.env_base.env import Env, RewardType, TerminationType
 from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderState, FuncEnvCommonState
 from .world import World, FuncWorld
-from .sensor import Sensor, FuncSensor, FuncSensorSingleState
+from .sensor import Sensor, FuncSensor
 from .actor import Actor, FuncActor, ActorActT, ActorStateT, FuncActorCombinedState
 from .sensors import CameraSensor, FuncCameraSensor, WindowedViewSensor, FuncWindowedViewSensor
 from .task import Task, FuncTask, TaskStateT
@@ -23,8 +23,9 @@ class WorldBasedFuncEnvState(
     world_state : WorldStateT
     actor_state : FuncActorCombinedState[ActorStateT]
     task_state : Optional[TaskStateT] = None
-    render_sensor_state : Optional[FuncSensorSingleState[RenderSensorStateT]]
+    render_sensor_state : Optional[RenderSensorStateT] = None
     render_sensor_data : Optional[RenderSensorDataT] = None
+    render_elapsed : float = 0.0
 
 @dataclass(frozen=True)
 class WorldBasedFuncEnvRenderState(
@@ -171,7 +172,8 @@ class WorldBasedFuncEnv(
         world_state, common_state, actor_combined_state, obs = self.actor.get_data(
             world_state,
             common_state,
-            actor_combined_state
+            actor_combined_state,
+            0.0
         )
         if isinstance(self.render_sensor, str):
             render_sensor_data = obs[self.render_sensor]
@@ -189,7 +191,8 @@ class WorldBasedFuncEnv(
             actor_state=actor_combined_state,
             task_state=task_state,
             render_sensor_state=render_sensor_state,
-            render_sensor_data=render_sensor_data
+            render_sensor_data=render_sensor_data,
+            render_elapsed=0.0
         )
         if self.info_callback is not None:
             info = self.info_callback(
@@ -230,15 +233,12 @@ class WorldBasedFuncEnv(
             )
         else:
             render_sensor_state = None
-        assert self.actor.is_readable(
-            world_state,
-            common_state,
-            actor_combined_state
-        )
+        
         world_state, common_state, actor_combined_state, obs = self.actor.get_data(
             world_state,
             common_state,
-            actor_combined_state
+            actor_combined_state,
+            0.0
         )
 
         if isinstance(self.render_sensor, str):
@@ -257,7 +257,8 @@ class WorldBasedFuncEnv(
             actor_state=actor_combined_state,
             task_state=task_state,
             render_sensor_state=render_sensor_state,
-            render_sensor_data=render_sensor_data
+            render_sensor_data=render_sensor_data,
+            render_elapsed=0.0
         )
         if self.info_callback is not None:
             info = self.info_callback(
@@ -320,30 +321,23 @@ class WorldBasedFuncEnv(
                     world_state, common_state, render_sensor_state = self.get_render_sensor_instance().step(
                         world_state, common_state, render_sensor_state, elapsed_seconds
                     )
-        assert self.actor.is_actionable(
+        
+        world_state, common_state, actor_state = self.actor.set_next_action(
             world_state,
             common_state,
-            actor_combined_state
-        )
-        world_state, common_state, actor_single_state = self.actor.set_next_action(
-            world_state,
-            common_state,
-            actor_combined_state.actor_single_state,
-            action
+            actor_combined_state.actor_state,
+            action,
+            total_elapsed
         )
         actor_combined_state = dataclass_replace(
             actor_combined_state,
-            actor_single_state=actor_single_state
-        )
-        assert self.actor.is_readable(
-            world_state,
-            common_state,
-            actor_combined_state
+            actor_state=actor_state
         )
         world_state, common_state, actor_combined_state, obs = self.actor.get_data(
             world_state,
             common_state,
-            actor_combined_state
+            actor_combined_state,
+            total_elapsed
         )
         if isinstance(self.render_sensor, str):
             render_sensor_data = obs[self.render_sensor]
@@ -363,7 +357,8 @@ class WorldBasedFuncEnv(
             world_state=world_state,
             actor_state=actor_combined_state,
             render_sensor_state=render_sensor_state,
-            render_sensor_data=render_sensor_data
+            render_sensor_data=render_sensor_data,
+            render_elapsed=state.render_elapsed + total_elapsed
         )
         if self.info_callback is not None:
             info = self.info_callback(
@@ -418,13 +413,14 @@ class WorldBasedFuncEnv(
             world_state, render_sensor_state = state.world_state, state.render_sensor_state
             real_render_sensor = self.get_render_sensor_instance()
             world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
-                world_state, common_state, render_sensor_state
+                world_state, common_state, render_sensor_state, state.render_elapsed
             )
             return dataclass_replace(
                 state,
                 world_state=world_state,
                 render_sensor_state=render_sensor_state,
-                render_sensor_data=None
+                render_sensor_data=None,
+                render_elapsed=0.0
             ), common_state, WorldBasedFuncEnvRenderState(
                 render_sensor_data=render_sensor_data
             ), FuncEnvCommonRenderState(
@@ -432,7 +428,10 @@ class WorldBasedFuncEnv(
                 render_fps=int(round(1/self.actor.control_timestep))
             )
         else:
-            return state, common_state, WorldBasedFuncEnvRenderState(
+            return dataclass_replace(
+                state,
+                render_elapsed=0.0
+            ), common_state, WorldBasedFuncEnvRenderState(
                 render_sensor_data=None
             ), FuncEnvCommonRenderState(
                 render_mode=render_mode,
@@ -455,23 +454,25 @@ class WorldBasedFuncEnv(
         if self._need_update_render_sensor:
             world_state, render_sensor_state = state.world_state, state.render_sensor_state
             real_render_sensor = self.get_render_sensor_instance()
-            if not real_render_sensor.is_readable(world_state, common_state, render_sensor_state):
-                return render_state.render_sensor_data, state, common_state, render_state, render_common_state
-
+            
             world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
-                world_state, common_state, render_sensor_state
+                world_state, common_state, render_sensor_state, state.render_elapsed
             )
             return render_sensor_data, dataclass_replace(
                 state,
                 world_state=world_state,
                 render_sensor_state=render_sensor_state,
-                render_sensor_data=None
+                render_sensor_data=None,
+                render_elapsed=0.0
             ), common_state, dataclass_replace(
                 render_state,
                 render_sensor_data=render_sensor_data
             ), render_common_state
         else:
-            return state.render_sensor_data, state, common_state, render_state, render_common_state
+            return state.render_sensor_data, dataclass_replace(
+                state,
+                render_elapsed=0.0,
+            ), common_state, render_state, render_common_state
 
     def render_close(
         self, 

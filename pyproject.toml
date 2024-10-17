@@ -7,7 +7,8 @@ dependencies = [
     "gymnasium>=0.29.0",
     "pydlpack",
     "array-api-compat",
-    "packaging"
+    "packaging",
+    "pillow",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +28,8 @@ sapien = [
 ]
 mujoco = [
     "mujoco>=3.0",
-    "dm_control>=1.0"
+    "dm_control>=1.0",
+    "mink>=0.0.5"
 ]
 
 [tool.setuptools.packages.find]

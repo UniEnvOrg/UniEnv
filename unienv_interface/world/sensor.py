@@ -23,12 +23,6 @@ class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
         """Update the sensor with a new state (e.g. from the environment)."""
         raise NotImplementedError
 
-    @property
-    @abstractmethod
-    def is_readable(self) -> bool:
-        """Check if the sensor is readable (control_timestep is reached)."""
-        return False
-
     @abstractmethod
     def get_data(self) -> SensorDataT:
         """Get the data from the sensor."""
@@ -48,11 +42,6 @@ class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
         self.close()
 
 SensorStateT = TypeVar("SensorStateT")
-
-@dataclass(frozen=True)
-class FuncSensorSingleState(Generic[SensorStateT]):
-    sensor_state : SensorStateT
-    remaining_time_until_read : float
 
 class FuncSensor(
     ABC,
@@ -79,7 +68,7 @@ class FuncSensor(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncSensorSingleState[SensorStateT]
+        SensorStateT
     ]:
         raise NotImplementedError
     
@@ -88,11 +77,11 @@ class FuncSensor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        sensor_single_state : FuncSensorSingleState[SensorStateT]
+        sensor_state : SensorStateT
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncSensorSingleState[SensorStateT]
+        SensorStateT
     ]:
         raise NotImplementedError
     
@@ -101,34 +90,26 @@ class FuncSensor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        sensor_single_state : FuncSensorSingleState[SensorStateT],
+        sensor_state : SensorStateT,
         last_step_elapsed : float
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncSensorSingleState[SensorStateT]
+        SensorStateT
     ]:
         raise NotImplementedError
     
-    def is_readable(
-        self,
-        state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        sensor_single_state : FuncSensorSingleState[SensorStateT]
-    ) -> bool:
-        """Check if the sensor is readable (control_timestep is reached)."""
-        return sensor_single_state.remaining_time_until_read <= 0
-
     @abstractmethod
     def get_data(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        sensor_single_state : FuncSensorSingleState[SensorStateT]
+        sensor_state : SensorStateT,
+        last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        FuncSensorSingleState[SensorStateT],
+        SensorStateT,
         SensorDataT
     ]:
         """Get the data from the sensor if the sensor is readable."""
@@ -139,7 +120,7 @@ class FuncSensor(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        sensor_single_state : FuncSensorSingleState[SensorStateT]
+        sensor_state : SensorStateT
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType]
