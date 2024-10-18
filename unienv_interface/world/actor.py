@@ -347,7 +347,7 @@ class FuncActor(
             state,
             common_state,
             FuncActorCombinedState(
-                actor_state==actor_state, 
+                actor_state=actor_state, 
                 sensor_states=sensor_states
             )
         )

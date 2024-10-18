@@ -9,15 +9,13 @@ from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 class Task(ABC, Generic[RewardType, TerminationType]):
     observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
 
-    @abstractmethod
     def update(self, last_step_elapsed : float) -> None:
         """Update the task with a new state (e.g. from the environment)."""
-        raise NotImplementedError
+        pass
     
-    @abstractmethod
     def control_update(self, last_control_step_elapsed : float) -> None:
         """Update the task with a new state (e.g. from the environment)."""
-        raise NotImplementedError
+        pass
 
     @abstractmethod
     def get_data(self) -> Optional[Dict[str, Any]]:
@@ -39,15 +37,13 @@ class Task(ABC, Generic[RewardType, TerminationType]):
         """Check if the task is truncated."""
         raise NotImplementedError
 
-    @abstractmethod
     def reset(self) -> None:
         """Reset the task, this is called after the environment / actor / sensor is reset."""
-        raise NotImplementedError
+        pass
     
-    @abstractmethod
     def close(self) -> None:
         """Close the task."""
-        raise NotImplementedError
+        pass
 
 TaskStateT = TypeVar("TaskStateT")
 class FuncTask(
@@ -70,7 +66,6 @@ class FuncTask(
         """Initial state."""
         raise NotImplementedError
     
-    @abstractmethod
     def reset(
         self, 
         state : StateType,
@@ -81,10 +76,8 @@ class FuncTask(
         FuncEnvCommonState[BDeviceType, BRNGType],
         TaskStateT
     ]:
-        """Reset the task."""
-        raise NotImplementedError
+        return state, common_state, task_state
     
-    @abstractmethod
     def step(
         self,
         state : StateType,
@@ -96,8 +89,7 @@ class FuncTask(
         FuncEnvCommonState[BDeviceType, BRNGType],
         TaskStateT
     ]:
-        """Transition."""
-        raise NotImplementedError
+        return state, common_state, task_state
     
     @abstractmethod
     def control_step(

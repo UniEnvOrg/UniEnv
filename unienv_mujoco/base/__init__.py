@@ -1,2 +1,2 @@
 from .actor import MujocoDefaultFuncActor
-from .world import MujocoFuncWorld
+from .world import MujocoFuncWorld, MujocoFuncWorldState

@@ -168,10 +168,22 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         sample = self.backend.array_api_namespace.empty(self.shape, dtype=self.dtype, device=self.device)
 
         # Masking arrays which classify the coordinates according to interval type
-        unbounded = ~self.bounded_below & ~self.bounded_above
-        upp_bounded = ~self.bounded_below & self.bounded_above
-        low_bounded = self.bounded_below & ~self.bounded_above
-        bounded = self.bounded_below & self.bounded_above
+        unbounded = self.backend.array_api_namespace.logical_and(
+            self.backend.array_api_namespace.logical_not(self.bounded_below), 
+            self.backend.array_api_namespace.logical_not(self.bounded_above)
+        )
+        upp_bounded = self.backend.array_api_namespace.logical_and(
+            self.backend.array_api_namespace.logical_not(self.bounded_below), 
+            self.bounded_above
+        )
+        low_bounded = self.backend.array_api_namespace.logical_and(
+            self.bounded_below, 
+            self.backend.array_api_namespace.logical_not(self.bounded_above)
+        )
+        bounded = self.backend.array_api_namespace.logical_and(
+            self.bounded_below, 
+            self.bounded_above
+        )
 
         # Vectorized sampling by interval type
         self._rng, sample[unbounded] = self.backend.random_normal(self.rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
@@ -188,18 +200,26 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             + high[upp_bounded]
         )
 
-        if self._dtype_is_float:
-            self._rng, sample[bounded] = self.backend.random_uniform(
-                self.rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0, 
-                dtype=self.dtype, device=self.device
-            ) * (high[bounded] - self.low[bounded]) + self.low[bounded]
-        else:
-            self._rng, sample[bounded] = self.backend.array_api_namespace.floor(
-                self.backend.random_uniform(
-                    self.rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
-                    dtype=self.dtype, device=self.device
-                ) * (high[bounded] - self.low[bounded]) + self.low[bounded]
-            )
+        self._rng, float_bounded = self.backend.random_uniform(
+            self.rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
+            dtype=self.dtype, device=self.device
+        )
+        # assert self.backend.array_api_namespace.all(
+        #     self.backend.array_api_namespace.logical_and(
+        #         float_bounded >= 0.0,
+        #         float_bounded <= 1.0
+        #     )
+        # )
+        float_bounded *= (high[bounded] - self.low[bounded])
+        float_bounded += self.low[bounded]
+        sample[bounded] = float_bounded
+
+        # if self._dtype_is_float:
+        #     sample[bounded] = float_bounded    
+        # else:
+        #     sample[bounded] = self.backend.array_api_namespace.floor(
+        #         float_bounded
+        #     )
 
         if not self._dtype_is_float:
             sample = self.backend.array_api_namespace.floor(sample)

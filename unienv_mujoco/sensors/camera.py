@@ -24,6 +24,12 @@ class MujocoFuncCameraSensorState:
     scene_option : Optional[mujoco.MjvOption] = None
     scene_callback : Optional[MujocoFuncEnvSceneCallback] = None
 
+"""
+Camera sensor for Mujoco environment.
+Some useful information for segmentation:
+mujoco.mju_type2Str and mujoco.mju_str2Type can be used to convert between object type id and name
+
+"""
 class MujocoFuncCameraSensor(
     FuncCameraSensor[MujocoFuncWorldState, MujocoFuncCameraSensorState, np.ndarray, Any, np.dtype, np.random.Generator],
 ):
@@ -32,7 +38,7 @@ class MujocoFuncCameraSensor(
         camera : Union[int, str],
         width : int,
         height : int,
-        camera_mode : Literal['rgb_array', 'depth_array', 'segmentation_array'],
+        camera_mode : Literal['rgb_array', 'depth_array', 'segmentation_array', 'segmentation_type_array'],
         control_timestep : float,
         seed : Optional[int] = None,
     ):
@@ -46,8 +52,8 @@ class MujocoFuncCameraSensor(
             observation_dtype = np.float32
             observation_min = 0.0
             observation_max = np.inf
-        elif camera_mode == 'segmentation_array':
-            observation_dtype = int
+        elif camera_mode in ['segmentation_array', 'segmentation_type_array']:
+            observation_dtype = np.int32
             observation_min = -1
             observation_max = np.iinfo(int).max
         else:
@@ -91,7 +97,7 @@ class MujocoFuncCameraSensor(
                 (data * 255).astype(np.uint8),
                 mode='L'
             )
-        elif self.camera_mode == 'segmentation_array':
+        elif self.camera_mode in ['segmentation_array', 'segmentation_type_array']:
             # Since Infinity is mapped to -1, we need to map it to 0
             data = data.astype(np.float64) + 1
 
@@ -128,7 +134,7 @@ class MujocoFuncCameraSensor(
         )
         if self.camera_mode == 'depth_array':
             renderer.enable_depth_rendering()
-        elif self.camera_mode == 'segmentation_array':
+        elif self.camera_mode in ['segmentation_array', 'segmentation_type_array']:
             renderer.enable_segmentation_rendering()
         else:
             renderer.disable_depth_rendering()
@@ -198,6 +204,9 @@ class MujocoFuncCameraSensor(
         if self.camera_mode == 'segmentation_array':
             # For segmentation, channel 0 is the geom id, 1 is the object type (site, geom, etc.)
             rendered_image = rendered_image[:, :, 0:1]
+        elif self.camera_mode == 'segmentation_type_array':
+            # For segmentation, channel 0 is the geom id, 1 is the object type (site, geom, etc.)
+            rendered_image = rendered_image[:, :, 1:2]
         elif self.camera_mode == 'depth_array':
             rendered_image = rendered_image[:, :, np.newaxis]
         return state, common_state, sensor_state, rendered_image

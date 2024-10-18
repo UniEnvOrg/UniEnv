@@ -149,14 +149,11 @@ class StatefulSingleFuncEnv(Env[
         self.func_env = func_env
         self.device = device
         
-        
         self.state, self.common_state, obs, info = self.func_env.initial(
             *instance_args, seed=seed, device=device, **instance_kwargs
         )
         self._first_instance_obs_info : Optional[Tuple[ObsType, Dict[str, Any]]] = (obs, info)
 
-        self.common_state : Optional[FuncEnvCommonState[BDeviceT, BRngT]] = None,
-        self.state : Optional[StateType] = None
         self.render_state : Optional[RenderStateType] = None
         self.render_common_state : Optional[FuncEnvCommonRenderState] = None
 

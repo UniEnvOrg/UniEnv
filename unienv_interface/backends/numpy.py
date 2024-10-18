@@ -97,4 +97,4 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
     
     @classmethod
     def dtype_is_real_floating(cls, dtype : np.dtype) -> bool:
-        return dtype in (np.float16, np.float32, np.float64, np.float128, float)
+        return dtype in (np.float16, np.float32, np.float64, float)

@@ -57,11 +57,12 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
             **render_kwargs
         )
         mujoco.mjv_defaultFreeCamera(state.mj_model, passive_viewer.cam)
-        with passive_viewer.lock():
-            passive_viewer.opt.flags |= scene_option.flags
-            passive_viewer.opt.geomgroup = scene_option.geomgroup
-            passive_viewer.opt.sitegroup = scene_option.sitegroup
-            passive_viewer.opt.frame = scene_option.frame
+        if scene_option is not None:
+            with passive_viewer.lock():
+                passive_viewer.opt.flags |= scene_option.flags
+                passive_viewer.opt.geomgroup = scene_option.geomgroup
+                passive_viewer.opt.sitegroup = scene_option.sitegroup
+                passive_viewer.opt.frame = scene_option.frame
         return state, common_state, MujocoFuncWindowedViewSensorState(
             viewer=passive_viewer,
             render_kwargs=render_kwargs,

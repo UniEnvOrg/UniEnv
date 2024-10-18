@@ -15,6 +15,7 @@ class MinkIKState:
     configuration : mink.Configuration
     limits : List[mink.Limit]
     eef_task : mink.FrameTask
+    home_task : Optional[mink.PostureTask] = None
 
 class MinkIK:
     def __init__(
@@ -41,11 +42,12 @@ class MinkIK:
 
     def initial(
         self,
-        world_state : MujocoFuncWorldState
+        mj_model : mujoco.MjModel,
+        mj_data : mujoco.MjData,
     ) -> MinkIKState:
         limits = [
             mink.ConfigurationLimit(
-                world_state.mj_model
+                mj_model
             ),
         ]
         eef_task = mink.FrameTask(
@@ -53,48 +55,54 @@ class MinkIK:
             frame_type=self.frame_type,
             position_cost=1.0,
             orientation_cost=1.0,
-            lm_damping=1.0
+            lm_damping=2.0
         )
+        try:
+            q0 = mj_model.key("home").qpos
+            home_task = mink.PostureTask(
+                cost=0.1
+            )
+            home_task.set_target(q0)
+        except:
+            home_task = None
+
         if self.collision_avoid_geom_pairs is not None:
             limits.append(mink.CollisionAvoidanceLimit(
-                world_state.mj_model,
+                mj_model,
                 geom_pairs=self.collision_avoid_geom_pairs
             ))
         if self.max_velocity_per_joint is not None:
             limits.append(mink.VelocityLimit(
-                world_state.mj_model,
+                mj_model,
                 max_velocity_per_joint=self.max_velocity_per_joint
             ))
 
         return MinkIKState(
             configuration=mink.Configuration(
-                model=world_state.mj_model, 
-                q=world_state.data.qpos
+                model=mj_model, 
+                q=mj_data.qpos
             ),
             limits=limits,
-            eef_task=eef_task
+            eef_task=eef_task,
+            home_task=home_task
         )
 
     def step(
         self,
-        world_state : MujocoFuncWorldState,
         ik_state : MinkIKState,
-        target_position : np.ndarray,
-        target_orientation_euler : np.ndarray,
+        target_transform : mink.SE3,
         elapsed_seconds : float
     ) -> Tuple[
-        MujocoFuncWorldState,
         MinkIKState,
-        np.ndarray
+        np.ndarray,
+        bool
     ]:
-        ik_state.eef_task.set_target(mink.SE3.from_rotation_and_translation(
-            rotation=mink.SO3.from_rpy_radians(*target_orientation_euler),
-            translation=target_position
-        ))
+        ik_state.eef_task.set_target(target_transform)
+        converged = False
         for i in range(self.max_iterations):
             vel = mink.solve_ik(
                 configuration=ik_state.configuration,
-                tasks=[ik_state.eef_task],
+                tasks=[ik_state.eef_task] if ik_state.home_task is None else [ik_state.eef_task, ik_state.home_task],
                 dt=elapsed_seconds,
                 solver=self.solver,
                 damping=1e-3,
@@ -105,16 +113,35 @@ class MinkIK:
             pos_achieved = np.linalg.norm(err[:3]) <= self.pos_threshold
             ori_achieved = np.linalg.norm(err[3:]) <= self.ori_threshold
             if pos_achieved and ori_achieved:
+                converged = True
                 break
         
-        return world_state, ik_state, ik_state.configuration.q
+        return ik_state, ik_state.configuration.q, converged
 
+    def update_q(
+        self,
+        ik_state : MinkIKState,
+        q : np.ndarray
+    ) -> MinkIKState:
+        ik_state.configuration.update(q=q)
+        return ik_state
+    
+    def get_target_from_data(
+        self,
+        ik_state : MinkIKState,
+        mj_data : mujoco.MjData
+    ) -> mink.SE3:
+        return ik_util.get_transform_frame_to_world(
+            ik_state.configuration.model,
+            mj_data,
+            self.frame_name,
+            self.frame_type
+        )
 
-@dataclass(frozen=True)
+@dataclass
 class MinkIKWrapperState(Generic[ActorStateT, ActorWrapperActT]):
     inner_actor_state : ActorStateT
-    target_position : np.ndarray
-    target_orientation_euler : np.ndarray
+    target_transform : mink.SE3
     target_action : Optional[ActorWrapperActT]
     inner_actor_remaining_elapsed : float
     ik_state : MinkIKState
@@ -132,13 +159,13 @@ class MinkIKWrapper(FuncActorWrapper[
         ],
         ik: MinkIK,
         new_action_space : Space[ActorWrapperActT, Any, Any, np.dtype, np.random.Generator],
-        fn_target_position_and_rotation : Callable[[ActorWrapperActT], Tuple[np.ndarray, np.ndarray]],
+        fn_target_transform : Callable[[ActorWrapperActT], mink.SE3],
         fn_action_transform : Callable[[Optional[ActorWrapperActT], np.ndarray], ActorActT],
     ):
         super().__init__(actor)
         self.ik = ik
         self._action_space = new_action_space
-        self.fn_target_position_and_rotation = fn_target_position_and_rotation
+        self.fn_target_transform = fn_target_transform
         self.fn_action_transform = fn_action_transform
     
     @property
@@ -170,21 +197,14 @@ class MinkIKWrapper(FuncActorWrapper[
             seed=seed, 
             **kwargs
         )
-        ik_state = self.ik.initial(state)
-        current_transform = ik_util.get_transform_frame_to_world(
-            state.mj_model,
-            state.data,
-            self.ik.frame_name,
-            self.ik.frame_type
-        )
-        current_position, current_orientation = current_transform.translation(), current_transform.rotation().as_rpy_radians()
-        ik_state.eef_task.set_target(
-            current_transform
+        ik_state = self.ik.initial(state.mj_model, state.data)
+        current_transform = self.ik.get_target_from_data(
+            ik_state,
+            state.data
         )
         return state, common_state, MinkIKWrapperState(
             inner_actor_state=inner_actor_state,
-            target_position=current_position,
-            target_orientation_euler=current_orientation,
+            target_transform=current_transform,
             target_action=None,
             inner_actor_remaining_elapsed=self.actor.control_timestep,
             ik_state=ik_state
@@ -207,22 +227,20 @@ class MinkIKWrapper(FuncActorWrapper[
             self.ik.frame_name,
             self.ik.frame_type
         )
-        actor_state.ik_state.configuration.update(q=state.data.qpos)
-        current_transform = ik_util.get_transform_frame_to_world(
-            state.mj_model,
-            state.data,
-            self.ik.frame_name,
-            self.ik.frame_type
+        actor_state = dataclass_replace(
+            actor_state,
+            ik_state=self.ik.update_q(
+                actor_state.ik_state,
+                state.data.qpos
+            )
         )
-        
-        current_position, current_orientation = current_transform.translation(), current_transform.rotation().as_rpy_radians()
-        actor_state.ik_state.eef_task.set_target(
-            current_transform
+        current_transform = self.ik.get_target_from_data(
+            actor_state.ik_state,
+            state.data
         )
         return state, common_state, dataclass_replace(
             actor_state,
-            target_position=current_position,
-            target_orientation_euler=current_orientation,
+            target_transform=current_transform,
             inner_actor_remaining_elapsed=self.actor.control_timestep
         )
     
@@ -239,11 +257,9 @@ class MinkIKWrapper(FuncActorWrapper[
     ]:
         state, common_state, actor_state = super().onboard_step(state, common_state, actor_state, last_step_elapsed)
         actor_state.inner_actor_remaining_elapsed -= last_step_elapsed
-        state, ik_state, target_qpos = self.ik.step(
-            state,
+        ik_state, target_qpos, ik_converged = self.ik.step(
             actor_state.ik_state,
-            actor_state.target_position,
-            actor_state.target_orientation_euler,
+            actor_state.target_transform,
             last_step_elapsed
         )
         actor_state.ik_state = ik_state
@@ -274,17 +290,10 @@ class MinkIKWrapper(FuncActorWrapper[
         FuncEnvCommonState[Any, np.random.Generator],
         MinkIKWrapperState[ActorStateT, ActorWrapperActT]
     ]:
-        target_position, target_orientation = self.fn_target_position_and_rotation(action)
-        actor_state.ik_state.eef_task.set_target(
-            mink.SE3.from_rotation_and_translation(
-                rotation=mink.SO3.from_rpy_radians(*target_orientation),
-                translation=target_position
-            )
-        )
+        target_transform = self.fn_target_transform(action)
         return state, common_state, dataclass_replace(
             actor_state,
-            target_position=target_position,
-            target_orientation_euler=target_orientation,
+            target_transform=target_transform,
             target_action=action
         )
     

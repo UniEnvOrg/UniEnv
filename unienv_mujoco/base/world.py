@@ -1,8 +1,9 @@
-from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
+from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
 from abc import ABC, abstractmethod
 from unienv_interface.world.world import FuncWorld, FuncEnvCommonState
 from unienv_interface.backends.numpy import NumpyComputeBackend
 import mujoco
+import os.path
 from dm_control import mjcf
 from .. import mjcf_util
 from dataclasses import dataclass
@@ -21,8 +22,10 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
     def __init__(
         self,
         world_timestep : float,
-        world_subtimestep : Optional[float] = None
+        world_subtimestep : Optional[float] = None,
+        xml_path : Optional[Union[str, Any]] = None
     ):
+        self._xml_path = xml_path
         self._mjcf_model = self.build_mjcf_model()
         self._mjmodel = __class__.compile_mjcf(self._mjcf_model)
         self.set_timestep(world_timestep, world_subtimestep)
@@ -54,7 +57,6 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         # Set the sub-timestep
         self._mjmodel.opt.timestep = self._world_subtimestep
 
-    @staticmethod
     def compile_mjcf(mjcf_model : mjcf.RootElement) -> mujoco.MjModel:
         model = mujoco.MjModel.from_xml_string(
             xml=mjcf_util.to_string(mjcf_model),
@@ -62,9 +64,9 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         )
         return model
 
-    @abstractmethod
     def build_mjcf_model(self) -> mjcf.RootElement:
-        raise NotImplementedError
+        assert self._xml_path is not None
+        return mjcf.from_path(self._xml_path)
 
     def initial(
         self,
