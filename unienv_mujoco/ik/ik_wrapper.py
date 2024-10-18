@@ -12,15 +12,15 @@ from . import ik_util
 from .ik_control import MujocoIKClass, MujocoIKStateT, MujocoIKTargetT
 
 @dataclass
-class MinkIKWrapperState(Generic[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]):
+class MujocoIKWrapperState(Generic[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]):
     inner_actor_state : ActorStateT
     target_transform : MujocoIKTargetT
     target_action : Optional[ActorWrapperActT]
     inner_actor_remaining_elapsed : float
     ik_state : MujocoIKStateT
 
-class MinkIKWrapper(FuncActorWrapper[
-    MujocoFuncWorldState, MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], ActorWrapperActT, Any, np.dtype, np.random.Generator,
+class MujocoIKWrapper(FuncActorWrapper[
+    MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], ActorWrapperActT, Any, np.dtype, np.random.Generator,
     ActorStateT, ActorActT, Any, np.dtype, np.random.Generator
 ],Generic[
     ActorStateT, ActorWrapperActT, ActorActT, MujocoIKTargetT, MujocoIKStateT
@@ -45,10 +45,10 @@ class MinkIKWrapper(FuncActorWrapper[
     def action_space(self) -> Space[ActorWrapperActT, Any, Any, np.dtype, np.random.Generator]:
         return self._action_space
     
-    def _translate_to_inner_actor_state(self, state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]) -> ActorStateT:
+    def _translate_to_inner_actor_state(self, state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]) -> ActorStateT:
         return state.inner_actor_state
     
-    def _translate_to_outer_actor_state(self, state: ActorStateT, old_wrapper_state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]) -> MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]:
+    def _translate_to_outer_actor_state(self, state: ActorStateT, old_wrapper_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]) -> MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]:
         return dataclass_replace(old_wrapper_state, inner_actor_state=state)
     
     def onboard_initial(
@@ -61,7 +61,7 @@ class MinkIKWrapper(FuncActorWrapper[
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 
-        MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
         state, common_state, inner_actor_state = self.actor.onboard_initial(
             state, 
@@ -76,7 +76,7 @@ class MinkIKWrapper(FuncActorWrapper[
             state.mj_model,
             state.data
         )
-        return state, common_state, MinkIKWrapperState(
+        return state, common_state, MujocoIKWrapperState(
             inner_actor_state=inner_actor_state,
             target_transform=current_transform,
             target_action=None,
@@ -88,11 +88,11 @@ class MinkIKWrapper(FuncActorWrapper[
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
         state, common_state, actor_state = super().onboard_reset(state, common_state, actor_state)
         actor_state = dataclass_replace(
@@ -117,12 +117,12 @@ class MinkIKWrapper(FuncActorWrapper[
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT],
+        actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT],
         last_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
         state, common_state, actor_state = super().onboard_step(state, common_state, actor_state, last_step_elapsed)
         actor_state.inner_actor_remaining_elapsed -= last_step_elapsed
@@ -153,13 +153,13 @@ class MinkIKWrapper(FuncActorWrapper[
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
-        actor_state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT],
+        actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT],
         action: Optional[ActorWrapperActT],
         last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
         FuncEnvCommonState[Any, np.random.Generator],
-        MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
         target_transform = self.fn_target_transform(action)
         return state, common_state, dataclass_replace(
@@ -172,7 +172,7 @@ class MinkIKWrapper(FuncActorWrapper[
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        actor_state: MinkIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
+        actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator]

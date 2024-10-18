@@ -1,6 +1,6 @@
 import pytest
 import typing
-from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MinkIKWrapper, MinkIK, MinkBulkIK, MujocoFuncWorldState, MujocoFuncWindowedViewSensor
+from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MujocoIKWrapper, MinkIK, MinkBulkIK, MujocoFuncWorldState, MujocoFuncWindowedViewSensor
 from unienv_interface.space import *
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.env_base.funcenv import FuncEnv, StatefulSingleFuncEnv
@@ -51,7 +51,7 @@ def fr3_actor(fr3_world : MujocoFuncWorld) -> MujocoDefaultFuncActor:
     )
 
 @pytest.fixture(scope="session")
-def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActor) -> MinkIKWrapper:
+def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActor) -> MujocoIKWrapper:
     all_avoid_ids = []
     for body_name in AVOID_BODY_NAMES:
         body = fr3_world._mjmodel.body(body_name)
@@ -64,7 +64,9 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         # collision_avoid_geom_pairs=None,
         max_velocity_per_joint=None,
         frame_name="attachment_site",
-        frame_type="site"
+        frame_type="site",
+        relative_frame_name="actuation_center",
+        relative_frame_type="site"
     )
     bulk_ik = MinkBulkIK(
         ik,
@@ -73,7 +75,7 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         ])
     )
 
-    return MinkIKWrapper(
+    return MujocoIKWrapper(
         actor=fr3_actor,
         ik=bulk_ik,
         new_action_space=EEF_SE3_WORKSPACE,
@@ -134,7 +136,7 @@ def get_fr3_eef_task() -> typing.Tuple[LambdaFuncTask, np.ndarray]:
 
 def test_fr3_eef(
     fr3_world : MujocoFuncWorld,
-    fr3_eef_actor : MinkIKWrapper,
+    fr3_eef_actor : MujocoIKWrapper,
     render_sensor : MujocoFuncWindowedViewSensor
 ):
     task, target_action = get_fr3_eef_task()
@@ -170,7 +172,7 @@ def test_fr3_eef(
 
 def test_fr3_eef_interactive(
     fr3_world : MujocoFuncWorld,
-    fr3_eef_actor : MinkIKWrapper,
+    fr3_eef_actor : MujocoIKWrapper,
     render_sensor : MujocoFuncWindowedViewSensor
 ):
     task, target_action = get_fr3_eef_task()

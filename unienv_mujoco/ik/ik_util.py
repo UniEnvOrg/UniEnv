@@ -33,14 +33,12 @@ def get_transform_frame_to_world(
     )
 
 def get_relative_transform(
-    self,
     base_transform : mink.SE3,
     query_transform : mink.SE3
 ) -> mink.SE3:
     return base_transform.inverse() @ query_transform
 
 def get_absolute_transform(
-    self,
     base_transform : mink.SE3,
     relative_transform : mink.SE3
 ) -> mink.SE3:

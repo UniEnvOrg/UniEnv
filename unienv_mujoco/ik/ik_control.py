@@ -61,7 +61,7 @@ class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
 class MinkIKState:
     configuration : mink.Configuration
     limits : List[mink.Limit]
-    eef_task : mink.FrameTask
+    eef_task : Union[mink.FrameTask, mink.RelativeFrameTask]
     home_task : Optional[mink.PostureTask] = None
 
 
@@ -72,6 +72,8 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         max_velocity_per_joint : Optional[Dict[str, float]],
         frame_name : str,
         frame_type : str,
+        relative_frame_name : Optional[str] = None,
+        relative_frame_type : Optional[str] = None,
 
         pos_threshold : float = 1e-4,
         ori_threshold : float = 1e-4,
@@ -80,6 +82,8 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     ):
         self.frame_name = frame_name
         self.frame_type = frame_type
+        self.relative_frame_name = relative_frame_name
+        self.relative_frame_type = relative_frame_type
         self.collision_avoid_geom_pairs = collision_avoid_geom_pairs
         self.max_velocity_per_joint = max_velocity_per_joint
         
@@ -99,13 +103,24 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
                 mj_model
             ),
         ]
-        eef_task = mink.FrameTask(
-            frame_name=self.frame_name,
-            frame_type=self.frame_type,
-            position_cost=1.0,
-            orientation_cost=1.0,
-            lm_damping=2.0
-        )
+        if self.relative_frame_name is None:
+            eef_task = mink.FrameTask(
+                frame_name=self.frame_name,
+                frame_type=self.frame_type,
+                position_cost=1.0,
+                orientation_cost=1.0,
+                lm_damping=2.0
+            )
+        else:
+            eef_task = mink.RelativeFrameTask(
+                frame_name=self.frame_name,
+                frame_type=self.frame_type,
+                root_name=self.relative_frame_name,
+                root_type=self.relative_frame_type,
+                position_cost=1.0,
+                orientation_cost=1.0,
+                lm_damping=2.0
+            )
         try:
             q0 = mj_model.key("home").qpos
             home_task = mink.PostureTask(
@@ -179,13 +194,26 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         mj_model : mujoco.MjModel,
         mj_data : mujoco.MjData
     ) -> mink.SE3:
-        return ik_util.get_transform_frame_to_world(
-            ik_state.configuration.model,
+        world_transform = ik_util.get_transform_frame_to_world(
+            mj_model,
             mj_data,
             self.frame_name,
             self.frame_type
         )
 
+        if self.relative_frame_name is None:
+            return world_transform
+        else:
+            base_transform = ik_util.get_transform_frame_to_world(
+                mj_model,
+                mj_data,
+                self.relative_frame_name,
+                self.relative_frame_type
+            )
+            return ik_util.get_relative_transform(
+                base_transform,
+                world_transform
+            )
 
 class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     @staticmethod
@@ -251,7 +279,6 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         np.ndarray,
         bool
     ]:
-        
         previous_q = ik_state.configuration.q
         ik_state, target_q, score, converged = self.solve_ik_with_score(
             self.ik,

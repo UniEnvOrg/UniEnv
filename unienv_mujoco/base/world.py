@@ -46,6 +46,10 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
     def world_subtimestep(self, value : Optional[float]) -> None:
         self.set_timestep(max(self._world_timestep, value), value)
 
+    def recompile_mjcf(self) -> None:
+        self._mjmodel = __class__.compile_mjcf(self._mjcf_model)
+        self._mjcf_model.opt.timestep = self._world_subtimestep
+
     def set_timestep(self, world_timestep : float, world_subtimestep : Optional[float] = None) -> None:
         assert world_timestep > 0 and (world_subtimestep is None or world_subtimestep > 0)
         n_step = int(world_timestep / world_subtimestep)
@@ -57,6 +61,7 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         # Set the sub-timestep
         self._mjmodel.opt.timestep = self._world_subtimestep
 
+    @staticmethod
     def compile_mjcf(mjcf_model : mjcf.RootElement) -> mujoco.MjModel:
         model = mujoco.MjModel.from_xml_string(
             xml=mjcf_util.to_string(mjcf_model),
