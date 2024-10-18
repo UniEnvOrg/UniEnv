@@ -45,3 +45,20 @@ def get_absolute_transform(
     relative_transform : mink.SE3
 ) -> mink.SE3:
     return base_transform @ relative_transform
+
+def move_mocap_to_transformation(
+    mj_model : mujoco.MjModel,
+    mj_data : mujoco.MjData,
+    mocap_name : str,
+    target_transform : mink.SE3,
+):
+
+    mocap_id = mj_model.body(mocap_name).mocapid[0]
+    if mocap_id == -1:
+        raise IndexError
+
+    xpos = target_transform.translation()
+    xmat = target_transform.rotation().as_matrix().flatten()
+
+    mj_data.mocap_pos[mocap_id] = xpos
+    mujoco.mju_mat2Quat(mj_data.mocap_quat[mocap_id], xmat)

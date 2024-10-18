@@ -1,6 +1,6 @@
 import pytest
 import typing
-from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MinkIKWrapper, MinkIK, MujocoFuncWorldState, MujocoFuncWindowedViewSensor
+from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MinkIKWrapper, MinkIK, MinkBulkIK, MujocoFuncWorldState, MujocoFuncWindowedViewSensor
 from unienv_interface.space import *
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.env_base.funcenv import FuncEnv, StatefulSingleFuncEnv
@@ -11,26 +11,10 @@ import unienv_mujoco.ik.ik_util as ik_util
 import os.path
 import mink
 import numpy as np
+from test_fr3 import EEF_WORKSPACE, EEF_SE3_WORKSPACE, AVOID_BODY_NAMES
 
 CONTROL_TIMESTEP = 0.05
 SUBSTEP_TIMESTEP = 0.005
-AVOID_BODY_NAMES = ["fr3_link3", "fr3_link7"]
-EEF_WORKSPACE = Box(
-    backend=NumpyComputeBackend,
-    low=np.array([0.1, -0.2, 0.1]),
-    high=np.array([0.3, 0.2, 0.3]),
-    dtype=np.float32
-)
-EEF_SE3_WORKSPACE = Box(
-    backend=NumpyComputeBackend,
-    low=np.concatenate(
-        [EEF_WORKSPACE.low, np.array([-np.pi, -np.pi, -np.pi])],
-    ),
-    high=np.concatenate(
-        [EEF_WORKSPACE.high, np.array([np.pi, np.pi, np.pi])],
-    ),
-    dtype=np.float32
-)
 EEF_SE3_GRIPPER_WORKSPACE = Box(
     backend=NumpyComputeBackend,
     low=np.concatenate(
@@ -67,17 +51,25 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         body = fr3_world._mjmodel.body(body_name)
         all_avoid_ids.extend(mink.get_body_geom_ids(fr3_world._mjmodel, body.id))
     
+    ik = MinkIK(
+        # collision_avoid_geom_pairs=[
+        #     (all_avoid_ids, ["floor"]),
+        # ],
+        collision_avoid_geom_pairs=None,
+        max_velocity_per_joint=None,
+        frame_name="pinch",
+        frame_type="site"
+    )
+    bulk_ik = MinkBulkIK(
+        ik,
+        additional_search_qpos=np.asarray([
+            fr3_world._mjmodel.key("home").qpos
+        ])
+    )
+
     return MinkIKWrapper(
         actor=fr3_actor,
-        ik=MinkIK(
-            # collision_avoid_geom_pairs=[
-            #     (all_avoid_ids, ["floor"]),
-            # ],
-            collision_avoid_geom_pairs=None,
-            max_velocity_per_joint=None,
-            frame_name="pinch",
-            frame_type="site"
-        ),
+        ik=bulk_ik,
         new_action_space=EEF_SE3_GRIPPER_WORKSPACE,
         fn_target_transform=lambda action: mink.SE3.from_rotation_and_translation(
             rotation=mink.SO3.from_rpy_radians(*action[3:6]),
@@ -140,6 +132,10 @@ def test_fr3_eef(
     render_sensor : MujocoFuncWindowedViewSensor
 ):
     task, target_action = get_fr3_eef_task()
+    target_transform = mink.SE3.from_rotation_and_translation(
+        rotation=mink.SO3.from_rpy_radians(*target_action[3:]),
+        translation=target_action[:3]
+    )
     target_action = np.concatenate([
         target_action,
         [0.0]
@@ -154,6 +150,12 @@ def test_fr3_eef(
     env = StatefulSingleFuncEnv(
         funcenv,
         seed=0
+    )
+    ik_util.move_mocap_to_transformation(
+        env.state.world_state.mj_model,
+        env.state.world_state.data,
+        "target",
+        target_transform
     )
     env.reset()
     for _ in range(STEP_LIMIT):

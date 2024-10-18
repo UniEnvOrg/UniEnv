@@ -133,7 +133,7 @@
                       <geom mesh="link7_2" material="white" class="visual"/>
                       <geom mesh="link7_3" material="black" class="visual"/>
                       <geom name="fr3_link7_collision" class="collision" mesh="link7_coll"/>
-                      <site name="attachment_site" pos="0 0 0.107"/>
+                      <site name="attachment_site" pos="0 0 0.107" xyaxes="1 0 0 0 -1 0"/>
                     </body>
                   </body>
                 </body>
