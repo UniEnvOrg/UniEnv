@@ -1,6 +1,7 @@
 from typing import Optional, Any, Dict, Callable, Tuple
 from unienv_interface.space import Space, Dict as DictSpace
 from ..task import StateType, Task, TaskStateT, FuncTask, RewardType, TerminationType, FuncEnvCommonState
+from ..world import FuncWorld
 
 class LambdaTask(Task[RewardType, TerminationType]):
     def __init__(
@@ -39,7 +40,7 @@ class LambdaFuncTask(
         self,
         observation_space : Optional[DictSpace[Any, Any, Any]],
         observation_fn : Optional[Callable[[StateType, FuncEnvCommonState], Dict[str, Any]]],
-        control_step_fn : Callable[[StateType, FuncEnvCommonState, float], Tuple[RewardType, TerminationType, TerminationType]],
+        control_step_fn : Callable[[StateType, FuncEnvCommonState, Any, float], Tuple[RewardType, TerminationType, TerminationType]],
     ):
         assert observation_space is None or not observation_fn is None, "observation_fn must be provided if observation_space is provided"
         self.observation_space = observation_space
@@ -48,6 +49,7 @@ class LambdaFuncTask(
     
     def initial(
         self, 
+        world : FuncWorld[StateType, Any, Any],
         state : StateType,
         common_state : FuncEnvCommonState,
         *, 
@@ -75,6 +77,7 @@ class LambdaFuncTask(
         self,
         state : StateType,
         common_state : FuncEnvCommonState,
+        observation : Any,
         task_state : None,
         last_control_step_elapsed : float
     ) -> Tuple[
@@ -85,7 +88,7 @@ class LambdaFuncTask(
         TerminationType,
         TerminationType,
     ]:
-        return (state, common_state, None, *self.control_step_fn(state, common_state, last_control_step_elapsed))
+        return (state, common_state, None, *self.control_step_fn(state, common_state, observation, last_control_step_elapsed))
 
     def get_data(
         self, 

@@ -157,7 +157,7 @@ class WorldBasedFuncEnv(
             world_state, common_state, seed=seed, **actor_kwargs
         )
         world_state, common_state, task_state = self.task.initial(
-            world_state, common_state, seed=seed, **task_kwargs
+            self.world, world_state, common_state, seed=seed, **task_kwargs
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().initial(
@@ -340,14 +340,15 @@ class WorldBasedFuncEnv(
         else:
             render_sensor_data = None
 
-        world_state, common_state, task_state, reward, task_termination, task_truncation = self.task.control_step(
-            world_state, common_state, task_state, total_elapsed
-        )
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
                 world_state, common_state, task_state
             )
             obs.update(task_obs)
+        
+        world_state, common_state, task_state, reward, task_termination, task_truncation = self.task.control_step(
+            world_state, common_state, obs, task_state, total_elapsed
+        )
         
         env_state = WorldBasedFuncEnvState(
             world_state=world_state,

@@ -1,10 +1,10 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
+from .world import FuncWorld, StateType
 from ..space import Space, Dict as DictSpace
 from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from ..env_base.env import RewardType, TerminationType
-from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
-
+from ..env_base.funcenv import FuncEnvCommonState
 
 class Task(ABC, Generic[RewardType, TerminationType]):
     observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
@@ -54,6 +54,7 @@ class FuncTask(
     @abstractmethod
     def initial(
         self, 
+        world : FuncWorld[StateType, BDeviceType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         *, 
@@ -96,6 +97,7 @@ class FuncTask(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        observation : Any,
         task_state : TaskStateT,
         last_control_step_elapsed : float
     ) -> Tuple[
