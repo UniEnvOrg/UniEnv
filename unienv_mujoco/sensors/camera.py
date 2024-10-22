@@ -55,7 +55,7 @@ class MujocoFuncCameraSensor(
         elif camera_mode in ['segmentation_array', 'segmentation_type_array']:
             observation_dtype = int
             observation_min = -1
-            observation_max = np.iinfo(int).max
+            observation_max = 1e16
         else:
             observation_dtype = np.uint8
             observation_min = 0
