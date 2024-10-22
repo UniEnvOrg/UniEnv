@@ -69,6 +69,7 @@ class FuncTask(
     
     def reset(
         self, 
+        world : FuncWorld[StateType, BDeviceType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         task_state : TaskStateT

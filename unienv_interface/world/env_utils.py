@@ -221,7 +221,7 @@ class WorldBasedFuncEnv(
             world_state, common_state, actor_combined_state
         )
         world_state, common_state, task_state = self.task.reset(
-            world_state, common_state, task_state
+            self.world, world_state, common_state, task_state
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().reset(

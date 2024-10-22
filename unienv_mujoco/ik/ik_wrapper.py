@@ -70,7 +70,7 @@ class MujocoIKWrapper(FuncActorWrapper[
             seed=seed, 
             **kwargs
         )
-        ik_state = self.ik.initial(state.mj_model, state.data, seed=seed)
+        ik_state = self.ik.initial(state.mj_model, state.data.qpos, seed=seed)
         current_transform = self.ik.get_target_from_data(
             ik_state,
             state.mj_model,
@@ -128,7 +128,7 @@ class MujocoIKWrapper(FuncActorWrapper[
         actor_state.inner_actor_remaining_elapsed -= last_step_elapsed
         ik_state, target_qpos, ik_converged = self.ik.step(
             state.mj_model,
-            state.data,
+            state.data.qpos,
             actor_state.ik_state,
             actor_state.target_transform,
             last_step_elapsed

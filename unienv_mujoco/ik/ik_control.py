@@ -15,7 +15,7 @@ class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         seed : Optional[int] = None
     ) -> MujocoIKStateT:
         raise NotImplementedError
@@ -24,7 +24,7 @@ class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
     def step(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         ik_state : MujocoIKStateT,
         target_transform : MujocoIKTargetT,
         elapsed_seconds : float
@@ -95,7 +95,7 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         seed : Optional[int] = None
     ) -> MinkIKState:
         limits = [
@@ -144,7 +144,7 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         return MinkIKState(
             configuration=mink.Configuration(
                 model=mj_model, 
-                q=mj_data.qpos
+                q=qpos
             ),
             limits=limits,
             eef_task=eef_task,
@@ -154,7 +154,7 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def step(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         ik_state : MinkIKState,
         target_transform : mink.SE3,
         elapsed_seconds : float
@@ -164,7 +164,7 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         bool
     ]:
         ik_state.eef_task.set_target(target_transform)
-        ik_state.configuration.update(q=mj_data.qpos)
+        ik_state.configuration.update(q=qpos)
         converged = False
         for i in range(self.max_iterations):
             vel = mink.solve_ik(
@@ -262,11 +262,11 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         seed : Optional[int] = None
     ) -> MinkIKState:
         np_rng = np.random.default_rng(seed)
-        ik_state = self.ik.initial(mj_model, mj_data, seed=seed)
+        ik_state = self.ik.initial(mj_model, qpos, seed=seed)
         return ik_state
     
     def try_solve_ik(
@@ -311,7 +311,7 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def step(
         self,
         mj_model : mujoco.MjModel,
-        mj_data : mujoco.MjData,
+        qpos : np.ndarray,
         ik_state : MinkIKState,
         target_transform : mink.SE3,
         elapsed_seconds : float
@@ -320,7 +320,7 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         np.ndarray,
         bool
     ]:
-        current_qpos = mj_data.qpos.copy()
+        current_qpos = qpos.copy()
         ik_state.eef_task.set_target(target_transform)
         ik_state, target_q, converged = self.try_solve_ik(
             ik_state,

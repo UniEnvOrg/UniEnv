@@ -63,6 +63,7 @@ class LambdaFuncTask(
     
     def reset(
         self,
+        world : FuncWorld[StateType, Any, Any],
         state : StateType,
         common_state : FuncEnvCommonState,
         task_state : None

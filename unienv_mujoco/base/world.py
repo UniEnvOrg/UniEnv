@@ -27,7 +27,7 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
     ):
         self._xml_path = xml_path
         self._mjcf_model = self.build_mjcf_model()
-        self._mjmodel = __class__.compile_mjcf(self._mjcf_model)
+        self._mjmodel = mjcf_util.compile_mjcf(self._mjcf_model)
         self.set_timestep(world_timestep, world_subtimestep)
 
     @property
@@ -47,8 +47,28 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         self.set_timestep(max(self._world_timestep, value), value)
 
     def recompile_mjcf(self) -> None:
-        self._mjmodel = __class__.compile_mjcf(self._mjcf_model)
-        self._mjcf_model.opt.timestep = self._world_subtimestep
+        self._mjmodel = mjcf_util.compile_mjcf(self._mjcf_model)
+        self._mjmodel.opt.timestep = self._world_subtimestep
+
+    def recompile_mjcf_state(self, state : MujocoFuncWorldState) -> MujocoFuncWorldState:
+        mj_model = mjcf_util.compile_mjcf(state.mjcf_model)
+        mj_model.opt.timestep = self._world_subtimestep
+        mj_data = mujoco.MjData(mj_model)
+        
+        try:
+            home_keypose = self._mjmodel.key("home")
+            mj_data.qpos[:] = home_keypose.qpos.copy()
+            mj_data.ctrl[:] = home_keypose.ctrl.copy()
+        except:
+            pass
+
+        mujoco.mj_forward(mj_model, mj_data)
+
+        return MujocoFuncWorldState(
+            mjcf_model=state.mjcf_model,
+            mj_model=mj_model,
+            data=mj_data,
+        )
 
     def set_timestep(self, world_timestep : float, world_subtimestep : Optional[float] = None) -> None:
         assert world_timestep > 0 and (world_subtimestep is None or world_subtimestep > 0)
@@ -60,14 +80,6 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
 
         # Set the sub-timestep
         self._mjmodel.opt.timestep = self._world_subtimestep
-
-    @staticmethod
-    def compile_mjcf(mjcf_model : mjcf.RootElement) -> mujoco.MjModel:
-        model = mujoco.MjModel.from_xml_string(
-            xml=mjcf_util.to_string(mjcf_model),
-            assets=mjcf_util.get_assets(mjcf_model)
-        )
-        return model
 
     def build_mjcf_model(self) -> mjcf.RootElement:
         assert self._xml_path is not None
@@ -88,6 +100,16 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
             device=None
         )
         mj_data = mujoco.MjData(self._mjmodel)
+        
+        try:
+            home_keypose = self._mjmodel.key("home")
+            mj_data.qpos[:] = home_keypose.qpos.copy()
+            mj_data.ctrl[:] = home_keypose.ctrl.copy()
+        except:
+            pass
+
+        mujoco.mj_forward(self._mjmodel, mj_data)
+
         world_state = MujocoFuncWorldState(
             mjcf_model=self._mjcf_model,
             mj_model=self._mjmodel,

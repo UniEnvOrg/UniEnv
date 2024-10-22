@@ -3,7 +3,7 @@ from dm_control import mjcf
 from lxml import etree
 import numpy as np
 from typing import Union, Optional, Dict
-
+import mujoco
 
 def attach(
     parent_xml_or_model: Union[Path, mjcf.RootElement],
@@ -130,3 +130,10 @@ def add_bounding_box_site(
     size = (upper - lower) / 2
     size += 1e-7
     return body.add("site", type="box", pos=pos, size=size, **kwargs)
+
+def compile_mjcf(mjcf_model : mjcf.RootElement) -> mujoco.MjModel:
+    model = mujoco.MjModel.from_xml_string(
+        xml=to_string(mjcf_model),
+        assets=get_assets(mjcf_model)
+    )
+    return model

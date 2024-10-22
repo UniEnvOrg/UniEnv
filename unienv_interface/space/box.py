@@ -142,7 +142,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
                 f"manner is not in {{'below', 'above', 'both'}}, actual value: {manner}"
             )
 
-    def sample(self, mask: None = None) -> BoxArrayT:
+    def sample(self) -> BoxArrayT:
         r"""Generates a single random sample inside the Box.
 
         In creating a sample of the box, each coordinate is sampled (independently) from a distribution
@@ -153,16 +153,9 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         * :math:`(-\infty, b]` : shifted negative exponential distribution
         * :math:`(-\infty, \infty)` : normal distribution
 
-        Args:
-            mask: A mask for sampling values from the Box space, currently unsupported.
-
         Returns:
             A sampled value from the Box
         """
-        if mask is not None:
-            raise ValueError(
-                f"Box.sample cannot be provided a mask, actual value: {mask}"
-            )
 
         high = self.high if self._dtype_is_float else self.high + 1
         sample = self.backend.array_api_namespace.empty(self.shape, dtype=self.dtype, device=self.device)

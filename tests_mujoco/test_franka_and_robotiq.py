@@ -25,7 +25,7 @@ EEF_SE3_GRIPPER_WORKSPACE = Box(
     ),
     dtype=np.float32
 )
-STEP_LIMIT = 100_000
+STEP_LIMIT = 1_000
 
 @pytest.fixture(scope="session")
 def fr3_world() -> MujocoFuncWorld:
