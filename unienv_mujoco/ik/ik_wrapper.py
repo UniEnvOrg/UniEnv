@@ -31,12 +31,14 @@ class MujocoIKWrapper(FuncActorWrapper[
             MujocoFuncWorldState, ActorStateT, ActorActT, Any, np.dtype, np.random.Generator
         ],
         ik: MujocoIKClass[MujocoIKStateT, MujocoIKTargetT],
+        mj_model: mujoco.MjModel,
         new_action_space : Space[ActorWrapperActT, Any, Any, np.dtype, np.random.Generator],
         fn_target_transform : Callable[[ActorWrapperActT], MujocoIKTargetT],
         fn_action_transform : Callable[[Optional[ActorWrapperActT], np.ndarray], ActorActT],
     ):
         super().__init__(actor)
         self.ik = ik
+        self.mj_model = mj_model
         self._action_space = new_action_space
         self.fn_target_transform = fn_target_transform
         self.fn_action_transform = fn_action_transform
@@ -70,7 +72,7 @@ class MujocoIKWrapper(FuncActorWrapper[
             seed=seed, 
             **kwargs
         )
-        ik_state = self.ik.initial(state.mj_model, state.data.qpos, seed=seed)
+        ik_state = self.ik.initial(self.mj_model, state.data.qpos[:self.mj_model.nq], seed=seed)
         current_transform = self.ik.get_target_from_data(
             ik_state,
             state.mj_model,
@@ -99,7 +101,7 @@ class MujocoIKWrapper(FuncActorWrapper[
             actor_state,
             ik_state=self.ik.update_q(
                 actor_state.ik_state,
-                state.data.qpos
+                state.data.qpos[:self.mj_model.nq]
             )
         )
         current_transform = self.ik.get_target_from_data(
@@ -128,7 +130,7 @@ class MujocoIKWrapper(FuncActorWrapper[
         actor_state.inner_actor_remaining_elapsed -= last_step_elapsed
         ik_state, target_qpos, ik_converged = self.ik.step(
             state.mj_model,
-            state.data.qpos,
+            state.data.qpos[:self.mj_model.nq],
             actor_state.ik_state,
             actor_state.target_transform,
             last_step_elapsed

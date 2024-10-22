@@ -114,4 +114,4 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
     
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
-        return gym.spaces.MultiBinary(self.shape, seed=self.np_rng.integers(0))
+        return gym.spaces.MultiBinary(self.shape, seed=self.np_rng.integers(0, 4096))

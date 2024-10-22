@@ -291,7 +291,7 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         
         min_score_q = target_q
         min_score = score
-
+        
         for start_qpos in self.additional_search_qpos:
             ik_state, target_q, score, converged = self.solve_ik_with_score(
                 self.ik,

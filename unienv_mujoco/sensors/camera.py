@@ -53,7 +53,7 @@ class MujocoFuncCameraSensor(
             observation_min = 0.0
             observation_max = np.inf
         elif camera_mode in ['segmentation_array', 'segmentation_type_array']:
-            observation_dtype = np.int32
+            observation_dtype = int
             observation_min = -1
             observation_max = np.iinfo(int).max
         else:
@@ -92,9 +92,14 @@ class MujocoFuncCameraSensor(
         if self.camera_mode == 'depth_array':
             min_depth = np.min(data)
             max_depth = np.max(data)
-            data = np.clip((data - min_depth) / (max_depth - min_depth), 0.0, 1.0)
+            delta_depth = max_depth - min_depth
+            if delta_depth <= 1e-3:
+                data = np.clip(data / max_depth, 0.0, 1.0)
+            else:
+                data = np.clip((data - min_depth) / delta_depth, 0.0, 1.0)
+            data = (data * 255)[:, :, 0].astype(np.uint8),
             image = PIL.Image.fromarray(
-                (data * 255).astype(np.uint8),
+                data,
                 mode='L'
             )
         elif self.camera_mode in ['segmentation_array', 'segmentation_type_array']:
@@ -104,8 +109,9 @@ class MujocoFuncCameraSensor(
             # Normalize the data to [0, 1]
             data = data / np.max(data)
             pixels = (data * 255).astype(np.uint8)
+            pixels = pixels[:, :, 0]
             image = PIL.Image.fromarray(
-                pixels, 
+                pixels[:, :], 
                 mode='L'
             )
         else:
@@ -186,7 +192,8 @@ class MujocoFuncCameraSensor(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        sensor_state: MujocoFuncCameraSensorState
+        sensor_state: MujocoFuncCameraSensorState,
+        last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
         FuncEnvCommonState[Any, np.random.Generator], 

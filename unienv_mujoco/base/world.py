@@ -56,7 +56,7 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         mj_data = mujoco.MjData(mj_model)
         
         try:
-            home_keypose = self._mjmodel.key("home")
+            home_keypose = mj_model.key("home")
             mj_data.qpos[:] = home_keypose.qpos.copy()
             mj_data.ctrl[:] = home_keypose.ctrl.copy()
         except:
@@ -126,7 +126,7 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         FuncEnvCommonState[Any, np.random.Generator]
     ]:
         return self.initial(
-            seed=common_state.np_rng.integers(0)
+            seed=common_state.np_rng.integers(0, 4096)
         )
     
     def step(

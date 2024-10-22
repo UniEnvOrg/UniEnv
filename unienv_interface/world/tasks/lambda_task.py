@@ -95,7 +95,9 @@ class LambdaFuncTask(
         self, 
         state: StateType, 
         common_state: FuncEnvCommonState, 
-        task_state: None
+        observation : Any,
+        task_state : None,
+        last_control_step_elapsed : float
     ) -> Dict[str, Any] | None:
         if self.observation_fn is None:
             return None

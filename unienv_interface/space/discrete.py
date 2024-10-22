@@ -181,5 +181,5 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
         return gym.spaces.Discrete(
             self.n,
             start=self.start,
-            seed=self.np_rng.integers(0)
+            seed=self.np_rng.integers(0, 4096)
         )

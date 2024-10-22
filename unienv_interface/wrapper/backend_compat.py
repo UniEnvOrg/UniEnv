@@ -55,7 +55,7 @@ class ToBackendWrapper(
     ) -> None:
         super().__init__(env)
         self._rng : WrapperBRngT = backend.random_number_generator(
-            seed=env.np_rng.integers(0),
+            seed=env.np_rng.integers(0, 4096),
             device=device
         )
         self._action_space = env.action_space.to_backend(
@@ -166,7 +166,7 @@ class ToDeviceWrapper(
     ) -> None:
         super().__init__(env)
         self._rng : BRngT = env.backend.random_number_generator(
-            seed=env.np_rng.integers(0),
+            seed=env.np_rng.integers(0, 4096),
             device=device
         )
         self._action_space = env.action_space.to_device(

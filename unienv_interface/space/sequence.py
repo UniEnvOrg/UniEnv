@@ -125,4 +125,4 @@ class Sequence(Space[Union[Any, Tuple[Any, ...]], Union[Any, Tuple[Any, ...]], _
         return tuple(self.feature_space.from_same_backend(part) for part in other_data)
 
     def to_gym_space(self) -> gym.Space:
-        return gym.spaces.Sequence(self.feature_space.to_gym_space(), seed=self.np_rng.integers(0), stack=False)
+        return gym.spaces.Sequence(self.feature_space.to_gym_space(), seed=self.np_rng.integers(0, 4096), stack=False)

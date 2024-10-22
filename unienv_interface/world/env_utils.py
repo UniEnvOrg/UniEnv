@@ -116,11 +116,11 @@ class WorldBasedFuncEnv(
         if self.task.observation_space is None:
             return self.actor.observation_space
 
-        actor_dict = self.actor.observation_space.spaces
-        task_dict = self.task.observation_space.spaces
+        new_spaces = self.actor.observation_space.spaces.copy()
+        new_spaces.update(self.task.observation_space.spaces)
         return DictSpace(
             backend=self.backend,
-            spaces={**actor_dict, **task_dict},
+            spaces=new_spaces,
             device=self.actor.device,
         )
     
@@ -153,11 +153,11 @@ class WorldBasedFuncEnv(
         world_state, common_state = self.world.initial(
             seed=seed, **world_kwargs
         )
-        world_state, common_state, actor_combined_state = self.actor.initial(
-            world_state, common_state, seed=seed, **actor_kwargs
-        )
         world_state, common_state, task_state = self.task.initial(
             self.world, world_state, common_state, seed=seed, **task_kwargs
+        )
+        world_state, common_state, actor_combined_state = self.actor.initial(
+            world_state, common_state, seed=seed, **actor_kwargs
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().initial(
@@ -178,7 +178,7 @@ class WorldBasedFuncEnv(
 
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, task_state
+                world_state, common_state, obs, task_state, 0.0
             )
             obs.update(task_obs)
         
@@ -217,11 +217,11 @@ class WorldBasedFuncEnv(
         world_state, common_state = self.world.reset(
             world_state, common_state
         )
-        world_state, common_state, actor_combined_state = self.actor.reset(
-            world_state, common_state, actor_combined_state
-        )
         world_state, common_state, task_state = self.task.reset(
             self.world, world_state, common_state, task_state
+        )
+        world_state, common_state, actor_combined_state = self.actor.reset(
+            world_state, common_state, actor_combined_state
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().reset(
@@ -244,7 +244,7 @@ class WorldBasedFuncEnv(
         
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, task_state
+                world_state, common_state, obs, task_state, 0.0
             )
             obs.update(task_obs)
 
@@ -342,7 +342,7 @@ class WorldBasedFuncEnv(
 
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, task_state
+                world_state, common_state, obs, task_state, total_elapsed
             )
             obs.update(task_obs)
         
@@ -353,6 +353,7 @@ class WorldBasedFuncEnv(
         env_state = WorldBasedFuncEnvState(
             world_state=world_state,
             actor_state=actor_combined_state,
+            task_state=task_state,
             render_sensor_state=render_sensor_state,
             render_sensor_data=render_sensor_data,
             render_elapsed=state.render_elapsed + total_elapsed

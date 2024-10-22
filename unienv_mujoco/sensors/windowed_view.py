@@ -85,7 +85,7 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
             state=state,
             common_state=common_state,
             render_kwargs=sensor_state.render_kwargs,
-            seed=common_state.np_rng.integers(0),
+            seed=common_state.np_rng.integers(0, 4096),
             scene_option=sensor_state.scene_option
         )
         return state, common_state, sensor_state

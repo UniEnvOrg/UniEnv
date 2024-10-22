@@ -28,7 +28,7 @@ class MujocoFuncGenericSensor(
         self.control_timestep = control_timestep
 
         self._sensor_name = sensor_name
-        ndim = world._mjmodel.sensor(sensor_name).dim
+        ndim = world._mjmodel.sensor(sensor_name).dim[0]
         self.observation_space = Box(
             backend=NumpyComputeBackend,
             low=-np.inf,

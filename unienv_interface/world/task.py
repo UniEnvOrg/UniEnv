@@ -116,7 +116,9 @@ class FuncTask(
         self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        task_state : TaskStateT
+        observation : Any,
+        task_state : TaskStateT,
+        last_control_step_elapsed : float
     ) -> Optional[Dict[str, Any]]:
         """Get the data."""
         return None
@@ -132,3 +134,107 @@ class FuncTask(
     ]:
         """Close the task."""
         return state, common_state
+
+TaskWrapperStateT = TypeVar("TaskWrapperStateT")
+TaskWrapperRewardType = TypeVar("TaskWrapperRewardType")
+TaskWrapperTerminationType = TypeVar("TaskWrapperTerminationType")
+class FuncTaskWrapper(
+    ABC,
+    Generic[
+        TaskWrapperStateT, TaskWrapperRewardType, TaskWrapperTerminationType,
+        StateType, TaskStateT, RewardType, TerminationType
+    ]
+):
+    def __init__(
+        self,
+        task : FuncTask[StateType, TaskStateT, RewardType, TerminationType]
+    ):
+        self.task = task
+        self._observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
+    
+    @property
+    def observation_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        return self._observation_space or self.task.observation_space
+    
+    @observation_space.setter
+    def observation_space(self, value : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]) -> None:
+        self._observation_space = value
+
+    def initial(
+        self,
+        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        *args, 
+        seed : int,
+        **kwargs
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        TaskWrapperStateT
+    ]:
+        return self.task.initial(world, state, common_state, *args, seed=seed, **kwargs)
+
+    def reset(
+        self,
+        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        task_state : TaskWrapperStateT
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        TaskWrapperStateT
+    ]:
+        return self.task.reset(world, state, common_state, task_state)
+
+    def step(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        task_state : TaskWrapperStateT,
+        last_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        TaskWrapperStateT
+    ]:
+        return self.task.step(state, common_state, task_state, last_step_elapsed)
+    
+    def control_step(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        observation : Any,
+        task_state : TaskWrapperStateT,
+        last_control_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        TaskWrapperStateT,
+        TaskWrapperRewardType,
+        TaskWrapperTerminationType,
+        TaskWrapperTerminationType,
+    ]:
+        return self.task.control_step(state, common_state, observation, task_state, last_control_step_elapsed)
+    
+    def get_data(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        observation : Any,
+        task_state : TaskWrapperStateT,
+        last_control_step_elapsed : float
+    ) -> Optional[Dict[str, Any]]:
+        return self.task.get_data(state, common_state, observation, task_state, last_control_step_elapsed)
+    
+    def close(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        task_state : TaskWrapperStateT
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType]
+    ]:
+        return self.task.close(state, common_state, task_state)

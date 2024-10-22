@@ -63,7 +63,7 @@ class FuncEnv(
     ]:
         """Reset the environment."""
         return self.initial(
-            seed=common_state.np_rng.integers(0)
+            seed=common_state.np_rng.integers(0, 4096)
         )
 
     @abc.abstractmethod
@@ -161,6 +161,9 @@ class StatefulSingleFuncEnv(Env[
 
         # Construction Metadata
         self._render_mode = render_mode
+        if self._render_mode is None and hasattr(self.func_env, "render_mode"):
+            self._render_mode = self.func_env.render_mode
+        
         self._render_kwargs = render_kwargs
 
     def _init_render(self) -> None:
@@ -232,7 +235,7 @@ class StatefulSingleFuncEnv(Env[
             return obs, info
         else:
             self.state, self.common_state, obs, info = self.func_env.reset(
-                self.state, self.common_state, seed=seed
+                self.state, self.common_state
             )
             return obs, info
     
