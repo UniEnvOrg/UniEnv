@@ -7,6 +7,7 @@ from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.windowed_view import FuncWindowedViewSensor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Tuple as TupleSpace, Box
+from unienv_interface.utils import seed_util
 import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass, replace as dataclass_replace
@@ -85,7 +86,7 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
             state=state,
             common_state=common_state,
             render_kwargs=sensor_state.render_kwargs,
-            seed=common_state.np_rng.integers(0, 4096),
+            seed=seed_util.next_seed(common_state.np_rng),
             scene_option=sensor_state.scene_option
         )
         return state, common_state, sensor_state

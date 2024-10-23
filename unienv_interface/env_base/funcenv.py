@@ -2,6 +2,7 @@ from typing import Any, Callable, Generic, TypeVar, Tuple, Dict, Optional, Suppo
 import abc
 import numpy as np
 from unienv_interface.backends import ComputeBackend
+from unienv_interface.utils import seed_util
 import gymnasium as gym
 from ..space import Space
 from dataclasses import dataclass
@@ -63,7 +64,7 @@ class FuncEnv(
     ]:
         """Reset the environment."""
         return self.initial(
-            seed=common_state.np_rng.integers(0, 4096)
+            seed=seed_util.next_seed(common_state.np_rng),
         )
 
     @abc.abstractmethod

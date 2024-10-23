@@ -289,6 +289,6 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             low=new_low,
             high=new_high,
             dtype=new_low.dtype,
-            seed=self.np_rng.integers(0, 4096)
+            seed=self.np_rng
         )
 

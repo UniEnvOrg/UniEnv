@@ -3,6 +3,7 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend
+from unienv_interface.utils import seed_util
 import array_api_compat
 import gymnasium as gym
 import dataclasses
@@ -81,7 +82,7 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             node_space=self.node_space.to_device(device),
             edge_space=self.edge_space.to_device(device) if self.edge_space is not None else None,
             device=device,
-            seed=self.np_rng.integers(0, 4096)
+            seed=seed_util.next_seed(self.np_rng)
         )
 
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Graph":
@@ -90,7 +91,7 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             node_space=self.node_space.to_backend(backend, device),
             edge_space=self.edge_space.to_backend(backend, device) if self.edge_space is not None else None,
             device=device,
-            seed=self.np_rng.integers(0, 4096)
+            seed=seed_util.next_seed(self.np_rng)
         )
 
     def _generate_sample_space(
@@ -297,5 +298,5 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
         return gym.spaces.Graph(
             node_space=self.node_space.to_gym_space(),
             edge_space=self.edge_space.to_gym_space() if self.edge_space is not None else None,
-            seed=self.np_rng.integers(0, 4096)
+            seed=seed_util.next_seed(self.np_rng)
         )

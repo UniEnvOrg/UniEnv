@@ -2,10 +2,11 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from ..env_base.env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
-from ..env_base.wrapper import Wrapper, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
-from ..backends import ComputeBackend
-from ..space import Space
+from unienv_interface.utils import seed_util
+from unienv_interface.env_base.env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from unienv_interface.env_base.wrapper import Wrapper, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
+from unienv_interface.backends import ComputeBackend
+from unienv_interface.space import Space
 import array_api_compat
 
 def backend_dict_transform(
@@ -55,7 +56,7 @@ class ToBackendWrapper(
     ) -> None:
         super().__init__(env)
         self._rng : WrapperBRngT = backend.random_number_generator(
-            seed=env.np_rng.integers(0, 4096),
+            seed=seed_util.next_seed(env.np_rng),
             device=device
         )
         self._action_space = env.action_space.to_backend(
@@ -166,7 +167,7 @@ class ToDeviceWrapper(
     ) -> None:
         super().__init__(env)
         self._rng : BRngT = env.backend.random_number_generator(
-            seed=env.np_rng.integers(0, 4096),
+            seed=seed_util.next_seed(env.np_rng),
             device=device
         )
         self._action_space = env.action_space.to_device(

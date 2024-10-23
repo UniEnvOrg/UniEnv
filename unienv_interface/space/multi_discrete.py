@@ -182,4 +182,4 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         return new_tensor
 
     def to_gym_space(self) -> gym.Space:
-        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start), seed=self.np_rng.integers(0, 4096))
+        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start), seed=self.np_rng)

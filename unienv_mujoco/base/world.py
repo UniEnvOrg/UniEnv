@@ -2,6 +2,7 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 from abc import ABC, abstractmethod
 from unienv_interface.world.world import FuncWorld, FuncEnvCommonState
 from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.utils import seed_util
 import mujoco
 import os.path
 from dm_control import mjcf
@@ -126,7 +127,7 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator])
         FuncEnvCommonState[Any, np.random.Generator]
     ]:
         return self.initial(
-            seed=common_state.np_rng.integers(0, 4096)
+            seed=seed_util.next_seed(common_state.np_rng)
         )
     
     def step(
