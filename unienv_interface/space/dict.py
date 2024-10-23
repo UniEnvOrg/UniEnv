@@ -208,5 +208,5 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
     def to_gym_space(self) -> gym.Space:
         return gym.spaces.Dict(
             {key: space.to_gym_space() for key, space in self.spaces.items()},
-            seed=self.seed,
+            seed=self.np_rng,
         )
