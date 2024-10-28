@@ -78,7 +78,7 @@ class FuncTask(
     @abstractmethod
     def initial(
         self, 
-        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         *, 
@@ -93,7 +93,7 @@ class FuncTask(
     
     def reset(
         self, 
-        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         task_state : TaskStateT
@@ -294,7 +294,7 @@ class FuncTaskWrapper(
 
     def initial(
         self,
-        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         *args, 
@@ -309,7 +309,7 @@ class FuncTaskWrapper(
 
     def reset(
         self,
-        world : FuncWorld[StateType, BDeviceType, BRNGType],
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         task_state : TaskWrapperStateT

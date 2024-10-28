@@ -34,7 +34,7 @@ class WorldBasedFuncEnvRenderState(
     render_sensor_data : Optional[RenderSensorDataT]
 
 WorldBasedFuncEnvInfoCallback = Callable[[
-    FuncWorld[WorldStateT, BDeviceType, BRNGType],
+    FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
     FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
     WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
     FuncEnvCommonState[BDeviceType, BRNGType],
@@ -73,7 +73,7 @@ class WorldBasedFuncEnv(
 ):
     def __init__(
         self,
-        world : FuncWorld[WorldStateT, BDeviceType, BRNGType],
+        world : FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
         actor : FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
         task : FuncTask[WorldStateT, TaskStateT, RewardType, TerminationType],
         render_sensor : Optional[Union[

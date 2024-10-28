@@ -49,7 +49,7 @@ class LambdaFuncTask(
     
     def initial(
         self, 
-        world : FuncWorld[StateType, Any, Any],
+        world : FuncWorld[StateType, Any, Any, Any],
         state : StateType,
         common_state : FuncEnvCommonState,
         *, 
@@ -63,7 +63,7 @@ class LambdaFuncTask(
     
     def reset(
         self,
-        world : FuncWorld[StateType, Any, Any],
+        world : FuncWorld[StateType, Any, Any, Any],
         state : StateType,
         common_state : FuncEnvCommonState,
         task_state : None

@@ -16,7 +16,7 @@ class MujocoFuncWorldState:
     mj_model : mujoco.MjModel
     data : mujoco.MjData
 
-class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.random.Generator]):
+class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.Generator]):
     is_real = False
     backend = NumpyComputeBackend
 
