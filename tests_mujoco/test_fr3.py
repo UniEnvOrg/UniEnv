@@ -78,6 +78,7 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
     return MujocoIKWrapper(
         actor=fr3_actor,
         ik=bulk_ik,
+        mj_model=fr3_world._mjmodel,
         new_action_space=EEF_SE3_WORKSPACE,
         fn_target_transform=lambda action: mink.SE3.from_rotation_and_translation(
             rotation=mink.SO3.from_rpy_radians(*action[3:]),

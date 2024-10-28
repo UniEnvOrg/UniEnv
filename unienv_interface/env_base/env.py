@@ -81,6 +81,10 @@ class Env(abc.ABC, Generic[ObsType, ActType, RewardType, TerminationType, Render
     @property
     def unwrapped(self) -> "Env":
         return self
+    
+    @property
+    def prev_wrapper_layer(self) -> Optional["Env"]:
+        return None
 
     def has_wrapper_attr(self, name: str) -> bool:
         """Checks if the attribute `name` exists in the environment."""

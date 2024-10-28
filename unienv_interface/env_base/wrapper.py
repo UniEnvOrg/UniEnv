@@ -48,12 +48,16 @@ class Wrapper(
         return self.env.close()
 
     @property
-    def unwrapped(self) -> Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
+    def unwrapped(self) -> Env:
         """Returns the base environment of the wrapper.
 
         This will be the bare :class:`gymnasium.Env` environment, underneath all layers of wrappers.
         """
         return self.env.unwrapped
+    
+    @property
+    def prev_wrapper_layer(self) -> Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
+        return self.env
 
     def has_wrapper_attr(self, name: str) -> bool:
         """Checks if the given attribute is within the wrapper or its environment."""
@@ -91,15 +95,17 @@ class Wrapper(
         sub_env = self
         attr_set = False
 
-        while attr_set is False and isinstance(sub_env, Wrapper):
+        while attr_set is False and sub_env is not None:
             if hasattr(sub_env, name):
                 setattr(sub_env, name, value)
                 attr_set = True
             else:
-                sub_env = sub_env.env
+                sub_env = sub_env.prev_wrapper_layer
 
-        if attr_set is False:
-            setattr(sub_env, name, value)
+        if attr_set is False and sub_env is None:
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )
 
     def __str__(self):
         """Returns the wrapper name and the :attr:`env` representation string."""

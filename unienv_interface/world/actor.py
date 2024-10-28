@@ -103,6 +103,27 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     def __del__(self) -> None:
         self.close()
 
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "Actor":
+        return self
+    
+    @property
+    def prev_wrapper_layer(self) -> Optional["Actor"]:
+        return None
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        """Checks if the attribute `name` exists in the environment."""
+        return hasattr(self, name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        """Gets the attribute `name` from the environment."""
+        return getattr(self, name)
+    
+    def set_wrapper_attr(self, name: str, value: Any):
+        """Sets the attribute `name` on the environment with `value`."""
+        setattr(self, name, value)
+
 ActorStateT = TypeVar("ActorStateT")
 
 @dataclass(frozen=True)
@@ -410,12 +431,143 @@ class FuncActor(
             )
         
         return state, common_state
+    
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "Actor":
+        return self
+    
+    @property
+    def prev_wrapper_layer(self) -> Optional["Actor"]:
+        return None
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        """Checks if the attribute `name` exists in the environment."""
+        return hasattr(self, name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        """Gets the attribute `name` from the environment."""
+        return getattr(self, name)
+    
+    def set_wrapper_attr(self, name: str, value: Any):
+        """Sets the attribute `name` on the environment with `value`."""
+        setattr(self, name, value)
 
 ActorWrapperActT = TypeVar("ActorWrapperActT")
-ActorWrapperStateT = TypeVar("ActorWrapperStateT")
 ActorWrapperBDeviceType = TypeVar("ActorWrapperBDeviceType")
 ActorWrapperBDtypeType = TypeVar("ActorWrapperBDtypeType")
 ActorWrapperBRNGType = TypeVar("ActorWrapperBRNGType")
+
+class ActorWrapper(
+    Generic[
+        ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
+        ActorActT, BDeviceType, BDtypeType, BRNGType
+    ],
+    Actor[ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]
+):
+    def __init__(
+        self,
+        actor : Actor[ActorActT, BDeviceType, BDtypeType, BRNGType]
+    ):
+        self.actor = actor
+        self._onboard_action_space : Optional[DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]] = None
+        self._action_space : Optional[Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]] = None
+    
+    @property
+    def onboard_observation_space(self) -> DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
+        return self.actor.onboard_observation_space
+    
+    @onboard_observation_space.setter
+    def onboard_observation_space(self, value : DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]) -> None:
+        self.actor.onboard_observation_space = value
+    
+    @property
+    def action_space(self) -> Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
+        return self._action_space or self.actor.action_space
+    
+    @action_space.setter
+    def action_space(self, value : Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]) -> None:
+        self._action_space = value
+
+    @property
+    def control_timestep(self) -> float:
+        return self.actor.control_timestep
+    
+    @control_timestep.setter
+    def control_timestep(self, value : float) -> None:
+        self.actor.control_timestep = value
+
+    @property
+    def is_real(self) -> bool:
+        return self.actor.is_real
+    
+    def update_onboard(self, last_step_elapsed : float) -> None:
+        self.actor.update_onboard(last_step_elapsed=last_step_elapsed)
+    
+    def get_onboard_data(self) -> Dict[str, Any]:
+        return self.actor.get_onboard_data()
+    
+    @property
+    def sensors(self) -> Dict[str, Sensor]:
+        return self.actor.sensors
+    
+    def update_sensors(self, last_step_elapsed : float) -> None:
+        self.actor.update_sensors(last_step_elapsed=last_step_elapsed)
+
+    def get_sensors_data(self) -> Dict[str, Any]:
+        return self.actor.get_sensors_data()
+    
+    def set_next_action(self, action : ActorWrapperActT) -> None:
+        self.actor.set_next_action(action=action)
+
+    def pre_environment_step(self, last_step_elapsed : float) -> None:
+        self.actor.pre_environment_step(last_step_elapsed=last_step_elapsed)
+
+    def reset(self) -> None:
+        self.actor.reset()
+    
+    def close(self) -> None:
+        self.actor.close()
+    
+    @property
+    def unwrapped(self) -> "Actor":
+        return self.actor.unwrapped
+    
+    @property
+    def prev_wrapper_layer(self) -> "Actor[ActorActT, BDeviceType, BDtypeType, BRNGType]":
+        return self.actor
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        return hasattr(self, name) or self.actor.has_wrapper_attr(name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        if hasattr(self, name):
+            return getattr(self, name)
+        else:
+            try:
+                return self.actor.get_wrapper_attr(name)
+            except AttributeError as e:
+                raise AttributeError(
+                    f"wrapper {type(self).__name__} has no attribute {name!r}"
+                ) from e
+
+    def set_wrapper_attr(self, name: str, value: Any):
+        sub_actor = self
+        attr_set = False
+
+        while attr_set is False and sub_actor is not None:
+            if hasattr(sub_actor, name):
+                setattr(sub_actor, name, value)
+                attr_set = True
+            else:
+                sub_actor = sub_actor.prev_wrapper_layer
+
+        if attr_set is False and sub_actor is None:
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )
+
+ActorWrapperStateT = TypeVar("ActorWrapperStateT")
 class FuncActorWrapper(
     Generic[
         StateType, ActorWrapperStateT, ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
@@ -597,3 +749,42 @@ class FuncActorWrapper(
             common_state=common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state)
         )
+
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "FuncActor":
+        return self.actor.unwrapped
+    
+    @property
+    def prev_wrapper_layer(self) -> "FuncActor[StateType, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType]":
+        return self.actor
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        return hasattr(self, name) or self.actor.has_wrapper_attr(name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        if hasattr(self, name):
+            return getattr(self, name)
+        else:
+            try:
+                return self.actor.get_wrapper_attr(name)
+            except AttributeError as e:
+                raise AttributeError(
+                    f"wrapper {type(self).__name__} has no attribute {name!r}"
+                ) from e
+
+    def set_wrapper_attr(self, name: str, value: Any):
+        sub_actor = self
+        attr_set = False
+
+        while attr_set is False and sub_actor is not None:
+            if hasattr(sub_actor, name):
+                setattr(sub_actor, name, value)
+                attr_set = True
+            else:
+                sub_actor = sub_actor.prev_wrapper_layer
+
+        if attr_set is False and sub_actor is None:
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )

@@ -134,6 +134,27 @@ class FuncTask(
     ]:
         """Close the task."""
         return state, common_state
+    
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "FuncTask":
+        return self
+    
+    @property
+    def prev_wrapper_layer(self) -> Optional["FuncTask"]:
+        return None
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        """Checks if the attribute `name` exists in the environment."""
+        return hasattr(self, name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        """Gets the attribute `name` from the environment."""
+        return getattr(self, name)
+    
+    def set_wrapper_attr(self, name: str, value: Any):
+        """Sets the attribute `name` on the environment with `value`."""
+        setattr(self, name, value)
 
 TaskWrapperStateT = TypeVar("TaskWrapperStateT")
 TaskWrapperRewardType = TypeVar("TaskWrapperRewardType")
@@ -238,3 +259,42 @@ class FuncTaskWrapper(
         FuncEnvCommonState[BDeviceType, BRNGType]
     ]:
         return self.task.close(state, common_state, task_state)
+    
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "FuncTask":
+        return self.task.unwrapped
+    
+    @property
+    def prev_wrapper_layer(self) -> "FuncTask[StateType, TaskStateT, RewardType, TerminationType]":
+        return self.task
+    
+    def has_wrapper_attr(self, name: str) -> bool:
+        return hasattr(self, name) or self.task.has_wrapper_attr(name)
+    
+    def get_wrapper_attr(self, name: str) -> Any:
+        if hasattr(self, name):
+            return getattr(self, name)
+        else:
+            try:
+                return self.task.get_wrapper_attr(name)
+            except AttributeError as e:
+                raise AttributeError(
+                    f"wrapper {type(self).__name__} has no attribute {name!r}"
+                ) from e
+
+    def set_wrapper_attr(self, name: str, value: Any):
+        sub_task = self
+        attr_set = False
+
+        while attr_set is False and sub_task is not None:
+            if hasattr(sub_task, name):
+                setattr(sub_task, name, value)
+                attr_set = True
+            else:
+                sub_task = sub_task.prev_wrapper_layer
+
+        if attr_set is False and sub_task is None:
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )

@@ -1,4 +1,4 @@
-from .actor import Actor, FuncActor, FuncActorWrapper
+from .actor import Actor, ActorWrapper, FuncActor, FuncActorWrapper
 from .sensor import Sensor, FuncSensor
 from .task import Task, FuncTask, FuncTaskWrapper
 from .world import World, FuncWorld
