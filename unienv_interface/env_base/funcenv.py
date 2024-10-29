@@ -5,8 +5,8 @@ from unienv_interface.backends import ComputeBackend
 from unienv_interface.utils import seed_util
 import gymnasium as gym
 from ..space import Space
-from dataclasses import dataclass
-from .env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from dataclasses import dataclass, replace as dataclass_replace
+from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
 StateType = TypeVar("StateType")
 RenderStateType = TypeVar("RenderStateType")
 
@@ -18,20 +18,20 @@ RenderStateType = TypeVar("RenderStateType")
 # BDeviceT = TypeVar("BDeviceT")
 # BRngT = TypeVar("BRngT")
 
-@dataclass
+@dataclass(frozen=True)
 class FuncEnvCommonState(Generic[BDeviceT, BRngT]):
     np_rng : np.random.Generator
     rng : BRngT
     device : Optional[BDeviceT] = None
 
-@dataclass
+@dataclass(frozen=True)
 class FuncEnvCommonRenderState:
     render_mode : Optional[str] = None
     render_fps : Optional[int] = None
 
 class FuncEnv(
     abc.ABC,
-    Generic[StateType, RenderStateType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+    Generic[StateType, RenderStateType, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
 ):
     metadata : Dict[str, Any] = {
         "render_modes": []
@@ -41,13 +41,15 @@ class FuncEnv(
 
     observation_space: Space[Any, Any, BDeviceT, Any, BRngT]
     action_space: Space[Any, Any, BDeviceT, Any, BRngT]
+    context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
 
     @abc.abstractmethod
     def initial(self, *, seed : int, device : Optional[BDeviceT] = None) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
+        ContextType,
         ObsType,
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Dict[str, Any]
     ]:
         """Initial state."""
         raise NotImplementedError
@@ -59,8 +61,9 @@ class FuncEnv(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
+        ContextType,
         ObsType,
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Dict[str, Any]
     ]:
         """Reset the environment."""
         return self.initial(
@@ -75,7 +78,7 @@ class FuncEnv(
         RewardType, 
         TerminationType, 
         TerminationType, 
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Dict[str, Any]
     ]:
         """Transition."""
         raise NotImplementedError
@@ -132,14 +135,14 @@ class FuncEnv(
         raise NotImplementedError
 
 class StatefulSingleFuncEnv(Env[
-    ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
 ],Generic[
     StateType, RenderStateType, 
-    ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
 ]):
     def __init__(
         self,
-        func_env : FuncEnv[StateType, RenderStateType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
+        func_env : FuncEnv[StateType, RenderStateType, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
         *instance_args,
         instance_kwargs : Dict[str, Any] = {},
         render_mode : Optional[str] = None,
@@ -150,10 +153,10 @@ class StatefulSingleFuncEnv(Env[
         self.func_env = func_env
         self.device = device
         
-        self.state, self.common_state, obs, info = self.func_env.initial(
+        self.state, self.common_state, context, obs, info = self.func_env.initial(
             *instance_args, seed=seed, device=device, **instance_kwargs
         )
-        self._first_instance_obs_info : Optional[Tuple[ObsType, Dict[str, Any]]] = (obs, info)
+        self._first_instance_reset : Optional[Tuple[ContextType, ObsType, Dict[str, Any]]] = (context, obs, info)
 
         self.render_state : Optional[RenderStateType] = None
         self.render_common_state : Optional[FuncEnvCommonRenderState] = None
@@ -216,6 +219,10 @@ class StatefulSingleFuncEnv(Env[
         return self.func_env.observation_space
 
     @property
+    def context_space(self) -> Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]]:
+        return self.func_env.context_space
+
+    @property
     def np_rng(self) -> np.random.Generator:
         return self.common_state.np_rng
     
@@ -226,19 +233,19 @@ class StatefulSingleFuncEnv(Env[
     def reset(
         self,
         seed : Optional[int] = None,
-    ) -> Tuple[ObsType, Dict[str, Any]]:
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
         if (
-            self._first_instance_obs_info is not None and
+            self._first_instance_reset is not None and
             seed is None
         ):
-            obs, info = self._first_instance_obs_info
-            self._first_instance_obs_info = None
-            return obs, info
+            reset_ret = self._first_instance_reset
+            self._first_instance_reset = None
+            return reset_ret
         else:
-            self.state, self.common_state, obs, info = self.func_env.reset(
+            self.state, self.common_state, context, obs, info = self.func_env.reset(
                 self.state, self.common_state
             )
-            return obs, info
+            return context, obs, info
     
     def step(
         self,

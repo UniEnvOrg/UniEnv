@@ -8,6 +8,7 @@ from ..env_base.funcenv import FuncEnvCommonState
 
 class Task(ABC, Generic[RewardType, TerminationType]):
     observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
+    context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
 
     def update(self, last_step_elapsed : float) -> None:
         """Update the task with a new state (e.g. from the environment)."""
@@ -20,6 +21,11 @@ class Task(ABC, Generic[RewardType, TerminationType]):
     @abstractmethod
     def get_data(self) -> Optional[Dict[str, Any]]:
         """Get the optional Obs from the task. This is called after control_update or reset / init."""
+        raise NotImplementedError
+    
+    @abstractmethod
+    def get_context(self) -> Optional[Dict[str, Any]]:
+        """Get the context of the task."""
         raise NotImplementedError
 
     @abstractmethod
@@ -75,6 +81,8 @@ class FuncTask(
     Generic[StateType, TaskStateT, RewardType, TerminationType]
 ):
     observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
+    context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
+
     @abstractmethod
     def initial(
         self, 
@@ -86,7 +94,8 @@ class FuncTask(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        TaskStateT
+        TaskStateT,
+        Optional[Dict[str, Any]] # Optional Context
     ]:
         """Initial state."""
         raise NotImplementedError
@@ -100,7 +109,8 @@ class FuncTask(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        TaskStateT
+        TaskStateT,
+        Optional[Dict[str, Any]] # Optional Context
     ]:
         return state, common_state, task_state
     
@@ -196,15 +206,24 @@ class TaskWrapper(
         task : Task[RewardType, TerminationType]
     ):
         self.task = task
-        self._observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
+        self._observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = self.task.observation_space
+        self._context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = self.task.context_space
     
     @property
     def observation_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
-        return self._observation_space or self.task.observation_space
+        return self._observation_space
     
     @observation_space.setter
     def observation_space(self, value : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]) -> None:
         self._observation_space = value
+
+    @property
+    def context_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        return self._context_space
+    
+    @context_space.setter
+    def context_space(self, value : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]) -> None:
+        self._context_space = value
 
     def update(self, last_step_elapsed : float) -> None:
         self.task.update(last_step_elapsed)
@@ -215,6 +234,9 @@ class TaskWrapper(
     def get_data(self) -> Optional[Dict[str, Any]]:
         return self.task.get_data()
     
+    def get_context(self) -> Optional[Dict[str, Any]]:
+        return self.task.get_context()
+
     def get_reward(self) -> TaskWrapperRewardType:
         return self.task.get_reward()
     
@@ -282,15 +304,24 @@ class FuncTaskWrapper(
         task : FuncTask[StateType, TaskStateT, RewardType, TerminationType]
     ):
         self.task = task
-        self._observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
-    
+        self._observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = self.task.observation_space
+        self._context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = self.task.context_space
+
     @property
     def observation_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
-        return self._observation_space or self.task.observation_space
+        return self._observation_space
     
     @observation_space.setter
     def observation_space(self, value : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]) -> None:
         self._observation_space = value
+
+    @property
+    def context_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        return self._context_space
+    
+    @context_space.setter
+    def context_space(self, value : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]) -> None:
+        self._context_space = value
 
     def initial(
         self,
@@ -303,7 +334,8 @@ class FuncTaskWrapper(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        TaskWrapperStateT
+        TaskWrapperStateT,
+        Optional[Dict[str, Any]]
     ]:
         return self.task.initial(world, state, common_state, *args, seed=seed, **kwargs)
 
@@ -316,7 +348,8 @@ class FuncTaskWrapper(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
-        TaskWrapperStateT
+        TaskWrapperStateT,
+        Optional[Dict[str, Any]]
     ]:
         return self.task.reset(world, state, common_state, task_state)
 

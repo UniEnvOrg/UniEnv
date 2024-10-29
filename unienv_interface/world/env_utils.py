@@ -39,6 +39,7 @@ WorldBasedFuncEnvInfoCallback = Callable[[
     WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
     FuncEnvCommonState[BDeviceType, BRNGType],
     Dict[str, Any], # Observation
+    Optional[Dict[str, Any]], # Optional Context
     Optional[ActorActT], # Optional Action (When stepping)
 ], Union[
     Dict[str, Any],
@@ -49,7 +50,8 @@ class WorldBasedFuncEnv(
     FuncEnv[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         WorldBasedFuncEnvRenderState[RenderSensorDataT], 
-        DictSpace[BDeviceType, BDtypeType, BRNGType], 
+        Optional[Dict[str, Any]],
+        Dict[str, Any],
         ActorActT,
         RewardType,
         TerminationType,
@@ -125,6 +127,10 @@ class WorldBasedFuncEnv(
         )
     
     @property
+    def context_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        return self.task.context_space
+    
+    @property
     def action_space(self) -> Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]:
         return self.actor.action_space
 
@@ -147,13 +153,14 @@ class WorldBasedFuncEnv(
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],
-        Dict[str, Any],
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Optional[Dict[str, Any]], # Context
+        Dict[str, Any], # Observation
+        Dict[str, Any] # Info
     ]:
         world_state, common_state = self.world.initial(
             seed=seed, **world_kwargs
         )
-        world_state, common_state, task_state = self.task.initial(
+        world_state, common_state, task_state, task_context = self.task.initial(
             self.world, world_state, common_state, seed=seed, **task_kwargs
         )
         world_state, common_state, actor_combined_state = self.actor.initial(
@@ -201,7 +208,7 @@ class WorldBasedFuncEnv(
             )
         else:
             info = {}
-        return env_state, common_state, obs, info
+        return env_state, common_state, task_context, obs, info
 
     def reset(
         self,
@@ -210,14 +217,15 @@ class WorldBasedFuncEnv(
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],
-        Dict[str, Any],
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Optional[Dict[str, Any]], # Context
+        Dict[str, Any], # Observation
+        Dict[str, Any] # Info
     ]:
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
         world_state, common_state = self.world.reset(
             world_state, common_state
         )
-        world_state, common_state, task_state = self.task.reset(
+        world_state, common_state, task_state, task_context = self.task.reset(
             self.world, world_state, common_state, task_state
         )
         world_state, common_state, actor_combined_state = self.actor.reset(
@@ -267,7 +275,7 @@ class WorldBasedFuncEnv(
             )
         else:
             info = {}
-        return env_state, common_state, obs, info
+        return env_state, common_state, task_context, obs, info
 
     def step(
         self,
@@ -281,7 +289,7 @@ class WorldBasedFuncEnv(
         RewardType,
         TerminationType,
         TerminationType,
-        Dict[str, Any] | Sequence[Dict[str, Any]]
+        Dict[str, Any]
     ]:
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
         if self._n_world_step is None:

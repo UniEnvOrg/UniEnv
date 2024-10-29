@@ -6,15 +6,21 @@ from ..world import FuncWorld
 class LambdaTask(Task[RewardType, TerminationType]):
     def __init__(
         self,
-        observation_space : Optional[DictSpace[Any, Any, Any]],
-        observation_fn : Optional[Callable[[], Dict[str, Any]]],
         reward_fn : Callable[[], RewardType],
         termination_fn : Callable[[], TerminationType],
         truncation_fn : Callable[[], TerminationType],
+        observation_space : Optional[DictSpace[Any, Any, Any]] = None,
+        observation_fn : Optional[Callable[[], Dict[str, Any]]] = None,
+        context_space : Optional[DictSpace[Any, Any, Any]] = None,
+        context_fn : Optional[Callable[[], Dict[str, Any]]] = None,
     ):
         assert observation_space is None or not observation_fn is None, "observation_fn must be provided if observation_space is provided"
+        assert context_space is None or not context_fn is None, "context_fn must be provided if context_space is provided"
+
         self.observation_space = observation_space
         self.observation_fn = observation_fn
+        self.context_space = context_space
+        self.context_fn = context_fn
         self.reward_fn = reward_fn
         self.termination_fn = termination_fn
         self.truncation_fn = truncation_fn
@@ -23,6 +29,11 @@ class LambdaTask(Task[RewardType, TerminationType]):
         if self.observation_fn is None or self.observation_space is None:
             return None
         return self.observation_fn()
+    
+    def get_context(self) -> Dict[str, Any] | None:
+        if self.context_fn is None or self.context_space is None:
+            return None
+        return self.context_fn()
 
     def get_reward(self) -> RewardType:
         return self.reward_fn()
@@ -38,13 +49,19 @@ class LambdaFuncTask(
 ):
     def __init__(
         self,
-        observation_space : Optional[DictSpace[Any, Any, Any]],
-        observation_fn : Optional[Callable[[StateType, FuncEnvCommonState], Dict[str, Any]]],
         control_step_fn : Callable[[StateType, FuncEnvCommonState, Any, float], Tuple[RewardType, TerminationType, TerminationType]],
+        observation_space : Optional[DictSpace[Any, Any, Any]] = None,
+        observation_fn : Optional[Callable[[StateType, FuncEnvCommonState], Dict[str, Any]]] = None,
+        context_space : Optional[DictSpace[Any, Any, Any]] = None,
+        context_fn : Optional[Callable[[StateType, FuncEnvCommonState], Dict[str, Any]]] = None,
     ):
         assert observation_space is None or not observation_fn is None, "observation_fn must be provided if observation_space is provided"
+        assert context_space is None or not context_fn is None, "context_fn must be provided if context_space is provided"
+
         self.observation_space = observation_space
         self.observation_fn = observation_fn
+        self.context_space = context_space
+        self.context_fn = context_fn
         self.control_step_fn = control_step_fn
     
     def initial(
@@ -57,9 +74,15 @@ class LambdaFuncTask(
     ) -> Tuple[
         StateType,
         FuncEnvCommonState,
-        None
+        None,
+        Optional[Dict[str, Any]]
     ]:
-        return state, common_state, None
+        if self.context_fn is not None:
+            context = self.context_fn(state, common_state)
+        else:
+            context = None
+        
+        return state, common_state, None, context
     
     def reset(
         self,
@@ -72,7 +95,12 @@ class LambdaFuncTask(
         FuncEnvCommonState,
         None
     ]:
-        return state, common_state, None
+        return self.initial(
+            world,
+            state,
+            common_state,
+            seed=0
+        )
     
     def control_step(
         self,

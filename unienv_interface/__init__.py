@@ -1,3 +1,4 @@
-from .backends import ComputeBackend
-from .env_base import Env, Wrapper
-from .space import Space
+from .backends import *
+from .env_base import *
+from .space import *
+from .world import *

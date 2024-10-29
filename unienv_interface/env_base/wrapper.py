@@ -1,4 +1,4 @@
-from .env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
 from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
@@ -6,6 +6,7 @@ from ..space import Space
 from ..backends import ComputeBackend
 import numpy as np
 
+WrapperContextType = TypeVar("WrapperContextType")
 WrapperObsType = TypeVar("WrapperObsType")
 WrapperActType = TypeVar("WrapperActType")
 WrapperRewardType = TypeVar("WrapperRewardType", bound=SupportsFloat)
@@ -17,8 +18,8 @@ WrapperRenderFrame = TypeVar("WrapperRenderFrame")
 class Wrapper(
     Env[WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
     Generic[
-        WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
-        ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
+        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
     ]
 ):
     def __init__(self, env: Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
@@ -27,6 +28,7 @@ class Wrapper(
 
         self._action_space: Space[WrapperActType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = None
         self._observation_space: Space[WrapperObsType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = None
+        self._context_space: Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = self.env.context_space
         self._metadata: Dict[str, Any] | None = None
 
     def step(
@@ -38,7 +40,7 @@ class Wrapper(
         self, 
         *, 
         seed: Optional[int] = None
-    ) -> Tuple[WrapperObsType, Dict[str, Any]]:
+    ) -> Tuple[WrapperContextType, WrapperObsType, Dict[str, Any]]:
         return self.env.reset(seed=seed)
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
@@ -140,6 +142,16 @@ class Wrapper(
     @observation_space.setter
     def observation_space(self, space: Space[WrapperObsType, Any, WrapperBDeviceT, Any, WrapperBRngT]):
         self._observation_space = space
+
+    @property
+    def context_space(
+        self,
+    ) -> Optional[Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT]]:
+        return self._context_space
+    
+    @context_space.setter
+    def context_space(self, space: Optional[Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT]]):
+        self._context_space = space
 
     @property
     def metadata(self) -> Dict[str, Any]:

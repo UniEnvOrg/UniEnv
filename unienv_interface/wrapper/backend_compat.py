@@ -3,8 +3,8 @@ import gymnasium as gym
 import numpy as np
 import copy
 from unienv_interface.utils import seed_util
-from unienv_interface.env_base.env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
-from unienv_interface.env_base.wrapper import Wrapper, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from unienv_interface.env_base.wrapper import Wrapper, WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.space import Space
 import array_api_compat
@@ -44,13 +44,13 @@ def backend_array_transform(
 
 class ToBackendWrapper(
     Wrapper[
-        WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
-        ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
+        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
     ]
 ):
     def __init__(
         self,
-        env : Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
+        env : Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
         backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]],
         device : Optional[WrapperBDeviceT] = None,
     ) -> None:
@@ -64,6 +64,10 @@ class ToBackendWrapper(
             device
         )
         self._observation_space = env.observation_space.to_backend(
+            backend,
+            device
+        )
+        self._context_space = None if env.context_space is None else env.context_space.to_backend(
             backend,
             device
         )
@@ -112,18 +116,21 @@ class ToBackendWrapper(
         *args,
         seed : Optional[int] = None,
         **kwargs
-    ) -> Tuple[WrapperObsType, Dict[str, Any]]:
+    ) -> Tuple[WrapperContextType, WrapperObsType, Dict[str, Any]]:
         if seed is not None:
             self._rng = self.backend.random_number_generator(
                 seed=seed,
                 device=self._device
             )
-        obs, info = self.env.reset(
+        context, obs, info = self.env.reset(
             *args,
             seed=seed,
             **kwargs
         )
 
+        c_context = None if self.context_space is None else self.context_space.from_other_backend(
+            context
+        )
         c_obs = self.observation_space.from_other_backend(
             obs
         )
@@ -132,7 +139,7 @@ class ToBackendWrapper(
             self.env.backend,
             info
         )
-        return c_obs, c_info
+        return c_context, c_obs, c_info
     
     def render(self) -> WrapperRenderFrame | Sequence[WrapperRenderFrame] | None:
         frame = self.env.render()
@@ -156,13 +163,13 @@ class ToBackendWrapper(
 
 class ToDeviceWrapper(
     Wrapper[
-        WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
-        WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
+        WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
+        WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT
     ]
 ):
     def __init__(
         self,
-        env : Env[WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
+        env : Env[WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
         device : BDeviceT
     ) -> None:
         super().__init__(env)
@@ -174,6 +181,9 @@ class ToDeviceWrapper(
             device
         )
         self._observation_space = env.observation_space.to_device(
+            device
+        )
+        self._context_space = None if env.context_space is None else env.context_space.to_device(
             device
         )
 
@@ -212,22 +222,25 @@ class ToDeviceWrapper(
         *args,
         seed : Optional[int] = None,
         **kwargs
-    ) -> Tuple[WrapperObsType, Dict[str, Any]]:
+    ) -> Tuple[WrapperContextType, WrapperObsType, Dict[str, Any]]:
         if seed is not None:
             self._rng = self.env.backend.random_number_generator(
                 seed=seed,
                 device=self._device
             )
-        obs, info = self.env.reset(
+        context, obs, info = self.env.reset(
             *args,
             seed=seed,
             **kwargs
         )
 
+        c_context = None if self.context_space is None else self.context_space.from_same_backend(
+            context
+        )
         c_obs = self.observation_space.from_same_backend(
             obs
         )
-        return c_obs, info
+        return c_context, c_obs, info
 
     def render(self) -> WrapperRenderFrame | Sequence[WrapperRenderFrame] | None:
         frame = self.env.render()

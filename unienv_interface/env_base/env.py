@@ -6,6 +6,7 @@ from ..backends import ComputeBackend
 import numpy as np
 
 ObsType = TypeVar("ObsType")
+ContextType = TypeVar("ContextType")
 ActType = TypeVar("ActType")
 RewardType = TypeVar("RewardType", bound=SupportsFloat)
 TerminationType = TypeVar("TerminationType")
@@ -13,7 +14,7 @@ RenderFrame = TypeVar("RenderFrame")
 BDeviceT = TypeVar("BDeviceT")
 BRngT = TypeVar("BRngT")
 
-class Env(abc.ABC, Generic[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
+class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
     # metadata of the environment
     metadata: dict[str, Any] = {
         "render_modes": []
@@ -28,6 +29,7 @@ class Env(abc.ABC, Generic[ObsType, ActType, RewardType, TerminationType, Render
 
     action_space: Space[ActType, Any, BDeviceT, Any, BRngT]
     observation_space: Space[ObsType, Any, BDeviceT, Any, BRngT]
+    context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
 
     np_rng : np.random.Generator = None
     rng : BRngT = None
@@ -43,7 +45,7 @@ class Env(abc.ABC, Generic[ObsType, ActType, RewardType, TerminationType, Render
         self,
         *,
         seed: Optional[int] = None,
-    ) -> Tuple[ObsType, Dict[str, Any]]:
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
         raise NotImplementedError
 
     @abc.abstractmethod

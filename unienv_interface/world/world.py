@@ -1,6 +1,4 @@
 from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple
-from .actor import Actor
-from .sensor import Sensor
 from ..backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
 from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 from abc import ABC, abstractmethod

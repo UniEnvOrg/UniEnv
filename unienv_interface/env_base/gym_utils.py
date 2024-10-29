@@ -2,25 +2,77 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from .env import Env, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
-from ..backends import ComputeBackend
-from ..backends.numpy import NumpyComputeBackend
-from ..space import Space
-from ..space import gym_utils
+from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.space import Space, Dict as DictSpace
+from unienv_interface.space import gym_utils
+from unienv_interface.utils import seed_util
 
 class ToGymnasiumEnv(
     gym.Env[Any, Any],
-    Generic[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+    Generic[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
 ):
     def __init__(
         self,
-        env: Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+        env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
     ):
         self.env = env
 
         self._metadata : Optional[Dict[str, Any]] = None
         self.action_space = gym_utils.to_gym_space(env.action_space)
-        self.observation_space = gym_utils.to_gym_space(env.observation_space)
+        self.observation_space = gym_utils.to_gym_space(__class__.combine_context_obs_space(
+            env.context_space, env.observation_space
+        ))
+        self._episode_context : Optional[ContextType] = None
+
+    @staticmethod
+    def combine_context_obs_space(
+        context_space: Space[ContextType, Any, BDeviceT, Any, BRngT],
+        observation_space: Space[ObsType, Any, BDeviceT, Any, BRngT]
+    ) -> Space[Union[ContextType, ObsType], Any, BDeviceT, Any, BRngT]:
+        if isinstance(context_space, DictSpace) and isinstance(observation_space, DictSpace):
+            spaces = context_space.spaces.copy()
+            spaces.update(observation_space.spaces)
+        elif isinstance(context_space, DictSpace):
+            spaces = context_space.spaces.copy()
+            spaces["observation"] = observation_space
+        elif isinstance(observation_space, DictSpace):
+            spaces = observation_space.spaces.copy()
+            spaces["context"] = context_space
+        else:
+            spaces = {
+                "context": context_space,
+                "observation": observation_space
+            }
+
+        return DictSpace(
+            backend=context_space.backend,
+            spaces=spaces,
+            device=context_space.device,
+            seed=seed_util.next_seed(context_space.np_rng)
+        )
+    
+    @staticmethod
+    def combine_context_obs(
+        context: ContextType,
+        observation: ObsType
+    ) -> Dict[str, Any]:
+        if isinstance(context, Dict) and isinstance(observation, Dict):
+            new_obs = context.copy()
+            new_obs.update(observation)
+        elif isinstance(context, Dict):
+            new_obs = context.copy()
+            new_obs["observation"] = observation
+        elif isinstance(observation, Dict):
+            new_obs = observation.copy()
+            new_obs["context"] = context
+        else:
+            new_obs = {
+                "context": context,
+                "observation": observation
+            }
+        return new_obs
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -62,7 +114,9 @@ class ToGymnasiumEnv(
             self.env.action_space, action
         )
         obs, rew, terminated, truncated, info = self.env.step(c_action)
-        c_obs = gym_utils.to_gym_data(self.env.observation_space, obs)
+        c_obs = gym_utils.to_gym_data(self.observation_space, self.combine_context_obs(
+            self._episode_context, obs
+        ))
         c_rew = float(rew)
         c_terminated = bool(terminated)
         c_truncated = bool(truncated)
@@ -76,10 +130,14 @@ class ToGymnasiumEnv(
         **kwargs,
     ) -> Tuple[ObsType, Dict[str, Any]]:
         kwargs = kwargs.update(options) if options is not None else kwargs
-        obs, info = self.env.reset(
+        context, obs, info = self.env.reset(
             *args, seed=seed, **kwargs
         )
-        c_obs = gym_utils.to_gym_data(self.env.observation_space, obs)
+        self._episode_context = context
+        c_obs = gym_utils.to_gym_data(
+            self.observation_space,
+            self.combine_context_obs(context, obs)
+        )
         return c_obs, info
 
     def render(self) -> RenderFrame | None:
@@ -92,7 +150,7 @@ class ToGymnasiumEnv(
         return f'{type(self).__name__}<{self.env}>'
 
 class FromGymnasiumEnv(
-    Env[ObsType, ActType, SupportsFloat, bool, RenderFrame, Any, np.random.Generator],
+    Env[None, ObsType, ActType, SupportsFloat, bool, RenderFrame, Any, np.random.Generator],
     Generic[ObsType, ActType, RenderFrame]
 ):
     def __init__(
@@ -108,6 +166,7 @@ class FromGymnasiumEnv(
 
         self.action_space = gym_utils.from_gym_space(env.action_space)
         self.observation_space = gym_utils.from_gym_space(env.observation_space)
+        self.context_space = None
 
         self._np_rng = env.np_random
         self._rng = env.np_random
@@ -168,10 +227,10 @@ class FromGymnasiumEnv(
         *args,
         seed: Optional[int] = None,
         **kwargs,
-    ) -> Tuple[ObsType, Dict[str, Any]]:
+    ) -> Tuple[None, ObsType, Dict[str, Any]]:
         obs, info = self.env.reset(*args, seed=seed, **kwargs)
         c_obs = gym_utils.from_gym_data(self.env.observation_space, obs)
-        return c_obs, info
+        return None, c_obs, info
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         return self.env.render()
