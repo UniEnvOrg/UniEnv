@@ -11,6 +11,7 @@ MujocoIKStateT = TypeVar("IKStateT")
 MujocoIKTargetT = TypeVar("IKTargetT")
 
 class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
+    is_eef_relative : bool = False
     @abstractmethod
     def initial(
         self,
@@ -49,6 +50,28 @@ class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
         mj_model : mujoco.MjModel,
         mj_data : mujoco.MjData
     ) -> MujocoIKTargetT:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def target_from_se3(
+        self,
+        translation : np.ndarray,
+        quaternion : np.ndarray
+    ) -> MujocoIKTargetT:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def translation_from_target(
+        self,
+        target : MujocoIKTargetT
+    ) -> np.ndarray:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def quaternion_from_target(
+        self,
+        target : MujocoIKTargetT
+    ) -> np.ndarray:
         raise NotImplementedError
 
     def close(
@@ -91,6 +114,10 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         self.ori_threshold = ori_threshold
         self.solver = solver
         self.max_iterations = max_iterations
+    
+    @property
+    def is_eef_relative(self) -> bool:
+        return self.relative_frame_name is not None
 
     def initial(
         self,
@@ -214,6 +241,28 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
                 base_transform,
                 world_transform
             )
+        
+    def target_from_se3(
+        self,
+        translation : np.ndarray,
+        quaternion : np.ndarray
+    ) -> mink.SE3:
+        return mink.SE3.from_rotation_and_translation(
+            rotation=mink.SO3(quaternion),
+            translation=translation
+        )
+    
+    def translation_from_target(
+        self,
+        target : mink.SE3
+    ) -> np.ndarray:
+        return target.translation().copy()
+    
+    def quaternion_from_target(
+        self,
+        target : mink.SE3
+    ) -> np.ndarray:
+        return target.rotation().wxyz.copy()
 
 class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     @staticmethod
@@ -258,6 +307,10 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     ):
         self.ik = ik
         self.additional_search_qpos = additional_search_qpos
+
+    @property
+    def is_eef_relative(self) -> bool:
+        return self.ik.is_eef_relative
 
     def initial(
         self,
@@ -336,3 +389,22 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
         mj_data : mujoco.MjData
     ) -> mink.SE3:
         return self.ik.get_target_from_data(ik_state, mj_model, mj_data)
+
+    def target_from_se3(
+        self,
+        translation : np.ndarray,
+        quaternion : np.ndarray
+    ) -> mink.SE3:
+        return self.ik.target_from_se3(translation, quaternion)
+    
+    def translation_from_target(
+        self,
+        target : mink.SE3
+    ) -> np.ndarray:
+        return self.ik.translation_from_target(target)
+    
+    def quaternion_from_target(
+        self,
+        target : mink.SE3
+    ) -> np.ndarray:
+        return self.ik.quaternion_from_target(target)

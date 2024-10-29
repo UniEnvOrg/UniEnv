@@ -102,6 +102,7 @@ def eef_reward_and_termination_fn(
     def eef_reward_and_termination(
         world_state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[typing.Any, np.random.Generator],
+        actor_state : typing.Any,
         obs : typing.Dict[str, typing.Any],
         control_step_elapsed : float
     ):
