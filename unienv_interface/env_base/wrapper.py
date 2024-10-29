@@ -16,13 +16,13 @@ WrapperBRngT = TypeVar("WrapperBRngT")
 WrapperRenderFrame = TypeVar("WrapperRenderFrame")
 
 class Wrapper(
-    Env[WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
+    Env[WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
     Generic[
         WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
         ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
     ]
 ):
-    def __init__(self, env: Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
+    def __init__(self, env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
         self.env = env
         assert isinstance(env, Env)
 
@@ -58,7 +58,7 @@ class Wrapper(
         return self.env.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> Env[ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
+    def prev_wrapper_layer(self) -> Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
         return self.env
 
     def has_wrapper_attr(self, name: str) -> bool:

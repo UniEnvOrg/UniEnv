@@ -21,9 +21,10 @@ class ToGymnasiumEnv(
 
         self._metadata : Optional[Dict[str, Any]] = None
         self.action_space = gym_utils.to_gym_space(env.action_space)
-        self.observation_space = gym_utils.to_gym_space(__class__.combine_context_obs_space(
+        self._unienv_combined_space = __class__.combine_context_obs_space(
             env.context_space, env.observation_space
-        ))
+        )
+        self.observation_space = gym_utils.to_gym_space(self._unienv_combined_space)
         self._episode_context : Optional[ContextType] = None
 
     @staticmethod
@@ -114,8 +115,9 @@ class ToGymnasiumEnv(
             self.env.action_space, action
         )
         obs, rew, terminated, truncated, info = self.env.step(c_action)
-        c_obs = gym_utils.to_gym_data(self.observation_space, self.combine_context_obs(
-            self._episode_context, obs
+        c_obs = gym_utils.to_gym_data(
+            self._unienv_combined_space, 
+            self.combine_context_obs(self._episode_context, obs
         ))
         c_rew = float(rew)
         c_terminated = bool(terminated)
@@ -135,7 +137,7 @@ class ToGymnasiumEnv(
         )
         self._episode_context = context
         c_obs = gym_utils.to_gym_data(
-            self.observation_space,
+            self._unienv_combined_space,
             self.combine_context_obs(context, obs)
         )
         return c_obs, info

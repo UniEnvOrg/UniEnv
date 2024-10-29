@@ -70,6 +70,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
 
         self.low = array_api_workspace.astype(_low, self.dtype)
         self.high = array_api_workspace.astype(_high, self.dtype)
+        assert array_api_workspace.all(self.low <= self.high), f"low is greater than high: low={self.low}, high={self.high}"
         if device is not None:
             self.low = array_api_compat.to_device(self.low, device=device)
             self.high = array_api_compat.to_device(self.high, device=device)

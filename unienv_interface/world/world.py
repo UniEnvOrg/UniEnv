@@ -134,14 +134,14 @@ class WorldWrapper(
         world : World[BDeviceType, BDtypeType, BRNGType]
     ):
         self.world = world
-        self._backend : Optional[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
+        self._backend : Optional[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
     
     @property
-    def backend(self) -> Type[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
+    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
         return self._backend or self.world.backend
     
     @backend.setter
-    def backend(self, value : Type[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
+    def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
         self._backend = value
     
     @property
@@ -226,14 +226,14 @@ class FuncWorldWrapper(
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType]
     ):
         self.world = world
-        self._backend : Optional[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
+        self._backend : Optional[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
     
     @property
-    def backend(self) -> Type[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
+    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
         return self._backend or self.world.backend
     
     @backend.setter
-    def backend(self, value : Type[ComputeBackend[WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
+    def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
         self._backend = value
 
     @property
