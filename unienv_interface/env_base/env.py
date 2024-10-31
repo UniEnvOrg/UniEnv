@@ -27,6 +27,8 @@ class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, Terminatio
     backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
     device : Optional[BDeviceT]
 
+    batch_size : Optional[int] = None
+
     action_space: Space[ActType, Any, BDeviceT, Any, BRngT]
     observation_space: Space[ObsType, Any, BDeviceT, Any, BRngT]
     context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None

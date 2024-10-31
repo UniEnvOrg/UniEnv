@@ -29,6 +29,41 @@ __all__ = [
 ]
 
 @singledispatch
+def batch_size(space: Space) -> int:
+    raise TypeError(
+        f"The space provided to `batch_size` is not a batched Space instance, type: {type(space)}, {space}"
+    )
+
+@batch_size.register(Box)
+@batch_size.register(MultiDiscrete)
+@batch_size.register(MultiBinary)
+def _batch_size_box(space: Box):
+    return space.shape[0]
+
+@batch_size.register(Dict)
+def _batch_size_dict(space: Dict):
+    for subspace in space.spaces.values():
+        try:
+            return batch_size(subspace)
+        except:
+            continue
+
+@batch_size.register(Tuple)
+def _batch_size_tuple(space: Tuple):
+    if len(space.spaces) == 0:
+        raise ValueError("Tuple space must have at least one subspace to determine the batch size.")
+    
+    first_subspace = space.spaces[0]
+    if isinstance(first_subspace, (Graph, Text, Sequence, Union)):
+        return len(space.spaces)
+    
+    for subspace in space.spaces:
+        try:
+            return batch_size(subspace)
+        except:
+            continue
+
+@singledispatch
 def batch_space(space: Space, n: int = 1) -> Space:
     raise TypeError(
         f"The space provided to `batch_space` is not a Space instance, type: {type(space)}, {space}"
@@ -321,10 +356,10 @@ def _concatenate_dict(
 
 @concatenate.register(Tuple)
 def _concatenate_tuple(
-    space: Tuple, items: Iterable, out: tuple[Any, ...]
+    space: Tuple, items: Iterable
 ) -> tuple[Any, ...]:
     return tuple(
-        concatenate(subspace, [item[i] for item in items], out[i])
+        concatenate(subspace, [item[i] for item in items])
         for (i, subspace) in enumerate(space.spaces)
     )
 

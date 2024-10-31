@@ -39,6 +39,8 @@ class FuncEnv(
 
     backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
 
+    batch_size : Optional[int] = None
+
     observation_space: Space[Any, Any, BDeviceT, Any, BRngT]
     action_space: Space[Any, Any, BDeviceT, Any, BRngT]
     context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
@@ -209,6 +211,10 @@ class StatefulSingleFuncEnv(Env[
     @property
     def backend(self) -> Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]:
         return self.func_env.backend
+
+    @property
+    def batch_size(self) -> Optional[int]:
+        return self.func_env.batch_size
 
     @property
     def action_space(self) -> Space[ActType, Any, BDeviceT, Any, BRngT]:

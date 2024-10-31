@@ -181,6 +181,10 @@ class Wrapper(
         return self.env.device
 
     @property
+    def batch_size(self) -> Optional[int]:
+        return self.env.batch_size
+
+    @property
     def np_rng(self) -> np.random.Generator:
         """Returns the :attr:`Env` :attr:`np_random` attribute."""
         return self.env.np_rng

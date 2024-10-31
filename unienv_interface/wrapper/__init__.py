@@ -1,2 +1,3 @@
 from .backend_compat import ToBackendWrapper, ToDeviceWrapper
 from .video_record import EpisodeRenderStackWrapper, EpisodeVideoWrapper, EpisodeWandbVideoWrapper
+from .time_limit import TimeLimitWrapper

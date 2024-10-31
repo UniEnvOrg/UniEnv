@@ -88,6 +88,7 @@ class WorldBasedFuncEnv(
             raise ValueError("The render sensor should not be attached to the actor. If you want to use the actor's sensors, use the actor's sensor names.")
         assert actor.backend == world.backend, "The actor and the world should have the same backend."
 
+        self.batch_size = None # TODO: Implement batched environment
         self.world = world
         self.actor = actor
         self.task = task
@@ -112,7 +113,7 @@ class WorldBasedFuncEnv(
     @property
     def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
         return self.world.backend
-    
+
     @property
     def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
         if self.task.observation_space is None:
