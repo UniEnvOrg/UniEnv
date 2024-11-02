@@ -63,6 +63,12 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
         return rng, t
 
     @classmethod
+    def random_geometric(cls, rng: torch.Generator, shape: Sequence[int], p: float, dtype: Optional[torch.dtype] = None, device: Optional[Union[torch.device, str]] = None) -> Tuple[torch.Generator | torch.Tensor]:
+        t = torch.zeros(shape, dtype=dtype, device=device)
+        t.geometric_(p, generator=rng)
+        return rng, t
+
+    @classmethod
     def dtype_is_real_integer(cls, dtype : torch.dtype) -> bool:
         return dtype in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.uint16, torch.uint32, torch.uint64, torch.int, torch.long, int)
     

@@ -2,38 +2,19 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List, Dict as DictType
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 from collections.abc import KeysView
 
-_DictBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_DictBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_DictBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
-class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]):
+class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend: Type[ComputeBackend[Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]],
-        spaces: None | DictType[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]] | Sequence[tuple[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]]] = None,
-        device : Optional[_DictBDeviceT] = None,
-        seed: Optional[int] = None,
+        backend: Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        spaces: None | DictType[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] | Sequence[tuple[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]] = None,
+        device : Optional[BDeviceType] = None,
     ):
-        """Constructor of :class:`Dict` space.
-
-        This space can be instantiated in one of two ways: Either you pass a dictionary
-        of spaces to :meth:`__init__` via the ``spaces`` argument, or you pass the spaces as separate
-        keyword arguments (where you will need to avoid the keys ``spaces`` and ``seed``)
-
-        Args:
-            spaces: A dictionary of spaces. This specifies the structure of the :class:`Dict` space
-            seed: Optionally, you can use this argument to seed the RNGs of the spaces that make up the :class:`Dict` space.
-            **spaces_kwargs: If ``spaces`` is ``None``, you need to pass the constituent spaces as keyword arguments, as described above.
-        """
-        # Convert the spaces into an OrderedDict
         if isinstance(spaces, Mapping):
-            # for legacy reasons, we need to preserve the sorted dictionary items.
-            # as this could matter for projects flatten the dictionary.
             try:
                 spaces = dict(sorted(spaces.items()))
             except TypeError:
@@ -49,7 +30,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
                 f"Unexpected Dict space input, expecting dict, OrderedDict or Sequence, actual type: {type(spaces)}"
             )
 
-        new_spaces: DictType[str, Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]] = {}
+        new_spaces: DictType[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = {}
         for key, space in spaces.items():
             assert isinstance(
                 space, Space
@@ -67,7 +48,6 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             shape=None,
             device=device,
             dtype=None,
-            seed=seed,
         )
 
     @property
@@ -98,7 +78,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             start = end
         return result
 
-    def to_device(self, device : _DictBDeviceT) -> "Dict[_DictBDeviceT, _DictBDTypeT, _DictBDRNGT]":
+    def to_device(self, device : BDeviceType) -> "Dict[BDeviceType, BDtypeType, BRNGType]":
         return Dict(
             backend=self.backend,
             spaces={key: space.to_device(device) for key, space in self.spaces.items()},
@@ -112,13 +92,11 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             device=device
         )
 
-    def seed(self, seed: int | None = None) -> None:
-        super().seed(seed)
-        for key, subspace in self.spaces.items():
-            subspace.seed(seed)
-
-    def sample(self) -> DictType[str, Any]:
-        return {k: space.sample() for k, space in self.spaces.items()}
+    def sample(self, rng : BDeviceType) -> Tuple[BDeviceType, DictType[str, Any]]:
+        ret_dict = {}
+        for key, space in self.spaces.items():
+            rng, ret_dict[key] = space.sample(rng)
+        return rng, ret_dict
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -126,7 +104,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
 
-    def __getitem__(self, key: str) -> Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]:
+    def __getitem__(self, key: str) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the space that is associated to `key`."""
         return self.spaces[key]
 
@@ -134,7 +112,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
         """Returns the keys of the Dict."""
         return KeysView(self.spaces)
 
-    def __setitem__(self, key: str, value: Space[Any, Any, _DictBDeviceT, _DictBDTypeT, _DictBDRNGT]) -> None:
+    def __setitem__(self, key: str, value: Space[Any, Any, BDeviceType, BDtypeType, BRNGType]) -> None:
         """Set the space that is associated to `key`."""
         assert isinstance(
             value, Space
@@ -208,5 +186,4 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], _DictBDeviceT, _DictBDT
     def to_gym_space(self) -> gym.Space:
         return gym.spaces.Dict(
             {key: space.to_gym_space() for key, space in self.spaces.items()},
-            seed=self.np_rng,
         )

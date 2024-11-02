@@ -52,7 +52,7 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
         from_num : int, 
         to_num : int, 
         dtype : Optional[np.dtype] = None, 
-        device : Optional[Any] = None
+        device : Optional[JaxDevice] = None
     ) -> Tuple[JaxRNG, jax.Array]:
         new_rng, rng = jax.random.split(rng)
         data = jax.random.randint(rng, shape, minval=from_num, maxval=to_num, dtype=dtype or int)
@@ -68,7 +68,7 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
         lower_bound : float = 0.0, 
         upper_bound : float = 1.0, 
         dtype : Optional[np.dtype] = None, 
-        device : Optional[Any] = None
+        device : Optional[JaxDevice] = None
     ) -> Tuple[JaxRNG, jax.Array]:
         new_rng, rng = jax.random.split(rng)
         data = jax.random.uniform(rng, shape, dtype=dtype or float, minval=lower_bound, maxval=upper_bound)
@@ -83,7 +83,7 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
         shape : Sequence[int], 
         lambd : float = 1.0, 
         dtype : Optional[np.dtype] = None, 
-        device : Optional[Any] = None
+        device : Optional[JaxDevice] = None
     ) -> Tuple[JaxRNG, jax.Array]:
         new_rng, rng = jax.random.split(rng)
         data = jax.random.exponential(rng, shape, dtype=dtype or float) / lambd
@@ -99,10 +99,25 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
         mean : float = 0.0, 
         std : float = 1.0, 
         dtype : Optional[np.dtype] = None, 
-        device : Optional[Any] = None
+        device : Optional[JaxDevice] = None
     ) -> Tuple[JaxRNG, np.ndarray]:
         new_rng, rng = jax.random.split(rng)
         data = jax.random.normal(rng, shape, dtype=dtype or float) * std + mean
+        if device is not None:
+            data = jax.device_put(data, device)
+        return new_rng, data
+
+    @classmethod
+    def random_geometric(
+        cls, 
+        rng : JaxRNG, 
+        shape : Sequence[int], 
+        p : float, 
+        dtype : Optional[np.dtype] = None, 
+        device : Optional[JaxDevice] = None
+    ) -> Tuple[JaxRNG, jax.Array]:
+        new_rng, rng = jax.random.split(rng)
+        data = jax.random.geometric(rng, p=p, shape=shape, dtype=dtype or int)
         if device is not None:
             data = jax.device_put(data, device)
         return new_rng, data

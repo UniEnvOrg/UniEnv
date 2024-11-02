@@ -2,23 +2,17 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 
-MultiBArrayT = TypeVar("MultiBArrayT", covariant=True)
-_MultiBDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
-_MultiBDTypeT = TypeVar("_MultiBDTypeT", covariant=True)
-_MultiBDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
-
-class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]):
+class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
-        self,
-        backend : Type[ComputeBackend[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]],
+        self, 
+        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
         shape: Sequence[int],
-        dtype: Optional[_MultiBDTypeT] = None,
-        device : Optional[_MultiBDeviceT] = None,
-        seed: Optional[int] = None,
+        dtype: Optional[BDtypeType] = None,
+        device : Optional[BDeviceType] = None,
     ):
         assert dtype is None or backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
         super().__init__(
@@ -26,14 +20,13 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
             shape=tuple(shape),
             device=device,
             dtype=dtype,
-            seed=seed,
         )
 
     @property
     def shape(self) -> tuple[int, ...]:
         return self._shape  # type: ignore
 
-    def to_device(self, device: _MultiBDeviceT) -> "MultiBinary[MultiBArrayT, _MultiBDeviceT, _MultiBDTypeT, _MultiBDRNGT]":
+    def to_device(self, device: BDeviceType) -> "MultiBinary[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         return MultiBinary(
             backend=self.backend,
             shape=self.shape,
@@ -59,16 +52,18 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
         """Return the shape of the space as an immutable property."""
         return int(np.prod(self.shape))
     
-    def flatten(self, data : MultiBArrayT) -> MultiBArrayT:
+    def flatten(self, data : BArrayType) -> BArrayType:
         return self.backend.array_api_namespace.reshape(data, (-1,))
     
-    def unflatten(self, data : MultiBArrayT) -> MultiBArrayT:
+    def unflatten(self, data : BArrayType) -> BArrayType:
         return self.backend.array_api_namespace.reshape(data, self.shape)
 
-    def sample(self) -> MultiBArrayT:
-        return self.backend.random_discrete_uniform(self.rng, self.shape, 0, 2, self.dtype, self.device)
+    def sample(self, rng : BRNGType) -> Tuple[
+        BRNGType, BArrayType
+    ]:
+        return self.backend.random_discrete_uniform(rng, self.shape, 0, 2, self.dtype, self.device)
 
-    def contains(self, x: MultiBArrayT) -> bool:
+    def contains(self, x: BArrayType) -> bool:
         return bool(
             self.backend.is_backendarray(x)
             and self.shape == x.shape
@@ -83,23 +78,23 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
         """Check whether `other` is equivalent to this instance."""
         return isinstance(other, MultiBinary) and self.shape == other.shape
     
-    def to_jsonable(self, sample_n: Sequence[MultiBArrayT]) -> list[Sequence[int]]:
+    def to_jsonable(self, sample_n: Sequence[BArrayType]) -> list[Sequence[int]]:
         """Convert a batch of samples from this space to a JSONable data type."""
         return np.array([self.backend.to_numpy(sample) for sample in sample_n]).tolist()
 
-    def from_jsonable(self, sample_n: list[Sequence[int]]) -> list[MultiBArrayT]:
+    def from_jsonable(self, sample_n: list[Sequence[int]]) -> list[BArrayType]:
         """Convert a JSONable data type to a batch of samples from this space."""
         return [self.backend.from_numpy(np.asarray(sample, self.dtype), self.dtype, self.device) for sample in sample_n]
 
-    def from_gym_data(self, gym_data : np.ndarray) -> MultiBArrayT:
+    def from_gym_data(self, gym_data : np.ndarray) -> BArrayType:
         """Convert a gym space to this space."""
         return self.backend.from_numpy(gym_data, self.dtype, self.device)
     
-    def from_other_backend(self, other_data : Any) -> MultiBArrayT:
+    def from_other_backend(self, other_data : Any) -> BArrayType:
         new_tensor = self.backend.from_dlpack(other_data)
         return self.from_same_backend(new_tensor)
     
-    def from_same_backend(self, other_data : MultiBArrayT) -> MultiBArrayT:
+    def from_same_backend(self, other_data : BArrayType) -> BArrayType:
         new_tensor = other_data
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
@@ -108,10 +103,10 @@ class MultiBinary(Space[MultiBArrayT, np.ndarray, _MultiBDeviceT, _MultiBDTypeT,
         
         return new_tensor
 
-    def to_gym_data(self, data : MultiBArrayT) -> np.ndarray:
+    def to_gym_data(self, data : BArrayType) -> np.ndarray:
         """Convert this space to a gym space."""
         return self.backend.to_numpy(data).astype(np.int8)
     
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
-        return gym.spaces.MultiBinary(self.shape, seed=self.np_rng)
+        return gym.spaces.MultiBinary(self.shape)

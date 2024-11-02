@@ -16,16 +16,11 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         shape: Optional[Sequence[int]] = None,
         device : Optional[_SpaceBDeviceT] = None,
         dtype: Optional[_SpaceBDTypeT] = None,
-        seed: Optional[int] = None,
     ):
         self.backend = backend
         self._shape = None if shape is None else tuple(shape)
         self.dtype = None if dtype is None else np.dtype(dtype)
-        self._rng : Optional[_SpaceBDRNGT] = None
-        self._np_rng : Optional[np.random.Generator] = None
         self._device = device
-        if seed is not None:
-            self.seed(seed)
 
     @property
     def device(self) -> _SpaceBDeviceT:
@@ -38,20 +33,6 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     @abc.abstractmethod
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Space":
         raise NotImplementedError
-
-    @property
-    def np_rng(self) -> np.random.Generator:
-        if self._np_rng is None:
-            self.seed()
-
-        return self._np_rng
-
-    @property
-    def rng(self) -> _SpaceBDRNGT:
-        if self._rng is None:
-            self.seed()
-
-        return self._rng
 
     @property
     def shape(self) -> tuple[int, ...] | None:
@@ -78,7 +59,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         """Unflatten the data."""
         raise NotImplementedError
 
-    def sample(self, **kwargs) -> SpaceDataT:
+    def sample(self, rng : _SpaceBDRNGT, **kwargs) -> Tuple[_SpaceBDRNGT, SpaceDataT]:
         """Randomly sample an element of this space.
 
         Can be uniform or non-uniform sampling based on boundedness of space.
@@ -90,11 +71,6 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
             A sampled actions from the space
         """
         raise NotImplementedError
-
-    def seed(self, seed: int | None = None) -> None:
-        """Seed the PRNG of this space and possibly the PRNGs of subspaces."""
-        self._rng = self.backend.random_number_generator(seed, self._device)
-        self._np_rng = np.random.default_rng(seed)
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""

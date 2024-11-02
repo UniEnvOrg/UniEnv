@@ -2,21 +2,16 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 
-_UnionBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_UnionBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_UnionBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
-class Union(Space[Tuple[int, Any], Tuple[int, Any], _UnionBDeviceT, _UnionBDTypeT, _UnionBDRNGT]):
+class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend: Type[ComputeBackend[Any, _UnionBDeviceT, _UnionBDTypeT, _UnionBDRNGT]],
-        spaces: Iterable[Space[Any, Any, _UnionBDeviceT, _UnionBDTypeT, _UnionBDRNGT]],
-        device: Optional[_UnionBDeviceT] = None,
-        seed: Optional[int] = None,
+        backend: Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        spaces: Iterable[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]],
+        device: Optional[BDeviceType] = None,
     ):
         assert isinstance(spaces, Iterable), f"{spaces} is not an iterable"
         self.spaces = tuple(spaces if device is None else [space.to_device(device) for space in spaces])
@@ -32,7 +27,6 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], _UnionBDeviceT, _UnionBDType
             shape=None,
             device=device,
             dtype=None,
-            seed=seed,
         )
 
     @property
@@ -61,7 +55,7 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], _UnionBDeviceT, _UnionBDType
         subspace_data = data[1:subspace.flat_dim+1]
         return (space_idx, subspace.unflatten(subspace_data))
 
-    def to_device(self, device : _UnionBDeviceT) -> "Union[_UnionBDeviceT, _UnionBDTypeT, _UnionBDRNGT]":
+    def to_device(self, device : BDeviceType) -> "Union[BDeviceType, BDtypeType, BRNGType]":
         return Union(
             backend=self.backend,
             spaces=self.spaces, #[space.to_device(device) for space in self.spaces],
@@ -75,15 +69,21 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], _UnionBDeviceT, _UnionBDType
             device=device,
         )
 
-    def seed(self, seed : Optional[int] = None) -> tuple[int, ...]:
-        super().seed(seed)
-        for space in self.spaces:
-            space.seed(seed)
+    def sample(self, rng : BRNGType) -> Tuple[
+        BRNGType,
+        Tuple[int, Any]
+    ]:
+        rng, subspace_idx = self.backend.random_discrete_uniform(
+            rng,
+            shape=(1,),
+            low=0,
+            to_num=len(self.spaces)
+        )
+        subspace_idx = int(subspace_idx[0])
 
-    def sample(self) -> Tuple[int, Any]:
-        subspace_idx = self.np_rng.integers(0, len(self.spaces), dtype=np.int64)
         subspace = self.spaces[subspace_idx]
-        return subspace_idx, subspace.sample()
+        rng, sample = subspace.sample(rng)
+        return rng, (subspace_idx, sample)
 
     def contains(self, x: Tuple[int, Any]) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -99,7 +99,7 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], _UnionBDeviceT, _UnionBDType
         """Gives a string representation of this space."""
         return "Union(" + ", ".join([str(s) for s in self.spaces]) + ")"
 
-    def __getitem__(self, index: int) -> Space[Any, Any, _UnionBDeviceT, _UnionBDTypeT, _UnionBDRNGT]:
+    def __getitem__(self, index: int) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the subspace at specific `index`."""
         return self.spaces[index]
 

@@ -4,7 +4,6 @@ import typing
 from copy import deepcopy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
-from unienv_interface.utils import seed_util
 
 import numpy as np
 from unienv_interface.space import (
@@ -77,7 +76,6 @@ def _batch_space_box(space: Box, n: int = 1):
         high=space.backend.array_api_namespace.stack([space.high] * n),
         dtype=space.dtype,
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(Dict)
@@ -86,7 +84,6 @@ def _batch_space_dict(space: Dict, n: int = 1):
         backend=space.backend,
         spaces={key: batch_space(subspace, n=n) for key, subspace in space.spaces.items()},
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(Discrete)
@@ -97,7 +94,6 @@ def _batch_space_discrete(space: Discrete, n: int = 1):
         start=space.backend.array_api_namespace.full((n,), space.start, dtype=space.dtype) if space.start != 0 else None,
         dtype=space.dtype,
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(MultiBinary)
@@ -107,7 +103,6 @@ def _batch_space_multibinary(space: MultiBinary, n: int = 1):
         shape=(n,) + space.shape,
         device=space.device,
         dtype=space.dtype,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(MultiDiscrete)
@@ -118,7 +113,6 @@ def _batch_space_multidiscrete(space: MultiDiscrete, n: int = 1):
         start=space.backend.array_api_namespace.stack([space.start] * n),
         dtype=space.dtype,
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(Tuple)
@@ -127,7 +121,6 @@ def _batch_space_tuple(space: Tuple, n: int = 1):
         backend=space.backend,
         spaces=[batch_space(subspace, n=n) for subspace in space.spaces],
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
 
 @batch_space.register(Graph)
@@ -142,7 +135,6 @@ def _batch_space_custom(space: Graph | Text | Sequence | Union, n: int = 1):
         backend=space.backend,
         spaces=[deepcopy(space) for _ in range(n)],
         device=space.device,
-        seed=seed_util.next_seed(space.np_rng)
     )
     return batched_space
 
@@ -180,7 +172,6 @@ def _batch_differing_spaces_box(spaces: typing.Sequence[Box], device : Optional[
         high=backend.array_api_namespace.stack([space.high for space in spaces]),
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @batch_differing_spaces.register(Dict)
@@ -194,7 +185,6 @@ def _batch_differing_spaces_dict(spaces: typing.Sequence[Dict], device : Optiona
             for key in spaces[0].keys()
         },
         device=device if device is not None else spaces[0].device,
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @batch_differing_spaces.register(Discrete)
@@ -206,7 +196,6 @@ def _batch_differing_spaces_discrete(spaces: typing.Sequence[Discrete], device :
         start=backend.array_api_namespace.asarray([space.start for space in spaces], dtype=spaces[0].dtype, device=device),
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @batch_differing_spaces.register(MultiBinary)
@@ -219,7 +208,6 @@ def _batch_differing_spaces_multi_binary(spaces: typing.Sequence[MultiBinary], d
         shape=(len(spaces),) + spaces[0].shape,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @batch_differing_spaces.register(MultiDiscrete)
@@ -239,9 +227,8 @@ def _batch_differing_spaces_multi_discrete(spaces: typing.Sequence[MultiDiscrete
         backend=backend,
         nvec=backend.array_api_namespace.stack([space.nvec for space in spaces]),
         start=backend.array_api_namespace.stack([space.start for space in spaces]),
-        device=device if device is not None else spaces[0].device,
         dtype=spaces[0].dtype,
-        seed=seed_util.next_seed(spaces[0].np_rng)
+        device=device if device is not None else spaces[0].device,
     )
 
 
@@ -254,7 +241,6 @@ def _batch_differing_spaces_tuple(spaces: typing.Sequence[Tuple], device : Optio
             for subspaces in zip(*[space.spaces for space in spaces])
         ],
         device=device if device is not None else spaces[0].device,
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @batch_differing_spaces.register(Graph)
@@ -266,7 +252,6 @@ def _batch_spaces_undefined(spaces: typing.Sequence[Graph | Text | Sequence | Un
         backend=spaces[0].backend,
         spaces=[deepcopy(space) for space in spaces],
         device=spaces[0].device, 
-        seed=seed_util.next_seed(spaces[0].np_rng)
     )
 
 @singledispatch

@@ -92,6 +92,11 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
 
     @classmethod
     @abc.abstractmethod
+    def random_geometric(cls, rng : BRNGType, shape : Sequence[int], p : float, dtype : Optional[BDtypeType] = None, device : Optional[BDeviceType] = None) -> Tuple[BRNGType, BArrayType]:
+        raise NotImplementedError
+
+    @classmethod
+    @abc.abstractmethod
     def dtype_is_real_integer(cls, dtype : BDtypeType) -> bool:
         raise NotImplementedError
     

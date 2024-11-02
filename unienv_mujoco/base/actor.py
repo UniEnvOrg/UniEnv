@@ -29,8 +29,7 @@ class MujocoDefaultFuncActor(
         self.onboard_observation_space = DictSpace(
             backend=NumpyComputeBackend,
             spaces={},
-            device=None,
-            seed=seed
+            device=None
         )
 
         # Compute Action Space

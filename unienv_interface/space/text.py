@@ -3,8 +3,8 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
-import array_api_compat
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.utils import seed_util
 import gymnasium as gym
 from .discrete import Discrete
 
@@ -12,37 +12,26 @@ alphanumeric: frozenset[str] = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
-_TextDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
-_TextDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
-_TextDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
-class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
+class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, _TextDeviceT, _TextDTypeT, _TextDRNGT]],
+        backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
         max_length: int,
         *,
         min_length: int = 1,
         charset: frozenset[str] | str = alphanumeric,
-        device : Optional[_TextDeviceT] = None,
-        seed: Optional[int] = None,
+        device : Optional[BDeviceType] = None,
     ):
-        self._gym_space = gym.spaces.Text(max_length=max_length, min_length=min_length, charset=charset, seed=seed)
+        self._gym_space = gym.spaces.Text(max_length=max_length, min_length=min_length, charset=charset)
         super().__init__(
             backend=backend,
             shape=None,
             dtype=str,
             device=device,
-            seed=seed,
         )
 
-    def to_device(self, device : _TextDeviceT) -> "Text[_TextDeviceT, _TextDTypeT, _TextDRNGT]":
-        return Text(
-            backend=self.backend,
-            max_length=self.max_length,
-            min_length=self.min_length,
-            charset=self.character_set,
-            device=device
-        )
+    def to_device(self, device : BDeviceType) -> "Text[BDeviceType, BDtypeType, BRNGType]":
+        return self
 
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Text":
         return Text(
@@ -111,15 +100,14 @@ class Text(Space[str, str, _TextDeviceT, _TextDTypeT, _TextDRNGT]):
         return "".join([
             self.character_list[i] for i in data if i < len(self.character_list)
         ])
-    
-    def seed(self, seed: int | None = None) -> None:
-        super().seed(seed)
-        self._gym_space.seed(seed)
 
     def sample(
-        self
-    ) -> str:
-        return self._gym_space.sample()
+        self,
+        rng: BRNGType,
+    ) -> Tuple[BRNGType, str]:
+        rng, next_seed = seed_util.next_seed_rng(rng, self.backend)
+        self._gym_space.seed(next_seed)
+        return rng, self._gym_space.sample()
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""

@@ -1,25 +1,19 @@
-from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union
+from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 
-BoxArrayT = TypeVar("BoxArrayT", covariant=True)
-_BoxBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_BoxBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_BoxBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
-class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
+class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]],
-        low: SupportsFloat | BoxArrayT,
-        high: SupportsFloat | BoxArrayT,
-        dtype: _BoxBDTypeT,
-        device : Optional[_BoxBDeviceT] = None,
+        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        low: SupportsFloat | BArrayType,
+        high: SupportsFloat | BArrayType,
+        dtype: BDtypeType,
+        device : Optional[BDeviceType] = None,
         shape: Optional[Sequence[int]] = None,
-        seed: Optional[int] = None,
     ):
         assert (
             dtype is not None
@@ -80,22 +74,20 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             shape=shape,
             device=device,
             dtype=dtype,
-            seed=seed
         )
 
     @property
     def shape(self) -> tuple[int, ...]:
         return self._shape
 
-    def to_device(self, device : _BoxBDeviceT) -> "Box[BoxArrayT, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]":
+    def to_device(self, device : BDeviceType) -> "Box[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         return Box(
             backend=self.backend,
             low=self.low,
             high=self.high,
             dtype=self.dtype,
             shape=self.shape,
-            device=device,
-            seed=self.seed
+            device=device
         )
 
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Box":
@@ -121,11 +113,11 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         """Return the shape of the space as an immutable property."""
         return int(np.prod(self.shape))
     
-    def flatten(self, data : BoxArrayT) -> BoxArrayT:
+    def flatten(self, data : BArrayType) -> BArrayType:
         """Flatten the data."""
         return self.backend.array_api_namespace.reshape(data, (-1,))
     
-    def unflatten(self, data : BoxArrayT) -> BoxArrayT:
+    def unflatten(self, data : BArrayType) -> BArrayType:
         """Unflatten the data."""
         return self.backend.array_api_namespace.reshape(data, self.shape)
 
@@ -143,7 +135,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
                 f"manner is not in {{'below', 'above', 'both'}}, actual value: {manner}"
             )
 
-    def sample(self) -> BoxArrayT:
+    def sample(self, rng : BRNGType) -> Tuple[BRNGType, BArrayType]:
         r"""Generates a single random sample inside the Box.
 
         In creating a sample of the box, each coordinate is sampled (independently) from a distribution
@@ -180,22 +172,22 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         )
 
         # Vectorized sampling by interval type
-        self._rng, sample[unbounded] = self.backend.random_normal(self.rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
+        rng, sample[unbounded] = self.backend.random_normal(rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
 
-        self._rng, exponential_generated = self.backend.random_exponential(self.rng, shape=low_bounded[low_bounded].shape, dtype=self.dtype, device=self.device)
+        rng, exponential_generated = self.backend.random_exponential(rng, shape=low_bounded[low_bounded].shape, dtype=self.dtype, device=self.device)
         sample[low_bounded] = (
             exponential_generated
             + self.low[low_bounded]
         )
 
-        self._rng, exponential_generated = self.backend.random_exponential(self.rng, shape=upp_bounded[upp_bounded].shape, dtype=self.dtype, device=self.device)
+        rng, exponential_generated = self.backend.random_exponential(rng, shape=upp_bounded[upp_bounded].shape, dtype=self.dtype, device=self.device)
         sample[upp_bounded] = (
             -exponential_generated
             + high[upp_bounded]
         )
 
-        self._rng, float_bounded = self.backend.random_uniform(
-            self.rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
+        rng, float_bounded = self.backend.random_uniform(
+            rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
             dtype=self.dtype, device=self.device
         )
         # assert self.backend.array_api_namespace.all(
@@ -218,7 +210,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         if not self._dtype_is_float:
             sample = self.backend.array_api_namespace.floor(sample)
 
-        return self.backend.array_api_namespace.astype(sample, self.dtype)
+        return rng, self.backend.array_api_namespace.astype(sample, self.dtype)
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -255,22 +247,22 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
             and self.backend.array_api_namespace.allclose(self.high, other.high)
         )
     
-    def to_jsonable(self, sample_n: Sequence[BoxArrayT]) -> list[np.ndarray]:
+    def to_jsonable(self, sample_n: Sequence[BArrayType]) -> list[np.ndarray]:
         """Convert a batch of samples from this space to a JSONable data type."""
         return [self.backend.to_numpy(sample).tolist() for sample in sample_n]
 
-    def from_jsonable(self, sample_n: Sequence[Sequence[float | int]]) -> list[BoxArrayT]:
+    def from_jsonable(self, sample_n: Sequence[Sequence[float | int]]) -> list[BArrayType]:
         """Convert a JSONable data type to a batch of samples from this space."""
         return [self.backend.from_numpy(np.asarray(sample), dtype=self.dtype, device=self.device) for sample in sample_n]
 
-    def from_gym_data(self, gym_data: np.ndarray) -> BoxArrayT:
+    def from_gym_data(self, gym_data: np.ndarray) -> BArrayType:
         return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
     
-    def from_other_backend(self, other_data: Any) -> BoxArrayT:
+    def from_other_backend(self, other_data: Any) -> BArrayType:
         new_tensor = self.backend.from_dlpack(other_data)
         return self.from_same_backend(new_tensor)
 
-    def from_same_backend(self, other_data: BoxArrayT) -> BoxArrayT:
+    def from_same_backend(self, other_data: BArrayType) -> BArrayType:
         new_tensor = other_data
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
@@ -279,7 +271,7 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         
         return new_tensor
 
-    def to_gym_data(self, data: BoxArrayT) -> np.ndarray:
+    def to_gym_data(self, data: BArrayType) -> np.ndarray:
         return self.backend.to_numpy(data)
     
     def to_gym_space(self) -> gym.spaces.Box:
@@ -289,7 +281,6 @@ class Box(Space[BoxArrayT, np.ndarray, _BoxBDeviceT, _BoxBDTypeT, _BoxBDRNGT]):
         return gym.spaces.Box(
             low=new_low,
             high=new_high,
-            dtype=new_low.dtype,
-            seed=self.np_rng
+            dtype=new_low.dtype
         )
 

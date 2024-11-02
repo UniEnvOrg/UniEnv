@@ -189,7 +189,15 @@ class Wrapper(
         """Returns the :attr:`Env` :attr:`np_random` attribute."""
         return self.env.np_rng
 
+    @np_rng.setter
+    def np_rng(self, value: np.random.Generator):
+        self.env.np_rng = value
+
     @property
     def rng(self) -> WrapperBRngT:
         """Returns the :attr:`Env` :attr:`rng` attribute."""
         return self.env.rng
+
+    @rng.setter
+    def rng(self, value: WrapperBRngT):
+        self.env.rng = value

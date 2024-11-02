@@ -21,7 +21,6 @@ class MujocoFuncJointPosSensor(
         world : MujocoFuncWorld,
         control_timestep : float,
         joint_names : Sequence[str],
-        seed : Optional[int] = None,
     ):
         assert len(joint_names) > 0
         self.joint_names = joint_names
@@ -34,8 +33,7 @@ class MujocoFuncJointPosSensor(
             low=observation_limits[:, 0],
             high=observation_limits[:, 1],
             dtype=np.float32,
-            device=None,
-            seed=seed
+            device=None
         )
         super().__init__(
             observation_space=observation_space,
@@ -57,7 +55,6 @@ class MujocoFuncJointVelSensor(
         world : MujocoFuncWorld,
         control_timestep : float,
         joint_names : Sequence[str],
-        seed : Optional[int] = None
     ):
         assert len(joint_names) > 0
         self.joint_names = joint_names
@@ -68,8 +65,7 @@ class MujocoFuncJointVelSensor(
             high=np.inf,
             dtype=np.float32,
             device=None,
-            shape=(len(joint_names),),
-            seed=seed
+            shape=(len(joint_names),)
         )
         super().__init__(
             observation_space=observation_space,

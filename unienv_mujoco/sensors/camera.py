@@ -67,7 +67,6 @@ class MujocoFuncCameraSensor(
             dtype=observation_dtype,
             device=None,
             shape=(height, width, channels),
-            seed=seed
         )
 
         self.camera = camera

@@ -90,6 +90,20 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         if dtype is not None:
             t = t.astype(dtype)
         return rng, t
+    
+    @classmethod
+    def random_geometric(
+        cls, 
+        rng: np.random.Generator, 
+        shape: Sequence[int], 
+        p: float, 
+        dtype: Optional[np.dtype] = None, 
+        device: Optional[Any] = None
+    ) -> Tuple[np.random.Generator | np.ndarray]:
+        t = rng.geometric(p, size=shape)
+        if dtype is not None:
+            t = t.astype(dtype)
+        return rng, t
 
     @classmethod
     def dtype_is_real_integer(cls, dtype : np.dtype) -> bool:

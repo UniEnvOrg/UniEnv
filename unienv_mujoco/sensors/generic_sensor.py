@@ -22,7 +22,6 @@ class MujocoFuncGenericSensor(
         world : MujocoFuncWorld,
         sensor_name : str,
         control_timestep : float,
-        seed : Optional[int] = None,
     ):
         assert control_timestep > 0.0
         self.control_timestep = control_timestep
@@ -35,8 +34,7 @@ class MujocoFuncGenericSensor(
             high=np.inf,
             dtype=np.float32,
             device=None,
-            shape=(ndim,),
-            seed=seed
+            shape=(ndim,)
         )
     
     @property

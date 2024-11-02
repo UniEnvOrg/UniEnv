@@ -2,8 +2,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, NamedTuple
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
-from unienv_interface.utils import seed_util
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 import dataclasses
@@ -11,13 +10,8 @@ from .discrete import Discrete
 from .multi_discrete import MultiDiscrete
 from .box import Box
 
-GraphBArrayT = TypeVar("BoxArrayT", covariant=True)
-_GraphBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_GraphBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_GraphBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
 @dataclasses.dataclass
-class GraphInstance(Generic[GraphBArrayT]):
+class GraphInstance(Generic[BArrayType]):
     """A Graph space instance.
 
     * nodes (np.ndarray): an (n x ...) sized array representing the features for n nodes, (...) must adhere to the shape of the node space.
@@ -25,19 +19,17 @@ class GraphInstance(Generic[GraphBArrayT]):
     * edge_links (Optional[np.ndarray]): an (m x 2) sized array of ints representing the indices of the two nodes that each edge connects.
     """
 
-    nodes: GraphBArrayT
-    edges: Optional[GraphBArrayT] = None
-    edge_links: Optional[GraphBArrayT] = None
+    nodes: BArrayType
+    edges: Optional[BArrayType] = None
+    edge_links: Optional[BArrayType] = None
 
-
-class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]):
+class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[GraphBArrayT, _GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]],
+        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
         node_space: Box | Discrete,
         edge_space: None | Box | Discrete,
-        device : Optional[_GraphBDeviceT] = None,
-        seed: Optional[int] = None,
+        device : Optional[BDeviceType] = None,
     ):
         device = device if device is not None else node_space.device
         assert isinstance(
@@ -58,7 +50,6 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             shape=None,
             device=device,
             dtype=None,
-            seed=seed,
         )
 
     @property
@@ -70,19 +61,18 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
         """Return the shape of the space as an immutable property."""
         return None
     
-    def flatten(self, data : GraphInstance[GraphBArrayT]) -> GraphBArrayT:
+    def flatten(self, data : GraphInstance[BArrayType]) -> BArrayType:
         raise NotImplementedError("Graph space is not flattenable.")
     
-    def unflatten(self, data : GraphBArrayT) -> GraphInstance[GraphBArrayT]:
+    def unflatten(self, data : BArrayType) -> GraphInstance[BArrayType]:
         raise NotImplementedError("Graph space is not flattenable.")
 
-    def to_device(self, device : _GraphBDeviceT) -> "Graph[_GraphBDeviceT, _GraphBDTypeT, _GraphBDRNGT]":
+    def to_device(self, device : BDeviceType) -> "Graph[BDeviceType, BDtypeType, BRNGType]":
         return Graph(
             backend=self.backend,
             node_space=self.node_space.to_device(device),
             edge_space=self.edge_space.to_device(device) if self.edge_space is not None else None,
-            device=device,
-            seed=seed_util.next_seed(self.np_rng)
+            device=device
         )
 
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Graph":
@@ -90,8 +80,7 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             backend=backend,
             node_space=self.node_space.to_backend(backend, device),
             edge_space=self.edge_space.to_backend(backend, device) if self.edge_space is not None else None,
-            device=device,
-            seed=seed_util.next_seed(self.np_rng)
+            device=device
         )
 
     def _generate_sample_space(
@@ -117,43 +106,36 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
                 dtype=base_space.dtype,
                 device=base_space.device,
             )
+        elif base_space is None:
+            return None
         else:
             raise TypeError(
                 f"Expects base space to be Box and Discrete, actual space: {type(base_space)}."
             )
 
-    def seed(
-        self, seed: Optional[int] = None
-    ) -> None:
-        super().seed(seed)
-        self.node_space.seed(seed)
-        if self.edge_space is not None:
-            self.edge_space.seed(seed)
-
     def sample(
         self,
+        rng: BRNGType,
         num_nodes: int = 10,
         num_edges: int | None = None,
-    ) -> GraphInstance:
+    ) -> Tuple[BRNGType, GraphInstance]:
         # we only have edges when we have at least 2 nodes
         if num_edges is None:
             if num_nodes > 1:
                 # maximal number of edges is `n*(n-1)` allowing self connections and two-way is allowed
-                num_edges = self.np_rng.integers(num_nodes * (num_nodes - 1))
+                rng, num_edges = self.backend.random_discrete_uniform(
+                    rng,
+                    shape=(1,),
+                    from_num=0,
+                    to_num=num_nodes * (num_nodes - 1),
+                    device=None
+                )[0]
             else:
                 num_edges = 0
-
-            if edge_space_mask is not None:
-                edge_space_mask = tuple(edge_space_mask for _ in range(num_edges))
         else:
-            if self.edge_space is None:
-                gym.logger.warn(
-                    f"The number of edges is set ({num_edges}) but the edge space is None."
-                )
             assert (
                 num_edges >= 0
             ), f"Expects the number of edges to be greater than 0, actual value: {num_edges}"
-        assert num_edges is not None
 
         sampled_node_space = self._generate_sample_space(self.node_space, num_nodes)
         sampled_edge_space = self._generate_sample_space(self.edge_space, num_edges)
@@ -168,11 +150,11 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
 
         sampled_edge_links = None
         if sampled_edges is not None and num_edges > 0:
-            sampled_edge_links = self.backend.random_discrete_uniform(
-                self.rng, shape=(num_edges, 2), from_num=0, to_num=num_nodes, device=self.node_space.device
+            rng, sampled_edge_links = self.backend.random_discrete_uniform(
+                rng, shape=(num_edges, 2), from_num=0, to_num=num_nodes, device=self.node_space.device
             )
 
-        return GraphInstance(sampled_nodes, sampled_edges, sampled_edge_links)
+        return rng, GraphInstance(sampled_nodes, sampled_edges, sampled_edge_links)
 
     def contains(self, x: GraphInstance) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -246,21 +228,21 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             ret.append(ret_n)
         return ret
     
-    def from_gym_data(self, gym_data : gym.spaces.GraphInstance) -> GraphInstance[GraphBArrayT]:
+    def from_gym_data(self, gym_data : gym.spaces.GraphInstance) -> GraphInstance[BArrayType]:
         return GraphInstance(
             self.backend.from_numpy(gym_data.nodes, dtype=self.node_space.dtype, device=self.node_space.device),
             self.backend.from_numpy(gym_data.edges, dtype=self.edge_space.dtype, device=self.edge_space.device) if gym_data.edges is not None else None,
             self.backend.from_numpy(gym_data.edge_links, device=self.device) if gym_data.edge_links is not None else None,
         )
     
-    def to_gym_data(self, data : GraphInstance[GraphBArrayT]) -> gym.spaces.GraphInstance:
+    def to_gym_data(self, data : GraphInstance[BArrayType]) -> gym.spaces.GraphInstance:
         return gym.spaces.GraphInstance(
             nodes=self.backend.to_numpy(data.nodes),
             edges=self.backend.to_numpy(data.edges) if data.edges is not None else None,
             edge_links=self.backend.to_numpy(data.edge_links) if data.edge_links is not None else None,
         )
     
-    def from_other_backend(self, other_data : GraphInstance[Any]) -> GraphInstance[GraphBArrayT]:
+    def from_other_backend(self, other_data : GraphInstance[Any]) -> GraphInstance[BArrayType]:
         new_node = self.backend.from_dlpack(other_data.nodes)
         new_edge = self.backend.from_dlpack(other_data.edges) if other_data.edges is not None else None
         new_edge_links = self.backend.from_dlpack(other_data.edge_links) if other_data.edge_links is not None else None
@@ -277,7 +259,7 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
             edge_links=new_edge_links,
         )
     
-    def from_same_backend(self, other_data : GraphInstance[GraphBArrayT]) -> GraphInstance[GraphBArrayT]:
+    def from_same_backend(self, other_data : GraphInstance[BArrayType]) -> GraphInstance[BArrayType]:
         new_node = other_data.nodes
         new_edge = other_data.edges
         new_edge_links = other_data.edge_links
@@ -297,6 +279,5 @@ class Graph(Space[GraphInstance[GraphBArrayT], gym.spaces.GraphInstance, _GraphB
         """Convert this space to a gym space."""
         return gym.spaces.Graph(
             node_space=self.node_space.to_gym_space(),
-            edge_space=self.edge_space.to_gym_space() if self.edge_space is not None else None,
-            seed=seed_util.next_seed(self.np_rng)
+            edge_space=self.edge_space.to_gym_space() if self.edge_space is not None else None
         )

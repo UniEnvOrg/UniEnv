@@ -2,16 +2,11 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 
-DiscreteArrayT = TypeVar("BoxArrayT", covariant=True)
-_DiscreteBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_DiscreteBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_DiscreteBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
-class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]):
+class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     r"""A space consisting of finitely many elements.
 
     This class represents a finite subset of integers, more specifically a set of the form :math:`\{ a, a+1, \dots, a+n-1 \}`.
@@ -28,12 +23,11 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
 
     def __init__(
         self,
-        backend : Type[ComputeBackend[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]],
+        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
         n: int,
         start: int = 0,
-        device : Optional[_DiscreteBDeviceT] = None,
-        dtype: Optional[_DiscreteBDTypeT] = None,
-        seed: Optional[int] = None,
+        device : Optional[BDeviceType] = None,
+        dtype: Optional[BDtypeType] = None,
     ):
         assert isinstance(n, int), f"Expects `n` to be an integer, actual dtype: {type(n)}"
         assert n > 0, "n (counts) have to be positive"
@@ -47,10 +41,9 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
             shape=(1,),
             device=device,
             dtype=dtype,
-            seed=seed,
         )
 
-    def to_device(self, device: _DiscreteBDeviceT) -> "Discrete[DiscreteArrayT, _DiscreteBDeviceT, _DiscreteBDTypeT, _DiscreteBDRNGT]":
+    def to_device(self, device: BDeviceType) -> "Discrete[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         return Discrete(
             backend=self.backend,
             n=self.n,
@@ -76,15 +69,15 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
     def flat_dim(self) -> int:
         return 1
     
-    def flatten(self, data : DiscreteArrayT) -> DiscreteArrayT:
+    def flatten(self, data : BArrayType) -> BArrayType:
         """Flatten the data."""
         return data
     
-    def unflatten(self, data : DiscreteArrayT) -> DiscreteArrayT:
+    def unflatten(self, data : BArrayType) -> BArrayType:
         """Unflatten the data."""
         return data
 
-    def sample(self) -> DiscreteArrayT:
+    def sample(self, rng : BRNGType) -> Tuple[BRNGType, BArrayType]:
         """Generates a single random sample from this space.
 
         A sample will be chosen uniformly at random with the mask if provided
@@ -97,15 +90,16 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
         Returns:
             A sampled integer from the space
         """
-        
-        return self.start + self.backend.random_discrete_uniform(
-            self.rng,
+        rng, sample = self.backend.random_discrete_uniform(
+            rng,
             shape=(1,),
             from_num=self.start,
             to_num=self.start + self.n,
             dtype=self.dtype,
             device=self.device,
         )
+        sample = sample + self.start
+        return rng, sample
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -130,41 +124,23 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
             and self.start == other.start
         )
 
-    def __setstate__(self, state: Iterable[tuple[str, Any]] | Mapping[str, Any]):
-        """Used when loading a pickled space.
-
-        This method has to be implemented explicitly to allow for loading of legacy states.
-
-        Args:
-            state: The new state
-        """
-        # Don't mutate the original state
-        state = dict(state)
-
-        # Allow for loading of legacy states.
-        # See https://github.com/openai/gym/pull/2470
-        if "start" not in state:
-            state["start"] = np.int64(0)
-
-        super().__setstate__(state)
-
-    def to_jsonable(self, sample_n: Sequence[DiscreteArrayT]) -> list[int]:
+    def to_jsonable(self, sample_n: Sequence[BArrayType]) -> list[int]:
         """Converts a list of samples to a list of ints."""
         return [int(x[0]) for x in sample_n]
 
-    def from_jsonable(self, sample_n: list[int]) -> list[DiscreteArrayT]:
+    def from_jsonable(self, sample_n: list[int]) -> list[BArrayType]:
         """Converts a list of json samples to a list of np.int64."""
         return [self.backend.array_api_namespace.asarray([x], dtype=self.dtype, device=self.device) for x in sample_n]
 
-    def from_gym_data(self, gym_data : np.int64) -> DiscreteArrayT:
+    def from_gym_data(self, gym_data : np.int64) -> BArrayType:
         """Convert a gym space to this space."""
         return self.backend.array_api_namespace.asarray([gym_data], dtype=self.dtype, device=self.device)
 
-    def from_other_backend(self, other_data : Any) -> DiscreteArrayT:
+    def from_other_backend(self, other_data : Any) -> BArrayType:
         new_tensor = self.backend.from_dlpack(other_data)
         return self.from_same_backend(new_tensor)
 
-    def from_same_backend(self, other_data : DiscreteArrayT) -> DiscreteArrayT:
+    def from_same_backend(self, other_data : BArrayType) -> BArrayType:
         new_tensor = other_data
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
@@ -172,7 +148,7 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
             new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
         return new_tensor
 
-    def to_gym_data(self, data : DiscreteArrayT) -> np.int64:
+    def to_gym_data(self, data : BArrayType) -> np.int64:
         """Convert this space to a gym space."""
         return np.int64(data[0])
     
@@ -180,6 +156,5 @@ class Discrete(Space[DiscreteArrayT, np.ndarray, _DiscreteBDeviceT, _DiscreteBDT
         """Convert this space to a gym space."""
         return gym.spaces.Discrete(
             self.n,
-            start=self.start,
-            seed=self.np_rng
+            start=self.start
         )

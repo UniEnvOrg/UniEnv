@@ -57,16 +57,6 @@ class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, Terminatio
     def close(self):
         pass
 
-    @property
-    @abc.abstractmethod
-    def np_rng(self) -> np.random.Generator:
-        raise NotImplementedError
-
-    @property
-    @abc.abstractmethod
-    def rng(self) -> BRngT:
-        raise NotImplementedError
-
     def __str__(self):
         return f"<{type(self).__name__} instance>"
 
@@ -79,7 +69,18 @@ class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, Terminatio
         self.close()
         # propagate exception
         return False
+    
+    # ========== Convenience methods ==========
+    def sample_space(self, space: Space) -> Any:
+        self.rng, sample = space.sample(self.rng)
+        return sample
 
+    def sample_action(self) -> ActType:
+        return self.sample_space(self.action_space)
+    
+    def sample_observation(self) -> ObsType:
+        return self.sample_space(self.observation_space)    
+    
     # ========== Wrapper methods ==========
 
     @property

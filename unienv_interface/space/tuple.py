@@ -3,21 +3,16 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple as TupleType, Type, Literal, List, Dict
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 
-_TupleBDeviceT = TypeVar("_BoxBDeviceT", covariant=True)
-_TupleBDTypeT = TypeVar("_BoxBDTypeT", covariant=True)
-_TupleBDRNGT = TypeVar("_BoxBDRNGT", covariant=True)
-
-class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]):
+class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]],
-        spaces: Iterable[Space[Any, Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]],
-        device : Optional[_TupleBDeviceT] = None,
-        seed: Optional[int] = None,
+        backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        spaces: Iterable[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]],
+        device : Optional[BDeviceType] = None,
     ):
         new_spaces = []
         for space in spaces:
@@ -29,13 +24,12 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
                 new_spaces.append(space.to_device(device))
             else:
                 new_spaces.append(space)
-        self.spaces : TupleType[Space[Any, Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT], ...] = tuple(new_spaces)
+        self.spaces : TupleType[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], ...] = tuple(new_spaces)
         super().__init__(
             backend=backend,
             shape=None,
             device=device,
             dtype=None,
-            seed=seed
         )
 
     @property
@@ -65,7 +59,7 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
             start = end
         return result
 
-    def to_device(self, device : _TupleBDeviceT) -> "Tuple[_TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]":
+    def to_device(self, device : BDeviceType) -> "Tuple[BDeviceType, BDtypeType, BRNGType]":
         return Tuple(
             backend=self.backend,
             spaces=[space.to_device(device) for space in self.spaces],
@@ -78,13 +72,13 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
             spaces=[space.to_backend(backend, device) for space in self.spaces],
             device=device
         )
-
-    def seed(self, seed: Optional[int] = None) -> None:
+    
+    def sample(self, rng : BRNGType) -> TupleType[BRNGType, TupleType[Any, ...]]:
+        samples = []
         for space in self.spaces:
-            space.seed(seed=seed)
-
-    def sample(self) -> TupleType[Any, ...]:
-        return tuple(space.sample() for space in self.spaces)
+            rng, sample = space.sample(rng)
+            samples.append(sample)
+        return rng, tuple(samples)
 
     def contains(self, x: TupleType[Any, ...]) -> bool:
         return (
@@ -97,7 +91,7 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], _TupleBDeviceT, _Tup
         """Gives a string representation of this space."""
         return "Tuple(" + ", ".join([str(s) for s in self.spaces]) + ")"
 
-    def __getitem__(self, index: int) -> Space[Any, Any, _TupleBDeviceT, _TupleBDTypeT, _TupleBDRNGT]:
+    def __getitem__(self, index: int) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the subspace at specific `index`."""
         return self.spaces[index]
 

@@ -2,26 +2,20 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
 from .space import Space
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import array_api_compat
 import gymnasium as gym
 from .discrete import Discrete
 
-MultiDArrayT = TypeVar("MultiBArrayT", covariant=True)
-_MultiDDeviceT = TypeVar("_MultiBDeviceT", covariant=True)
-_MultiDDTypeT = TypeVar("_MultiBDTypeT", covariant=True)
-_MultiDDRNGT = TypeVar("_MultiBDRNGT", covariant=True)
-
-class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]):
+class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
 
     def __init__(
         self,
-        backend: Type[ComputeBackend[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]],
-        nvec: MultiDArrayT,
-        start: Optional[MultiDArrayT] = None,
-        dtype: Optional[_MultiDDTypeT] = None,
-        device : Optional[_MultiDDeviceT] = None,
-        seed: Optional[int] = None,
+        backend: Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        nvec: BArrayType,
+        start: Optional[BArrayType] = None,
+        dtype: Optional[BDtypeType] = None,
+        device : Optional[BDeviceType] = None,
     ):
         if dtype is not None:
             assert backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
@@ -45,7 +39,6 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
             shape=self.nvec.shape,
             device=device,
             dtype=dtype,
-            seed=seed,
         )
 
     @property
@@ -53,7 +46,7 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         """Has stricter type than :class:`gym.Space` - never None."""
         return self._shape  # type: ignore
 
-    def to_device(self, device: _MultiDDeviceT) -> "MultiDiscrete[MultiDArrayT, _MultiDDeviceT, _MultiDDTypeT, _MultiDDRNGT]":
+    def to_device(self, device: BDeviceType) -> "MultiDiscrete[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         return MultiDiscrete(
             backend=self.backend,
             nvec=self.nvec,
@@ -80,18 +73,19 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         """Return the shape of the space as an immutable property."""
         return int(np.prod(self.nvec))
     
-    def flatten(self, data : MultiDArrayT) -> MultiDArrayT:
+    def flatten(self, data : BArrayType) -> BArrayType:
         """Flatten the data."""
         return self.backend.array_api_namespace.reshape(data, (-1,))
     
-    def unflatten(self, data : MultiDArrayT) -> MultiDArrayT:
+    def unflatten(self, data : BArrayType) -> BArrayType:
         """Unflatten the data."""
         return self.backend.array_api_namespace.reshape(data, self.shape)
 
     def sample(
-        self
-    ) -> MultiDArrayT:
-        uniform_sample = self.backend.random_uniform(self.rng, self.shape, device=self.device)
+        self,
+        rng: BRNGType,
+    ) -> Tuple[BRNGType, BArrayType]:
+        rng, uniform_sample = self.backend.random_uniform(rng, self.shape, device=self.device)
         scaled_sample = uniform_sample * self.nvec + self.start
         floored_sample = self.backend.array_api_namespace.floor(scaled_sample)
         if self.dtype is not None:
@@ -102,7 +96,7 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
             samp = array_api_compat.to_device(samp, device=self.device)
         return samp
 
-    def contains(self, x: MultiDArrayT) -> bool:
+    def contains(self, x: BArrayType) -> bool:
         return bool(
             self.backend.is_backendarray(x)
             and x.shape == self.shape
@@ -151,28 +145,28 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         )
 
     def to_jsonable(
-        self, sample_n: Sequence[MultiDArrayT]
+        self, sample_n: Sequence[BArrayType]
     ) -> list[Sequence[int]]:
         """Convert a batch of samples from this space to a JSONable data type."""
         return [self.backend.to_numpy(sample).tolist() for sample in sample_n]
 
     def from_jsonable(
         self, sample_n: list[Sequence[int]]
-    ) -> list[MultiDArrayT]:
+    ) -> list[BArrayType]:
         """Convert a JSONable data type to a batch of samples from this space."""
         return [self.backend.from_numpy(np.asarray(sample, dtype=np.int64), dtype=self.dtype, device=self.device) for sample in sample_n]
 
-    def from_gym_data(self, gym_data : np.ndarray) -> MultiDArrayT:
+    def from_gym_data(self, gym_data : np.ndarray) -> BArrayType:
         return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
     
-    def to_gym_data(self, data : MultiDArrayT) -> np.ndarray:
+    def to_gym_data(self, data : BArrayType) -> np.ndarray:
         return self.backend.to_numpy(data).astype(int)
     
-    def from_other_backend(self, other_data : Any) -> MultiDArrayT:
+    def from_other_backend(self, other_data : Any) -> BArrayType:
         new_tensor = self.backend.from_dlpack(other_data)
         return self.from_same_backend(new_tensor)
     
-    def from_same_backend(self, other_data : MultiDArrayT) -> MultiDArrayT:
+    def from_same_backend(self, other_data : BArrayType) -> BArrayType:
         new_tensor = other_data
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
@@ -182,4 +176,4 @@ class MultiDiscrete(Space[MultiDArrayT, np.ndarray, _MultiDDeviceT, _MultiDDType
         return new_tensor
 
     def to_gym_space(self) -> gym.Space:
-        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start), seed=self.np_rng)
+        return gym.spaces.MultiDiscrete(self.backend.to_numpy(self.nvec), start=self.backend.to_numpy(self.start))
