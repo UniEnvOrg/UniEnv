@@ -12,6 +12,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+video = [
+    "moviepy>=1.0.3"
+]
 dev = [
     "pytest",
     "tqdm"

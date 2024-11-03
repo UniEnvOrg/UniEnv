@@ -137,7 +137,7 @@ class FuncEnv(
         """Close the render state."""
         raise NotImplementedError
 
-class StatefulSingleFuncEnv(Env[
+class FuncEnvBasedEnv(Env[
     ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
 ],Generic[
     StateType, RenderStateType, 

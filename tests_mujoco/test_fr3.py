@@ -3,7 +3,7 @@ import typing
 from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MujocoIKWrapper, MinkIK, MinkBulkIK, MujocoFuncWorldState, MujocoFuncWindowedViewSensor
 from unienv_interface.space import *
 from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.env_base.funcenv import FuncEnv, StatefulSingleFuncEnv
+from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvBasedEnv
 from unienv_interface.world.world import FuncEnvCommonState
 from unienv_interface.world.tasks import LambdaFuncTask
 from unienv_interface.world.env_utils import WorldBasedFuncEnv
@@ -146,7 +146,7 @@ def test_fr3_eef(
         render_sensor=None,
         info_callback=None
     )
-    env = StatefulSingleFuncEnv(
+    env = FuncEnvBasedEnv(
         funcenv,
         seed=0
     )

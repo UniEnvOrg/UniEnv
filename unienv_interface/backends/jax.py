@@ -30,6 +30,8 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
 
     @classmethod
     def to_numpy(cls, data : jax.Array) -> np.ndarray:
+        if data.dtype == jax.dtypes.bfloat16:
+            data = data.astype(np.float32)
         return np.asarray(data)
 
     @classmethod

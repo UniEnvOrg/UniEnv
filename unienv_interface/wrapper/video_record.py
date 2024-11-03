@@ -74,6 +74,10 @@ class EpisodeRenderStackWrapper(
         if self._step_frame is None:
             self._step_frame = self.env.render()
         return self._step_frame
+    
+    def close(self):
+        self._post_episode()
+        super().close()
 
 class EpisodeVideoWrapper(
     EpisodeRenderStackWrapper[
