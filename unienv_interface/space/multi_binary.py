@@ -96,10 +96,11 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
     
     def from_same_backend(self, other_data : BArrayType) -> BArrayType:
         new_tensor = other_data
-        if self.dtype is not None:
-            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
+        
         if self.device is not None:
             new_tensor = array_api_compat.to_device(new_tensor, self.device)
+        if self.dtype is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         
         return new_tensor
 

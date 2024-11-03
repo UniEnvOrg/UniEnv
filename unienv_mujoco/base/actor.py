@@ -20,8 +20,6 @@ class MujocoDefaultFuncActor(
         self,
         world : MujocoFuncWorld,
         control_timestep : float,
-        *,
-        seed : Optional[int] = None
     ):
         self._world = world
 
