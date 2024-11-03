@@ -37,6 +37,10 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
         return jax.dlpack.from_dlpack(data)
 
     @classmethod
+    def replace_inplace(cls, data: jax.Array, index: jax.Array, value: jax.Array) -> jax.Array:
+        return data.at[index].set(value)
+
+    @classmethod
     def random_number_generator(cls, seed : Optional[int] = None, device : Optional[JaxDevice] = None) -> JaxRNG:
         rng_seed = np.random.randint(0) if seed is None else seed
         rng = jax.random.key(

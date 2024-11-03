@@ -172,33 +172,24 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         )
 
         # Vectorized sampling by interval type
-        rng, sample[unbounded] = self.backend.random_normal(rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
+        rng, unbounded_sample = self.backend.random_normal(rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
+        sample = self.backend.replace_inplace(sample, unbounded, unbounded_sample)
 
         rng, exponential_generated = self.backend.random_exponential(rng, shape=low_bounded[low_bounded].shape, dtype=self.dtype, device=self.device)
-        sample[low_bounded] = (
-            exponential_generated
-            + self.low[low_bounded]
-        )
+        low_bounded_sample = exponential_generated + self.low[low_bounded]
+        sample = self.backend.replace_inplace(sample, low_bounded, low_bounded_sample)
 
         rng, exponential_generated = self.backend.random_exponential(rng, shape=upp_bounded[upp_bounded].shape, dtype=self.dtype, device=self.device)
-        sample[upp_bounded] = (
-            -exponential_generated
-            + high[upp_bounded]
-        )
+        upp_bounded_sample = high[upp_bounded] - exponential_generated
+        sample = self.backend.replace_inplace(sample, upp_bounded, upp_bounded_sample)
 
-        rng, float_bounded = self.backend.random_uniform(
+        rng, bounded_sample = self.backend.random_uniform(
             rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
             dtype=self.dtype, device=self.device
         )
-        # assert self.backend.array_api_namespace.all(
-        #     self.backend.array_api_namespace.logical_and(
-        #         float_bounded >= 0.0,
-        #         float_bounded <= 1.0
-        #     )
-        # )
-        float_bounded *= (high[bounded] - self.low[bounded])
-        float_bounded += self.low[bounded]
-        sample[bounded] = float_bounded
+        bounded_sample *= (high[bounded] - self.low[bounded])
+        bounded_sample += self.low[bounded]
+        sample = self.backend.replace_inplace(sample, bounded, bounded_sample)
 
         # if self._dtype_is_float:
         #     sample[bounded] = float_bounded    

@@ -64,6 +64,11 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
 
     @classmethod
     @abc.abstractmethod
+    def replace_inplace(cls, data : BArrayType, index : BArrayType, value : BArrayType) -> BArrayType:
+        raise NotImplementedError
+
+    @classmethod
+    @abc.abstractmethod
     def random_number_generator(cls, seed : Optional[int] = None, device : Optional[BDeviceType] = None) -> BRNGType:
         raise NotImplementedError
     

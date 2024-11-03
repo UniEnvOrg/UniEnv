@@ -29,6 +29,11 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
         return torch.from_dlpack(data)
 
     @classmethod
+    def replace_inplace(cls, data: torch.Tensor, index: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        data[index] = value
+        return data
+
+    @classmethod
     def random_number_generator(cls, seed : Optional[int] = None, device : Optional[Union[torch.device, str]] = None) -> torch.Generator:
         rng = torch.Generator(device=device)
         if seed is not None:

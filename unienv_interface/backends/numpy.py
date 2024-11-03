@@ -28,6 +28,11 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return np.from_dlpack(data)
 
     @classmethod
+    def replace_inplace(cls, data: np.ndarray, index: np.ndarray, value: np.ndarray) -> np.ndarray:
+        data[index] = value
+        return data
+
+    @classmethod
     def random_number_generator(cls, seed : Optional[int] = None, device : Optional[Any] = None) -> np.random.Generator:
         rng = np.random.default_rng(seed=seed)
         return rng
