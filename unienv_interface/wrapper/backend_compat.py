@@ -23,8 +23,9 @@ def backend_dict_transform(
                 value
             )
         elif source_backend.is_backendarray(value):
-            new_data[key] = target_backend.from_dlpack(
-                value
+            new_data[key] = target_backend.from_other_backend(
+                value,
+                source_backend
             )
         else:
             new_data[key] = value
@@ -36,8 +37,9 @@ def backend_array_transform(
     data : Any
 ) -> Any:
     if source_backend.is_backendarray(data):
-        return target_backend.from_dlpack(
-            data
+        return target_backend.from_other_backend(
+            data,
+            source_backend
         )
     else:
         return data
@@ -95,15 +97,15 @@ class ToBackendWrapper(
         Dict[str, Any]
     ]:
         c_action = self.env.action_space.from_other_backend(
-            action
+            action, self.backend
         )
         obs, reward, terminated, truncated, info = self.env.step(c_action)
         c_obs = self.observation_space.from_other_backend(
-            obs
+            obs, self.env.backend
         )
-        c_reward = float(reward) if not self.env.backend.is_backendarray(reward) else self.backend.from_dlpack(reward)
-        c_terminated = bool(terminated) if not self.env.backend.is_backendarray(terminated) else self.backend.from_dlpack(terminated)
-        c_truncated = bool(truncated) if not self.env.backend.is_backendarray(truncated) else self.backend.from_dlpack(truncated)
+        c_reward = float(reward) if not self.env.backend.is_backendarray(reward) else self.backend.from_other_backend(reward, self.env.backend)
+        c_terminated = bool(terminated) if not self.env.backend.is_backendarray(terminated) else self.backend.from_other_backend(terminated, self.env.backend)
+        c_truncated = bool(truncated) if not self.env.backend.is_backendarray(truncated) else self.backend.from_other_backend(truncated, self.env.backend)
         c_info = backend_dict_transform(
             self.backend,
             self.env.backend,
@@ -132,7 +134,7 @@ class ToBackendWrapper(
             context
         )
         c_obs = self.observation_space.from_other_backend(
-            obs
+            obs, self.env.backend
         )
         c_info = backend_dict_transform(
             self.backend,

@@ -1,4 +1,4 @@
-from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple
+from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
 from .base import ComputeBackend
 import numpy as np
 import dlpack
@@ -33,8 +33,13 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
         return np.asarray(data)
 
     @classmethod
-    def from_dlpack(cls, data : dlpack.DLPackObject) -> jax.Array:
-        return jax.dlpack.from_dlpack(data)
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type[ComputeBackend]) -> jax.Array:
+        try:
+            return jax.dlpack.from_dlpack(data)
+        except:
+            # jax sometimes has tiling issues with dlpack converted data
+            np = backend.to_numpy(data)
+            return cls.from_numpy(np)
 
     @classmethod
     def replace_inplace(cls, data: jax.Array, index: jax.Array, value: jax.Array) -> jax.Array:
@@ -140,4 +145,4 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
     
     @classmethod
     def list_real_floating_dtypes(cls) -> Sequence[np.dtype]:
-        return (jax.dtypes.bfloat16, np.float16, np.float32, np.float64, np.float128, float)
+        return (jax.dtypes.bfloat16, np.float16, np.float32, np.float64, float)

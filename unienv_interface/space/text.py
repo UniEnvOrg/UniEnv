@@ -144,7 +144,7 @@ class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
         """Convert this space to a gym space."""
         return data
     
-    def from_other_backend(self, other_data : str) -> str:
+    def from_other_backend(self, other_data : str, backend : Type[ComputeBackend]) -> str:
         """Convert data from another backend to this backend."""
         return other_data
     

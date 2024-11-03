@@ -111,8 +111,8 @@ class Sequence(
         """Convert this space to a gym space."""
         return tuple(self.feature_space.to_gym_data(part) for part in data)
     
-    def from_other_backend(self, other_data : Tuple[Any, ...]) -> Tuple[Any, ...]:
-        return tuple(self.feature_space.from_other_backend(part) for part in other_data)
+    def from_other_backend(self, other_data : Tuple[Any, ...], backend : Type[ComputeBackend]) -> Tuple[Any, ...]:
+        return tuple(self.feature_space.from_other_backend(part, backend) for part in other_data)
     
     def from_same_backend(self, other_data : Tuple[Any, ...]) -> Tuple[Any, ...]:
         return tuple(self.feature_space.from_same_backend(part) for part in other_data)

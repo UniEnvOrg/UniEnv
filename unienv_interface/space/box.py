@@ -21,8 +21,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         assert (
             backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype)
         ), f"Box dtype must be a real floating or integer type, actual dtype: {dtype}"
-        self.dtype = dtype
-        self._dtype_is_float = backend.dtype_is_real_floating(self.dtype)
+        self._dtype_is_float = backend.dtype_is_real_floating(dtype)
 
         array_api_workspace = backend.array_api_namespace
 
@@ -42,17 +41,25 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             raise ValueError(
                 f"Box shape is inferred from low and high, expect their types to be backend array, an integer or a float, actual type low: {type(low)}, high: {type(high)}"
             )
+        
+        super().__init__(
+            backend=backend,
+            shape=shape,
+            device=device,
+            dtype=dtype,
+        )
 
-        # Capture the boundedness information
         _low = array_api_workspace.full(shape, low, dtype=float, device=device) if isinstance(low, (int, float)) else low
-        self.bounded_below = -array_api_workspace.inf < _low
-
         _high = array_api_workspace.full(shape, high, dtype=float, device=device) if isinstance(high, (int, float)) else high
-        self.bounded_above = array_api_workspace.inf > _high
+
+        # Before performing any operation on low and high arrays, move to the device to avoid jax tiling problems
+        if device is not None:
+            _low = array_api_compat.to_device(_low, device)
+            _high = array_api_compat.to_device(_high, device)
 
         assert not array_api_workspace.any(array_api_workspace.isnan(_low)), f"low contains NaN values: {_low}"
         assert not array_api_workspace.any(array_api_workspace.isnan(_high)), f"high contains NaN values: {_high}"
-
+        
         assert (
             _low.shape == shape
         ), f"_low.shape doesn't match provided shape, _low.shape: {_low.shape}, shape: {shape}"
@@ -62,19 +69,27 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
 
         self._shape: tuple[int, ...] = shape
 
-        self.low = array_api_workspace.astype(_low, self.dtype)
-        self.high = array_api_workspace.astype(_high, self.dtype)
+        self._low = array_api_workspace.astype(_low, self.dtype)
+        self._high = array_api_workspace.astype(_high, self.dtype)
         assert array_api_workspace.all(self.low <= self.high), f"low is greater than high: low={self.low}, high={self.high}"
-        if device is not None:
-            self.low = array_api_compat.to_device(self.low, device)
-            self.high = array_api_compat.to_device(self.high, device)
+        
+        self._recalculate_boundedness()
 
-        super().__init__(
-            backend=backend,
-            shape=shape,
-            device=device,
-            dtype=dtype,
-        )
+    @property
+    def low(self) -> BArrayType:
+        return self._low
+    
+    @property
+    def high(self) -> BArrayType:
+        return self._high
+
+    def _recalculate_boundedness(self):
+        self._bounded_below = -self.backend.array_api_namespace.inf < self.low
+        self._bounded_above = self.backend.array_api_namespace.inf > self.high
+        if not self._dtype_is_float:
+            below = bool(self.backend.array_api_namespace.all(self._bounded_below))
+            above = bool(self.backend.array_api_namespace.all(self._bounded_above))
+            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {self.low}, high: {self.high}"
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -91,8 +106,8 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         )
 
     def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Box":
-        new_low = backend.from_dlpack(self.low)
-        new_high = backend.from_dlpack(self.high)
+        new_low = backend.from_other_backend(self.low, self.backend)
+        new_high = backend.from_other_backend(self.high, self.backend)
 
         return Box(
             backend=backend,
@@ -122,8 +137,8 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         return self.backend.array_api_namespace.reshape(data, self.shape)
 
     def is_bounded(self, manner: Literal["both", "below", "above"] = "both") -> bool:
-        below = bool(self.backend.array_api_namespace.all(self.bounded_below))
-        above = bool(self.backend.array_api_namespace.all(self.bounded_above))
+        below = bool(self.backend.array_api_namespace.all(self._bounded_below))
+        above = bool(self.backend.array_api_namespace.all(self._bounded_above))
         if manner == "both":
             return below and above
         elif manner == "below":
@@ -150,58 +165,66 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             A sampled value from the Box
         """
 
-        high = self.high if self._dtype_is_float else self.high + 1
-        sample = self.backend.array_api_namespace.empty(self.shape, dtype=self.dtype, device=self.device)
+        if self._dtype_is_float:
+            high = self.high
+            sample = self.backend.array_api_namespace.empty(self.shape, dtype=self.dtype, device=self.device)
 
-        # Masking arrays which classify the coordinates according to interval type
-        unbounded = self.backend.array_api_namespace.logical_and(
-            self.backend.array_api_namespace.logical_not(self.bounded_below), 
-            self.backend.array_api_namespace.logical_not(self.bounded_above)
-        )
-        upp_bounded = self.backend.array_api_namespace.logical_and(
-            self.backend.array_api_namespace.logical_not(self.bounded_below), 
-            self.bounded_above
-        )
-        low_bounded = self.backend.array_api_namespace.logical_and(
-            self.bounded_below, 
-            self.backend.array_api_namespace.logical_not(self.bounded_above)
-        )
-        bounded = self.backend.array_api_namespace.logical_and(
-            self.bounded_below, 
-            self.bounded_above
-        )
+            # Masking arrays which classify the coordinates according to interval type
+            unbounded = self.backend.array_api_namespace.logical_and(
+                self.backend.array_api_namespace.logical_not(self._bounded_below), 
+                self.backend.array_api_namespace.logical_not(self._bounded_above)
+            )
+            upp_bounded = self.backend.array_api_namespace.logical_and(
+                self.backend.array_api_namespace.logical_not(self._bounded_below), 
+                self._bounded_above
+            )
+            low_bounded = self.backend.array_api_namespace.logical_and(
+                self._bounded_below, 
+                self.backend.array_api_namespace.logical_not(self._bounded_above)
+            )
+            bounded = self.backend.array_api_namespace.logical_and(
+                self._bounded_below, 
+                self._bounded_above
+            )
 
-        # Vectorized sampling by interval type
-        rng, unbounded_sample = self.backend.random_normal(rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device)
-        sample = self.backend.replace_inplace(sample, unbounded, unbounded_sample)
+            # Vectorized sampling by interval type
+            rng, unbounded_sample = self.backend.random_normal(rng, shape=unbounded[unbounded].shape, dtype=self.dtype, device=self.device) if self._dtype_is_float else self.backend.random_normal(rng, shape=unbounded[unbounded].shape, mean=0.0, std=1.0, device=self.device)
+            sample = self.backend.replace_inplace(sample, unbounded, unbounded_sample)
 
-        rng, exponential_generated = self.backend.random_exponential(rng, shape=low_bounded[low_bounded].shape, dtype=self.dtype, device=self.device)
-        low_bounded_sample = exponential_generated + self.low[low_bounded]
-        sample = self.backend.replace_inplace(sample, low_bounded, low_bounded_sample)
+            rng, exponential_generated = self.backend.random_exponential(rng, shape=low_bounded[low_bounded].shape, dtype=self.dtype, device=self.device)
+            low_bounded_sample = exponential_generated + self.low[low_bounded]
+            sample = self.backend.replace_inplace(sample, low_bounded, low_bounded_sample)
 
-        rng, exponential_generated = self.backend.random_exponential(rng, shape=upp_bounded[upp_bounded].shape, dtype=self.dtype, device=self.device)
-        upp_bounded_sample = high[upp_bounded] - exponential_generated
-        sample = self.backend.replace_inplace(sample, upp_bounded, upp_bounded_sample)
+            rng, exponential_generated = self.backend.random_exponential(rng, shape=upp_bounded[upp_bounded].shape, dtype=self.dtype, device=self.device)
+            upp_bounded_sample = high[upp_bounded] - exponential_generated
+            sample = self.backend.replace_inplace(sample, upp_bounded, upp_bounded_sample)
 
-        rng, bounded_sample = self.backend.random_uniform(
-            rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
-            dtype=self.dtype, device=self.device
-        )
-        bounded_sample *= (high[bounded] - self.low[bounded])
-        bounded_sample += self.low[bounded]
-        sample = self.backend.replace_inplace(sample, bounded, bounded_sample)
+            rng, bounded_sample = self.backend.random_uniform(
+                rng, shape=bounded[bounded].shape, lower_bound=0.0, upper_bound=1.0,
+                dtype=self.dtype, device=self.device
+            )
+            bounded_sample *= (high[bounded] - self.low[bounded])
+            bounded_sample += self.low[bounded]
+            sample = self.backend.replace_inplace(sample, bounded, bounded_sample)
 
-        # if self._dtype_is_float:
-        #     sample[bounded] = float_bounded    
-        # else:
-        #     sample[bounded] = self.backend.array_api_namespace.floor(
-        #         float_bounded
-        #     )
-
-        if not self._dtype_is_float:
+        else:
+            high=self.high + 1
+            rng, sample = self.backend.random_uniform(
+                rng, shape=self.shape, lower_bound=0.0, upper_bound=1.0, device=self.device
+            )
+            sample *= (high - self.low)
             sample = self.backend.array_api_namespace.floor(sample)
 
-        return rng, self.backend.array_api_namespace.astype(sample, self.dtype)
+            # Fix for floating point errors
+            floating_point_error_idx = sample >= high - self.low
+            if self.backend.array_api_namespace.any(floating_point_error_idx):
+                sample = self.backend.replace_inplace(
+                    sample, floating_point_error_idx, self.backend.array_api_namespace.astype(high[floating_point_error_idx] - self.low[floating_point_error_idx] - 1, sample.dtype)
+                )
+
+            sample = self.backend.array_api_namespace.astype(sample, self.dtype)
+            sample += self.low
+        return rng, sample
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
@@ -249,16 +272,18 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def from_gym_data(self, gym_data: np.ndarray) -> BArrayType:
         return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
     
-    def from_other_backend(self, other_data: Any) -> BArrayType:
-        new_tensor = self.backend.from_dlpack(other_data)
+    def from_other_backend(self, other_data: Any, backend : Type[ComputeBackend]) -> BArrayType:
+        new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
 
     def from_same_backend(self, other_data: BArrayType) -> BArrayType:
         new_tensor = other_data
-        if self.dtype is not None:
-            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
+        
         if self.device is not None:
             new_tensor = array_api_compat.to_device(new_tensor, self.device)
+            # For some reason jax doesn't have good support for dlpack converted back cpu arrays, so we need to move it to the device first
+        if self.dtype is not None:
+            new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         
         return new_tensor
 

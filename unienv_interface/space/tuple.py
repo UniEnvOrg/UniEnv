@@ -131,8 +131,8 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
     def to_gym_data(self, data : TupleType[Any, ...]) -> TupleType[Any, ...]:
         return tuple(space.to_gym_data(part) for (space, part) in zip(self.spaces, data))
     
-    def from_other_backend(self, other_data : TupleType[Any, ...]) -> TupleType[Any, ...]:
-        return tuple(space.from_other_backend(part) for (space, part) in zip(self.spaces, other_data))
+    def from_other_backend(self, other_data : TupleType[Any, ...], backend : Type[ComputeBackend]) -> TupleType[Any, ...]:
+        return tuple(space.from_other_backend(part, backend) for (space, part) in zip(self.spaces, other_data))
     
     def from_same_backend(self, other_data : TupleType[Any, ...]) -> TupleType[Any, ...]:
         return tuple(space.from_same_backend(part) for (space, part) in zip(self.spaces, other_data))

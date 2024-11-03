@@ -136,8 +136,8 @@ class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType])
         """Convert a gym space to this space."""
         return self.backend.array_api_namespace.asarray([gym_data], dtype=self.dtype, device=self.device)
 
-    def from_other_backend(self, other_data : Any) -> BArrayType:
-        new_tensor = self.backend.from_dlpack(other_data)
+    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> BArrayType:
+        new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
 
     def from_same_backend(self, other_data : BArrayType) -> BArrayType:

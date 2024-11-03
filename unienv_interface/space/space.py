@@ -89,7 +89,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         return data
     
     @abc.abstractmethod
-    def from_other_backend(self, other_data : Any) -> SpaceDataT:
+    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> SpaceDataT:
         """Convert data from another backend to this backend."""
         raise NotImplementedError
     

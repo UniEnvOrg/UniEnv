@@ -1,9 +1,17 @@
-from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple
+from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
 from .base import ComputeBackend
 import array_api_compat.torch
 import torch
 import numpy as np
 import dlpack
+
+PYTORCH_DTYPE_CAST_MAP = {
+    torch.uint16: torch.int16,
+    torch.uint32: torch.int32,
+    torch.uint64: torch.int64,
+    torch.float8_e4m3fn: torch.float16,
+    torch.float8_e5m2: torch.float16,
+}
 
 class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str], torch.dtype, torch.Generator]):
     array_api_namespace = array_api_compat.torch
@@ -19,14 +27,24 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
         t = torch.from_numpy(data)
         if dtype is not None or device is not None:
             t = t.to(device=device, dtype=dtype)
+        if t.dtype in PYTORCH_DTYPE_CAST_MAP.keys():
+            t = t.to(PYTORCH_DTYPE_CAST_MAP[t.dtype])
+        return t
 
     @classmethod
     def to_numpy(cls, data : torch.Tensor) -> np.ndarray:
+        # Torch bfloat16 is not supported by numpy
+        if data.dtype == torch.bfloat16:
+            data = data.to(torch.float32)
+
         return data.cpu().numpy()
 
     @classmethod
-    def from_dlpack(cls, data : dlpack.DLPackObject) -> torch.Tensor:
-        return torch.from_dlpack(data)
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type[ComputeBackend]) -> torch.Tensor:
+        t = torch.from_dlpack(data)
+        if t.dtype in PYTORCH_DTYPE_CAST_MAP.keys():
+            t = t.to(PYTORCH_DTYPE_CAST_MAP[t.dtype])
+        return t
 
     @classmethod
     def replace_inplace(cls, data: torch.Tensor, index: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
@@ -79,7 +97,8 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
     
     @classmethod
     def list_real_integer_dtypes(cls) -> Sequence[torch.dtype]:
-        return (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.uint16, torch.uint32, torch.uint64, torch.int, torch.long, int)
+        # https://pytorch.org/docs/stable/tensors.html#id12
+        return (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.int, torch.long, int)
 
     @classmethod
     def dtype_is_real_floating(cls, dtype : torch.dtype) -> bool:

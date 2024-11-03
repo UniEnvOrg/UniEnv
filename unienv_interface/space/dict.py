@@ -173,9 +173,9 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             key: space.to_gym_data(data[key]) for key, space in self.spaces.items()
         }
     
-    def from_other_backend(self, other_data : DictType[str, Any]) -> DictType[str, Any]:
+    def from_other_backend(self, other_data : DictType[str, Any], backend : Type[ComputeBackend]) -> DictType[str, Any]:
         return {
-            key: space.from_other_backend(other_data[key]) for key, space in self.spaces.items()
+            key: space.from_other_backend(other_data[key], backend) for key, space in self.spaces.items()
         }
     
     def from_same_backend(self, other_data : DictType[str, Any]) -> DictType[str, Any]:

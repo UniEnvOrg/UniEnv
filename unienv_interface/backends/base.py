@@ -1,4 +1,4 @@
-from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple
+from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
 import abc
 import numpy as np
 import dlpack
@@ -37,7 +37,7 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
 
     @classmethod
     @abc.abstractmethod
-    def from_dlpack(cls, data : dlpack.DLPackObject) -> BArrayType:
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type["ComputeBackend"]) -> BArrayType:
         raise NotImplementedError
 
     # @classmethod

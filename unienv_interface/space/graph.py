@@ -242,10 +242,10 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
             edge_links=self.backend.to_numpy(data.edge_links) if data.edge_links is not None else None,
         )
     
-    def from_other_backend(self, other_data : GraphInstance[Any]) -> GraphInstance[BArrayType]:
-        new_node = self.backend.from_dlpack(other_data.nodes)
-        new_edge = self.backend.from_dlpack(other_data.edges) if other_data.edges is not None else None
-        new_edge_links = self.backend.from_dlpack(other_data.edge_links) if other_data.edge_links is not None else None
+    def from_other_backend(self, other_data : GraphInstance[Any], backend : Type[ComputeBackend]) -> GraphInstance[BArrayType]:
+        new_node = self.backend.from_other_backend(other_data.nodes, backend)
+        new_edge = self.backend.from_other_backend(other_data.edges, backend) if other_data.edges is not None else None
+        new_edge_links = self.backend.from_other_backend(other_data.edge_links, backend) if other_data.edge_links is not None else None
         if self.node_space.device is not None:
             new_node = array_api_compat.to_device(new_node, self.node_space.device)
         if new_edge is not None and self.edge_space is not None and self.edge_space.device is not None:
