@@ -37,8 +37,8 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
     @classmethod
     def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type[ComputeBackend]) -> jax.Array:
         try:
-            if hasattr(data, "contiguous"): # Fix for torch non-standard strides
-                data = data.contiguous()
+            # if hasattr(data, "contiguous"): # Fix for torch non-standard strides
+            #     data = data.contiguous()
             return jax.dlpack.from_dlpack(data)
         except:
             # jax sometimes has tiling issues with dlpack converted data

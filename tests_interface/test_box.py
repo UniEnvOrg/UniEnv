@@ -16,6 +16,15 @@ ALL_BACKENDS_AND_DEVICES : typing.Dict[typing.Type[ComputeBackend], typing.List[
     JaxComputeBackend: jax.devices(),
     PyTorchComputeBackend: ['cpu'] if not torch.cuda.is_available() else ['cpu', 'cuda'],
 }
+ALL_BACKENDS_AND_DTYPES : typing.Dict[typing.Type[ComputeBackend], typing.List[typing.Any]] = {
+    NumpyComputeBackend: NumpyComputeBackend.list_real_floating_dtypes() + NumpyComputeBackend.list_real_integer_dtypes(),
+    JaxComputeBackend: JaxComputeBackend.list_real_floating_dtypes() + JaxComputeBackend.list_real_integer_dtypes(),
+    PyTorchComputeBackend: PyTorchComputeBackend.list_real_floating_dtypes() + PyTorchComputeBackend.list_real_integer_dtypes(),
+}
+
+# TODO: Remove the following when JAX fixes https://github.com/jax-ml/jax/issues/24680
+ALL_BACKENDS_AND_DTYPES.pop(JaxComputeBackend)
+ALL_BACKENDS_AND_DEVICES.pop(JaxComputeBackend)
 
 SEEDS = [0, 1024, 2048]
 NUM_SAMPLES_TEST = 20
@@ -51,7 +60,7 @@ def perform_box_test(backend : typing.Type[ComputeBackend], device : typing.Opti
     def generate_random_box_params(rng : typing.Any, np_rng : np.random.Generator):
         shape_ndims = np_rng.integers(1, 5)
         shape = tuple([np_rng.integers(1, 10) for _ in range(shape_ndims)])
-        dtype = np_rng.choice(backend.list_real_floating_dtypes() + backend.list_real_integer_dtypes())
+        dtype = np_rng.choice(ALL_BACKENDS_AND_DTYPES[backend])
         rng, values_1 = backend.random_exponential(rng, shape, lambd=0.5, dtype=dtype, device=device) if backend.dtype_is_real_floating(dtype) else backend.random_discrete_uniform(rng, shape, 0, 127, dtype=dtype, device=device)
         rng, values_2 = backend.random_exponential(rng, shape, lambd=0.5, dtype=dtype, device=device) if backend.dtype_is_real_floating(dtype) else backend.random_discrete_uniform(rng, shape, 0, 127, dtype=dtype, device=device)
         min_values = backend.array_api_namespace.minimum(values_1, values_2)
