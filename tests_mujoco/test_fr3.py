@@ -24,10 +24,10 @@ EEF_WORKSPACE = Box(
 EEF_SE3_WORKSPACE = Box(
     backend=NumpyComputeBackend,
     low=np.concatenate(
-        [EEF_WORKSPACE.low, np.array([-np.pi/2, -np.pi/2, -np.pi])],
+        [EEF_WORKSPACE.low, np.array([-np.pi/4, -np.pi/4, -np.pi])],
     ),
     high=np.concatenate(
-        [EEF_WORKSPACE.high, np.array([np.pi/2, np.pi/2, np.pi])],
+        [EEF_WORKSPACE.high, np.array([np.pi/4, np.pi/4, np.pi])],
     ),
     dtype=np.float32
 )
@@ -112,6 +112,7 @@ def eef_reward_and_termination_fn(
             print("Achieved target!")
             return 1.0, True, False
         else:
+            print(f"Error: {err_translation}, {err_rotation}")
             return 0.0, False, False
     return eef_reward_and_termination
 
