@@ -35,8 +35,7 @@ class ActionRescaleWrapper(
             high=new_high,
             dtype=env.action_space.dtype,
             device=env.device,
-            shape=env.action_space.shape,
-            seed=seed_util.next_seed(env.action_space.np_rng)
+            shape=env.action_space.shape
         )
 
     def step(
