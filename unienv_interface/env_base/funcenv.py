@@ -38,6 +38,7 @@ class FuncEnv(
     }
 
     backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
+    device : Optional[BDeviceT]
 
     batch_size : Optional[int] = None
 
@@ -46,7 +47,7 @@ class FuncEnv(
     context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
 
     @abc.abstractmethod
-    def initial(self, *, seed : int, device : Optional[BDeviceT] = None) -> Tuple[
+    def initial(self, *, seed : int) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceT, BRngT],
         ContextType,
@@ -69,7 +70,7 @@ class FuncEnv(
     ]:
         """Reset the environment."""
         return self.initial(
-            seed=seed_util.next_seed(common_state.np_rng),
+            seed=seed_util.next_seed(common_state.np_rng)
         )
 
     @abc.abstractmethod
@@ -149,14 +150,12 @@ class StatefulSingleFuncEnv(Env[
         instance_kwargs : Dict[str, Any] = {},
         render_mode : Optional[str] = None,
         render_kwargs : Dict[str, Any] = {},
-        device : Optional[BDeviceT] = None,
         seed : int = 0,
     ):
         self.func_env = func_env
-        self.device = device
         
         self.state, self.common_state, context, obs, info = self.func_env.initial(
-            *instance_args, seed=seed, device=device, **instance_kwargs
+            *instance_args, seed=seed, **instance_kwargs
         )
         self._first_instance_reset : Optional[Tuple[ContextType, ObsType, Dict[str, Any]]] = (context, obs, info)
 
@@ -213,6 +212,10 @@ class StatefulSingleFuncEnv(Env[
         return self.func_env.backend
 
     @property
+    def device(self) -> Optional[BDeviceT]:
+        return self.func_env.device
+
+    @property
     def batch_size(self) -> Optional[int]:
         return self.func_env.batch_size
 
@@ -232,9 +235,17 @@ class StatefulSingleFuncEnv(Env[
     def np_rng(self) -> np.random.Generator:
         return self.common_state.np_rng
     
+    @np_rng.setter
+    def np_rng(self, value: np.random.Generator):
+        self.common_state = dataclass_replace(self.common_state, np_rng=value)
+
     @property
     def rng(self) -> BRngT:
         return self.common_state.rng
+    
+    @rng.setter
+    def rng(self, value: BRngT):
+        self.common_state = dataclass_replace(self.common_state, rng=value)
     
     def reset(
         self,

@@ -18,7 +18,7 @@ class MujocoFuncJointPosSensor(
 ):
     def __init__(
         self,
-        world : MujocoFuncWorld,
+        mjmodel : mujoco.MjModel,
         control_timestep : float,
         joint_names : Sequence[str],
     ):
@@ -26,7 +26,7 @@ class MujocoFuncJointPosSensor(
         self.joint_names = joint_names
         observation_limits = np.zeros((len(joint_names), 2), dtype=np.float32)
         for i, joint_name in enumerate(joint_names):
-            joint = world._mjmodel.joint(joint_name)
+            joint = mjmodel.joint(joint_name)
             observation_limits[i] = joint.range
         observation_space = Box(
             backend=NumpyComputeBackend,
@@ -52,7 +52,6 @@ class MujocoFuncJointVelSensor(
 ):
     def __init__(
         self,
-        world : MujocoFuncWorld,
         control_timestep : float,
         joint_names : Sequence[str],
     ):

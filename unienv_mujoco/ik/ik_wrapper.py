@@ -62,6 +62,7 @@ class MujocoIKWrapper(Generic[
     
     def onboard_initial(
         self, 
+        world: MujocoFuncWorld,
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
         *args, 
@@ -73,6 +74,7 @@ class MujocoIKWrapper(Generic[
         MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
         state, common_state, inner_actor_state = self.actor.onboard_initial(
+            world,
             state, 
             common_state, 
             *args, 
@@ -95,6 +97,7 @@ class MujocoIKWrapper(Generic[
 
     def onboard_reset(
         self,
+        world: MujocoFuncWorld,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
         actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
@@ -103,7 +106,7 @@ class MujocoIKWrapper(Generic[
         FuncEnvCommonState[Any, np.random.Generator],
         MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ]:
-        state, common_state, actor_state = super().onboard_reset(state, common_state, actor_state)
+        state, common_state, actor_state = super().onboard_reset(world, state, common_state, actor_state)
         actor_state = dataclass_replace(
             actor_state,
             ik_state=self.ik.update_q(
@@ -196,7 +199,6 @@ class MujocoIKWrapper(Generic[
     def get_current_eef_position(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
         actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ) -> np.ndarray:
         trasform = self.ik.get_target_from_data(
@@ -210,7 +212,6 @@ class MujocoIKWrapper(Generic[
     def get_current_eef_quaternion(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
         actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT]
     ) -> np.ndarray:
         trasform = self.ik.get_target_from_data(

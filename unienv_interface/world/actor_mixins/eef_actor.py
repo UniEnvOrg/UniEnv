@@ -45,7 +45,6 @@ class EndEffectorFuncActorMixin(
     def get_current_eef_position(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state: ActorStateT
     ) -> BArrayType:
         """
@@ -58,7 +57,6 @@ class EndEffectorFuncActorMixin(
     def get_current_eef_quaternion(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state: ActorStateT
     ) -> BArrayType:
         """

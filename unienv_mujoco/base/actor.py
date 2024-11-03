@@ -51,6 +51,7 @@ class MujocoDefaultFuncActor(
 
     def onboard_initial(
         self, 
+        world: MujocoFuncWorld,
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 
         *, 
@@ -64,6 +65,7 @@ class MujocoDefaultFuncActor(
     
     def onboard_reset(
         self,
+        world: MujocoFuncWorld,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
         actor_state: None

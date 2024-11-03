@@ -19,6 +19,7 @@ class MujocoFuncWorldState:
 class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.Generator]):
     is_real = False
     backend = NumpyComputeBackend
+    device = None
 
     def __init__(
         self,

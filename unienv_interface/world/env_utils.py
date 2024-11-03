@@ -115,6 +115,10 @@ class WorldBasedFuncEnv(
         return self.world.backend
 
     @property
+    def device(self) -> BDeviceType:
+        return self.actor.device
+
+    @property
     def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
         if self.task.observation_space is None:
             return self.actor.observation_space
@@ -162,14 +166,14 @@ class WorldBasedFuncEnv(
             seed=seed, **world_kwargs
         )
         world_state, common_state, actor_combined_state = self.actor.initial(
-            world_state, common_state, seed=seed, **actor_kwargs
+            self.world, world_state, common_state, seed=seed, **actor_kwargs
         )
         world_state, common_state, actor_combined_state, task_state, task_context = self.task.initial(
             self.world, self.actor, world_state, common_state, actor_combined_state, seed=seed, **task_kwargs
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().initial(
-                world_state, common_state, seed=seed, **render_sensor_kwargs
+                self.world, world_state, common_state, seed=seed, **render_sensor_kwargs
             )
         else:
             render_sensor_state = None
@@ -227,14 +231,14 @@ class WorldBasedFuncEnv(
             world_state, common_state
         )
         world_state, common_state, actor_combined_state = self.actor.reset(
-            world_state, common_state, actor_combined_state
+            self.world, world_state, common_state, actor_combined_state
         )
         world_state, common_state, actor_combined_state, task_state, task_context = self.task.reset(
             self.world, self.actor, world_state, common_state, actor_combined_state, task_state
         )
         if self._need_update_render_sensor:
             world_state, common_state, render_sensor_state = self.get_render_sensor_instance().reset(
-                world_state, common_state, render_sensor_state
+                self.world, world_state, common_state, render_sensor_state
             )
         else:
             render_sensor_state = None

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 class World(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):
     backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]
+    device : Optional[BDeviceType]
 
     """The physical timestep in seconds, if None, the world is asynchronous (real-time)"""
     world_subtimestep : Optional[float]
@@ -56,6 +57,7 @@ class FuncWorld(
     is_real : bool
 
     backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]
+    device : Optional[BDeviceType]
     
     @abstractmethod
     def initial(
@@ -135,6 +137,7 @@ class WorldWrapper(
     ):
         self.world = world
         self._backend : Optional[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
+        self._device : Optional[WrapperBDeviceType] = self.world.device
     
     @property
     def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
@@ -143,6 +146,14 @@ class WorldWrapper(
     @backend.setter
     def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
         self._backend = value
+
+    @property
+    def device(self) -> Optional[WrapperBDeviceType]:
+        return self._device
+    
+    @device.setter
+    def device(self, value : Optional[WrapperBDeviceType]) -> None:
+        self._device = value
     
     @property
     def world_subtimestep(self) -> Optional[float]:
@@ -227,6 +238,7 @@ class FuncWorldWrapper(
     ):
         self.world = world
         self._backend : Optional[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]] = None
+        self._device : Optional[WrapperBDeviceType] = self.world.device
     
     @property
     def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
@@ -235,6 +247,14 @@ class FuncWorldWrapper(
     @backend.setter
     def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
         self._backend = value
+
+    @property
+    def device(self) -> Optional[WrapperBDeviceType]:
+        return self._device
+    
+    @device.setter
+    def device(self, value : Optional[WrapperBDeviceType]) -> None:
+        self._device = value
 
     @property
     def world_subtimestep(self) -> Optional[float]:

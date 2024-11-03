@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from ..space import Space
 from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
+from .world import FuncWorld
 
 SensorDataT = TypeVar("SensorDataT", covariant=True)
 class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
@@ -82,6 +83,7 @@ class FuncSensor(
     @abstractmethod
     def initial(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType, 
         common_state : FuncEnvCommonState[BDeviceType, BRNGType], 
         *, 
@@ -96,6 +98,7 @@ class FuncSensor(
     @abstractmethod
     def reset(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         sensor_state : SensorStateT
@@ -288,6 +291,7 @@ class FuncSensorWrapper(
 
     def initial(
         self,
+        world : FuncWorld[StateType, WrapperDeviceT, WrapperDtypeT, WrapperRNGT],
         state : StateType, 
         common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT], 
         *args, 
@@ -299,6 +303,7 @@ class FuncSensorWrapper(
         WrapperStateT
     ]:
         return self.sensor.initial(
+            world,
             state,
             common_state,
             *args,
@@ -308,6 +313,7 @@ class FuncSensorWrapper(
 
     def reset(
         self,
+        world : FuncWorld[StateType, WrapperDeviceT, WrapperDtypeT, WrapperRNGT],
         state : StateType,
         common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
         sensor_state : WrapperStateT
@@ -317,6 +323,7 @@ class FuncSensorWrapper(
         WrapperStateT
     ]:
         return self.sensor.reset(
+            world,
             state,
             common_state,
             sensor_state

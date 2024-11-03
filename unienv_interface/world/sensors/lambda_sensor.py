@@ -1,5 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
+from ..world import FuncWorld
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Box
 from unienv_interface.env_base.funcenv import FuncEnvCommonState, StateType
@@ -47,6 +48,7 @@ class FuncLambdaSensor(
     
     def initial(
         self, 
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state: StateType, 
         common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
         *, 
@@ -60,6 +62,7 @@ class FuncLambdaSensor(
     
     def reset(
         self, 
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state: StateType, 
         common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
         sensor_state: None

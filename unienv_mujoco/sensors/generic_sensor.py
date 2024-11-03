@@ -19,7 +19,7 @@ class MujocoFuncGenericSensor(
 ):
     def __init__(
         self,
-        world : MujocoFuncWorld,
+        mjmodel : mujoco.MjModel,
         sensor_name : str,
         control_timestep : float,
     ):
@@ -27,7 +27,7 @@ class MujocoFuncGenericSensor(
         self.control_timestep = control_timestep
 
         self._sensor_name = sensor_name
-        ndim = world._mjmodel.sensor(sensor_name).dim[0]
+        ndim = mjmodel.sensor(sensor_name).dim[0]
         self.observation_space = Box(
             backend=NumpyComputeBackend,
             low=-np.inf,
@@ -43,6 +43,7 @@ class MujocoFuncGenericSensor(
     
     def initial(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         seed : int
@@ -55,6 +56,7 @@ class MujocoFuncGenericSensor(
 
     def reset(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         sensor_state : None

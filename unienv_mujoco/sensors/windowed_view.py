@@ -33,13 +33,13 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
     def __init__(
         self,
         control_timestep : float,
-        seed : Optional[int] = None,
     ):
         assert control_timestep > 0.0
         self.control_timestep = control_timestep
     
     def initial(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         seed : int,
@@ -72,6 +72,7 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
 
     def reset(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         sensor_state : MujocoFuncWindowedViewSensorState

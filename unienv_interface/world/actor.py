@@ -5,6 +5,7 @@ from ..space.dict import Dict as DictSpace
 from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 from .sensor import Sensor, FuncSensor
+from .world import FuncWorld
 from dataclasses import dataclass
 
 ActorActT = TypeVar("ActorActT", covariant=True)
@@ -36,14 +37,15 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
     ):
         self._sensors : Dict[str, Sensor] = {}
 
-    @property
-    def device(self) -> Optional[BDeviceType]:
-        return self.observation_space.device
-    
+        
     @property
     def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
         return self.observation_space.backend
 
+    @property
+    def device(self) -> Optional[BDeviceType]:
+        return self.observation_space.device
+    
     def update(self, last_step_elapsed : float) -> None:
         self.update_onboard(last_step_elapsed=last_step_elapsed)
         self.update_sensors(last_step_elapsed=last_step_elapsed)
@@ -178,6 +180,7 @@ class FuncActor(
     @abstractmethod
     def onboard_initial(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         *,
@@ -192,6 +195,7 @@ class FuncActor(
     @abstractmethod
     def onboard_reset(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : ActorStateT
@@ -263,6 +267,7 @@ class FuncActor(
     
     def initial(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         *onboard_args,
@@ -275,8 +280,9 @@ class FuncActor(
         FuncActorCombinedState[ActorStateT]
     ]:
         state, common_state, actor_state = self.onboard_initial(
-            state=state,
-            common_state=common_state,
+            world,
+            state,
+            common_state,
             *onboard_args,
             seed=seed,
             **onboard_kwargs
@@ -286,8 +292,9 @@ class FuncActor(
         for key, sensor in self.sensors.items():
             current_sensor_kwargs = sensor_kwargs[key] if sensor_kwargs is not None and key in sensor_kwargs.keys() else {}
             state, common_state, sensor_state = sensor.initial(
-                state=state,
-                common_state=common_state,
+                world,
+                state,
+                common_state,
                 seed=seed,
                 **current_sensor_kwargs
             )
@@ -304,6 +311,7 @@ class FuncActor(
     
     def reset(
         self,
+        world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         combined_state : FuncActorCombinedState[ActorStateT],
@@ -313,19 +321,20 @@ class FuncActor(
         FuncActorCombinedState[ActorStateT]
     ]:
         state, common_state, actor_state = self.onboard_reset(
-            state=state,
-            common_state=common_state,
+            world,
+            state,
+            common_state,
             actor_state=combined_state.actor_state
         )
         
         sensor_states = {}
         for key, sensor in self.sensors.items():
-            state, common_state, sensor_state = sensor.reset(
-                state=state,
-                common_state=common_state,
+            state, common_state, sensor_states[key] = sensor.reset(
+                world,
+                state,
+                common_state,
                 sensor_state=combined_state.sensor_states[key]
             )
-            sensor_states[key] = sensor_state
         
         return (
             state,
@@ -356,13 +365,12 @@ class FuncActor(
         
         sensor_states = {}
         for key, sensor in self.sensors.items():
-            state, common_state, sensor_state = sensor.step(
+            state, common_state, sensor_states[key] = sensor.step(
                 state=state,
                 common_state=common_state,
                 sensor_state=combined_state.sensor_states[key],
                 last_step_elapsed=last_step_elapsed
             )
-            sensor_states[key] = sensor_state
         
         return (
             state,
@@ -386,8 +394,8 @@ class FuncActor(
         Dict[str, Any]
     ]:
         state, common_state, actor_state, onboard_data = self.get_data_onboard(
-            state=state,
-            common_state=common_state,
+            state,
+            common_state,
             actor_state=combined_state.actor_state,
             last_control_step_elapsed=last_control_step_elapsed
         )
@@ -396,8 +404,8 @@ class FuncActor(
         sensors_data = {}
         for key, sensor in self.sensors.items():
             state, common_state, sensors_state[key], sensors_data[key] = sensor.get_data(
-                state=state,
-                common_state=common_state,
+                state,
+                common_state,
                 sensor_state=combined_state.sensor_states[key],
                 last_control_step_elapsed=last_control_step_elapsed
             )
@@ -418,15 +426,15 @@ class FuncActor(
         FuncEnvCommonState[BDeviceType, BRNGType]
     ]:
         state, common_state = self.onboard_close(
-            state=state,
-            common_state=common_state,
+            state,
+            common_state,
             actor_state=combined_state.actor_state
         )
         
         for key, sensor in self.sensors.items():
             state, common_state = sensor.close(
-                state=state,
-                common_state=common_state,
+                state,
+                common_state,
                 sensor_state=combined_state.sensor_states[key]
             )
         
@@ -628,6 +636,7 @@ class FuncActorWrapper(
     
     def onboard_initial(
         self, 
+        world : FuncWorld[StateType, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType],
         state: StateType, 
         common_state: FuncEnvCommonState[ActorWrapperBDeviceType, ActorWrapperBRNGType], 
         *args, 
@@ -639,8 +648,9 @@ class FuncActorWrapper(
         ActorWrapperStateT
     ]:
         return self.actor.onboard_initial(
-            state=state, 
-            common_state=common_state, 
+            world,
+            state,
+            common_state,
             *args,
             seed=seed,
             **kwargs
@@ -648,6 +658,7 @@ class FuncActorWrapper(
     
     def onboard_reset(
         self, 
+        world : FuncWorld[StateType, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType],
         state: StateType, 
         common_state: FuncEnvCommonState[ActorWrapperBDeviceType, ActorWrapperBRNGType], 
         actor_state: ActorWrapperStateT
@@ -657,8 +668,9 @@ class FuncActorWrapper(
         ActorWrapperStateT
     ]:
         state, common_state, inner_actor_state = self.actor.onboard_reset(
-            state=state, 
-            common_state=common_state, 
+            world,
+            state,
+            common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state)
         )
         return state, common_state, self._translate_to_outer_actor_state(
@@ -678,8 +690,8 @@ class FuncActorWrapper(
         ActorWrapperStateT
     ]:
         state, common_state, inner_actor_state = self.actor.onboard_step(
-            state=state, 
-            common_state=common_state, 
+            state, 
+            common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state), 
             last_step_elapsed=last_step_elapsed
         )
@@ -701,8 +713,8 @@ class FuncActorWrapper(
         Dict[str, Any]
     ]:
         state, common_state, inner_actor_state, onboard_data = self.actor.get_data_onboard(
-            state=state, 
-            common_state=common_state, 
+            state, 
+            common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state), 
             last_control_step_elapsed=last_control_step_elapsed
         )
@@ -724,8 +736,8 @@ class FuncActorWrapper(
         ActorWrapperStateT
     ]:
         state, common_state, inner_actor_state = self.actor.set_next_action(
-            state=state, 
-            common_state=common_state, 
+            state, 
+            common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state), 
             action=action, 
             last_control_step_elapsed=last_control_step_elapsed
@@ -745,8 +757,8 @@ class FuncActorWrapper(
         FuncEnvCommonState[ActorWrapperBDeviceType, ActorWrapperBRNGType]
     ]:
         return self.actor.onboard_close(
-            state=state, 
-            common_state=common_state, 
+            state, 
+            common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state)
         )
 

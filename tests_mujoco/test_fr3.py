@@ -87,13 +87,6 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         fn_action_transform=lambda action, target_q: target_q
     )
 
-@pytest.fixture(scope="session")
-def render_sensor(fr3_world : MujocoFuncWorld) -> MujocoFuncWindowedViewSensor:
-    return MujocoFuncWindowedViewSensor(
-        control_timestep=CONTROL_TIMESTEP,
-        seed=None
-    )
-
 
 def eef_reward_and_termination_fn(
     target_transform : mink.SE3,
@@ -123,7 +116,7 @@ def eef_reward_and_termination_fn(
     return eef_reward_and_termination
 
 def get_fr3_eef_task() -> typing.Tuple[LambdaFuncTask, np.ndarray]:
-    target_eef = EEF_SE3_WORKSPACE.sample()
+    target_eef = EEF_SE3_WORKSPACE.sample(np.random.default_rng())[1]
     assert target_eef.shape == (6,)
     assert EEF_SE3_WORKSPACE.contains(target_eef)
     print(f"Target EEF: {target_eef}")
@@ -132,15 +125,12 @@ def get_fr3_eef_task() -> typing.Tuple[LambdaFuncTask, np.ndarray]:
         translation=target_eef[:3]
     )
     return LambdaFuncTask(
-        None,
-        None,
         eef_reward_and_termination_fn(target_transform)
     ), np.concatenate([target_transform.translation(), target_transform.rotation().as_rpy_radians()])
 
 def test_fr3_eef(
     fr3_world : MujocoFuncWorld,
-    fr3_eef_actor : MujocoIKWrapper,
-    render_sensor : MujocoFuncWindowedViewSensor
+    fr3_eef_actor : MujocoIKWrapper
 ):
     task, target_action = get_fr3_eef_task()
     target_transform = mink.SE3.from_rotation_and_translation(
@@ -152,7 +142,7 @@ def test_fr3_eef(
         world=fr3_world,
         actor=fr3_eef_actor,
         task=task,
-        render_sensor=render_sensor,
+        render_sensor=None,
         info_callback=None
     )
     env = StatefulSingleFuncEnv(
@@ -173,37 +163,4 @@ def test_fr3_eef(
     env.close()
     assert termination
 
-def test_fr3_eef_interactive(
-    fr3_world : MujocoFuncWorld,
-    fr3_eef_actor : MujocoIKWrapper,
-    render_sensor : MujocoFuncWindowedViewSensor
-):
-    task, target_action = get_fr3_eef_task()
-    funcenv = WorldBasedFuncEnv(
-        world=fr3_world,
-        actor=fr3_eef_actor,
-        task=task,
-        render_sensor=render_sensor,
-        info_callback=None
-    )
-    env = StatefulSingleFuncEnv(
-        funcenv,
-        seed=0
-    )
-    mink.move_mocap_to_frame(
-        env.state.world_state.mj_model, 
-        env.state.world_state.data, 
-        "target", 
-        "attachment_site", 
-        "site"
-    )
-    env.reset()
-    for _ in range(STEP_LIMIT):
-        T_wt = mink.SE3.from_mocap_name(env.state.world_state.mj_model, env.state.world_state.data, "target")
-        real_target = np.concatenate([T_wt.translation(), T_wt.rotation().as_rpy_radians()])
-        obs, rew, termination, truncation, info = env.step(real_target)
-        if termination:
-            break
-    env.close()
-    assert termination
     

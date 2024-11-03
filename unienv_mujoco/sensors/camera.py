@@ -40,7 +40,6 @@ class MujocoFuncCameraSensor(
         height : int,
         camera_mode : Literal['rgb_array', 'depth_array', 'segmentation_array', 'segmentation_type_array'],
         control_timestep : float,
-        seed : Optional[int] = None,
     ):
         assert control_timestep > 0.0
         self.control_timestep = control_timestep
@@ -119,9 +118,11 @@ class MujocoFuncCameraSensor(
 
     def initial(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         seed : int,
+        # ---- Additional parameters ----
         render_kwargs : Dict[str, Any] = {},
         max_geom : int = 10_000,
         scene_option : Optional[mujoco.MjvOption] = None,
@@ -164,6 +165,7 @@ class MujocoFuncCameraSensor(
 
     def reset(
         self,
+        world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
         common_state : FuncEnvCommonState[Any, np.random.Generator],
         sensor_state : MujocoFuncCameraSensorState
