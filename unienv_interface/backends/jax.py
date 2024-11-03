@@ -15,7 +15,7 @@ else:
 JaxDevice = Union[jax.Device, jax.sharding.Sharding]
 JaxRNG = jax.Array
 
-class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
+class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
     array_api_namespace = jax_array_api
     default_integer_dtype = int
     default_floating_dtype = float
@@ -128,8 +128,16 @@ class NumpyComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]
 
     @classmethod
     def dtype_is_real_integer(cls, dtype : np.dtype) -> bool:
-        return dtype in (np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64, int)
+        return dtype in cls.list_real_integer_dtypes()
     
     @classmethod
+    def list_real_integer_dtypes(cls) -> Sequence[np.dtype]:
+        return (np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64, int)
+
+    @classmethod
     def dtype_is_real_floating(cls, dtype : np.dtype) -> bool:
-        return dtype in (jax.dtypes.float0, jax.dtypes.bfloat16, np.float16, np.float32, np.float64, np.float128, float)
+        return dtype in cls.list_real_floating_dtypes()
+    
+    @classmethod
+    def list_real_floating_dtypes(cls) -> Sequence[np.dtype]:
+        return (jax.dtypes.bfloat16, np.float16, np.float32, np.float64, np.float128, float)

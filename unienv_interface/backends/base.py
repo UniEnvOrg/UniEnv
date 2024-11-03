@@ -107,5 +107,15 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     
     @classmethod
     @abc.abstractmethod
+    def list_real_integer_dtypes(cls) -> Sequence[BDtypeType]:
+        raise NotImplementedError
+
+    @classmethod
+    @abc.abstractmethod
     def dtype_is_real_floating(cls, dtype : BDtypeType) -> bool:
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def list_real_floating_dtypes(cls) -> Sequence[BDtypeType]:
         raise NotImplementedError

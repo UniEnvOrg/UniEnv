@@ -93,7 +93,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
         else:
             samp = self.backend.array_api_namespace.astype(floored_sample, self.nvec.dtype)
         if self.device is not None:
-            samp = array_api_compat.to_device(samp, device=self.device)
+            samp = array_api_compat.to_device(samp, self.device)
         return samp
 
     def contains(self, x: BArrayType) -> bool:
@@ -171,7 +171,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         if self.device is not None:
-            new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
+            new_tensor = array_api_compat.to_device(new_tensor, self.device)
         
         return new_tensor
 

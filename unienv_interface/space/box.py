@@ -66,8 +66,8 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         self.high = array_api_workspace.astype(_high, self.dtype)
         assert array_api_workspace.all(self.low <= self.high), f"low is greater than high: low={self.low}, high={self.high}"
         if device is not None:
-            self.low = array_api_compat.to_device(self.low, device=device)
-            self.high = array_api_compat.to_device(self.high, device=device)
+            self.low = array_api_compat.to_device(self.low, device)
+            self.high = array_api_compat.to_device(self.high, device)
 
         super().__init__(
             backend=backend,
@@ -258,7 +258,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         if self.device is not None:
-            new_tensor = array_api_compat.to_device(new_tensor, device=self.device)
+            new_tensor = array_api_compat.to_device(new_tensor, self.device)
         
         return new_tensor
 

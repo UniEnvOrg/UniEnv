@@ -75,8 +75,16 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
 
     @classmethod
     def dtype_is_real_integer(cls, dtype : torch.dtype) -> bool:
-        return dtype in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.uint16, torch.uint32, torch.uint64, torch.int, torch.long, int)
+        return dtype in cls.list_real_integer_dtypes()
     
     @classmethod
+    def list_real_integer_dtypes(cls) -> Sequence[torch.dtype]:
+        return (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8, torch.uint16, torch.uint32, torch.uint64, torch.int, torch.long, int)
+
+    @classmethod
     def dtype_is_real_floating(cls, dtype : torch.dtype) -> bool:
-        return dtype in (torch.float16, torch.float32, torch.float64, torch.float, torch.double, torch.bfloat16)
+        return dtype in cls.list_real_floating_dtypes()
+    
+    @classmethod
+    def list_real_floating_dtypes(cls) -> Sequence[torch.dtype]:
+        return (torch.float16, torch.float32, torch.float64, torch.float, torch.double, torch.bfloat16)

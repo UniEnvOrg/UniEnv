@@ -19,7 +19,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     ):
         self.backend = backend
         self._shape = None if shape is None else tuple(shape)
-        self.dtype = None if dtype is None else np.dtype(dtype)
+        self.dtype = dtype
         self._device = device
 
     @property
@@ -60,16 +60,6 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         raise NotImplementedError
 
     def sample(self, rng : _SpaceBDRNGT, **kwargs) -> Tuple[_SpaceBDRNGT, SpaceDataT]:
-        """Randomly sample an element of this space.
-
-        Can be uniform or non-uniform sampling based on boundedness of space.
-
-        Args:
-            mask: A mask used for sampling, expected ``dtype=int`` and see sample implementation for expected shape.
-
-        Returns:
-            A sampled actions from the space
-        """
         raise NotImplementedError
 
     def contains(self, x: Any) -> bool:

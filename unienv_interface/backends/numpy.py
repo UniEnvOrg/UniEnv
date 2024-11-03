@@ -112,8 +112,16 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
 
     @classmethod
     def dtype_is_real_integer(cls, dtype : np.dtype) -> bool:
-        return dtype in (np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64, int)
+        return dtype in cls.list_real_integer_dtypes()
     
     @classmethod
+    def list_real_integer_dtypes(cls) -> Sequence[array_api_compat.numpy.dtype]:
+        return (np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64, int)
+
+    @classmethod
     def dtype_is_real_floating(cls, dtype : np.dtype) -> bool:
-        return dtype in (np.float16, np.float32, np.float64, float)
+        return dtype in cls.list_real_floating_dtypes()
+    
+    @classmethod
+    def list_real_floating_dtypes(cls) -> Sequence[array_api_compat.numpy.dtype]:
+        return (np.float16, np.float32, np.float64, float)

@@ -247,11 +247,11 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
         new_edge = self.backend.from_dlpack(other_data.edges) if other_data.edges is not None else None
         new_edge_links = self.backend.from_dlpack(other_data.edge_links) if other_data.edge_links is not None else None
         if self.node_space.device is not None:
-            new_node = array_api_compat.to_device(new_node, device=self.node_space.device)
+            new_node = array_api_compat.to_device(new_node, self.node_space.device)
         if new_edge is not None and self.edge_space is not None and self.edge_space.device is not None:
-            new_edge = array_api_compat.to_device(new_edge, device=self.edge_space.device)
+            new_edge = array_api_compat.to_device(new_edge, self.edge_space.device)
         if new_edge_links is not None and self.device is not None:
-            new_edge_links = array_api_compat.to_device(new_edge_links, device=self.device)
+            new_edge_links = array_api_compat.to_device(new_edge_links, self.device)
 
         return GraphInstance(
             nodes=new_node,
@@ -264,11 +264,11 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
         new_edge = other_data.edges
         new_edge_links = other_data.edge_links
         if self.node_space.device is not None:
-            new_node = array_api_compat.to_device(new_node, device=self.node_space.device)
+            new_node = array_api_compat.to_device(new_node, self.node_space.device)
         if new_edge is not None and self.edge_space is not None and self.edge_space.device is not None:
-            new_edge = array_api_compat.to_device(new_edge, device=self.edge_space.device)
+            new_edge = array_api_compat.to_device(new_edge, self.edge_space.device)
         if new_edge_links is not None and self.device is not None:
-            new_edge_links = array_api_compat.to_device(new_edge_links, device=self.device)
+            new_edge_links = array_api_compat.to_device(new_edge_links, self.device)
         return GraphInstance(
             nodes=new_node,
             edges=new_edge,

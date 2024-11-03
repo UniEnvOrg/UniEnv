@@ -11,3 +11,20 @@ from .tuple import Tuple
 from .union import Union
 from . import batch_utils
 from . import gym_utils
+
+__all__ = [
+    "Space",
+    "Box",
+    "Dict",
+    "Discrete",
+    "Graph",
+    "GraphInstance",
+    "MultiDiscrete",
+    "MultiBinary",
+    "Sequence",
+    "Text",
+    "Tuple",
+    "Union",
+    "batch_utils",
+    "gym_utils",
+]

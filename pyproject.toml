@@ -22,10 +22,6 @@ torch = [
 jax = [
     "jax"
 ]
-sapien = [
-    "sapien>=3.0.0b1",
-    "torch"
-]
 mujoco = [
     "mujoco>=3.0",
     "dm_control>=1.0",

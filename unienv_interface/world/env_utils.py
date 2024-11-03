@@ -209,6 +209,7 @@ class WorldBasedFuncEnv(
                 env_state,
                 common_state,
                 obs,
+                task_context,
                 None # No action
             )
         else:
@@ -276,6 +277,7 @@ class WorldBasedFuncEnv(
                 env_state,
                 common_state,
                 obs,
+                task_context,
                 None # No action
             )
         else:
@@ -378,6 +380,7 @@ class WorldBasedFuncEnv(
                 env_state,
                 common_state,
                 obs,
+                None, # No context
                 action
             )
         else:
