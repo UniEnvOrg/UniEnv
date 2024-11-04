@@ -26,7 +26,7 @@ class MujocoIKWrapper(Generic[
     MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], ActorWrapperActT, Any, np.dtype, np.random.Generator,
     ActorStateT, ActorActT, Any, np.dtype, np.random.Generator
 ], EndEffectorFuncActorMixin[
-    MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, ActorActT, MujocoIKTargetT, MujocoIKStateT], Any, np.random.Generator
+    MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], ActorWrapperActT, Any, np.random.Generator
 ]):
     def __init__(
         self,
