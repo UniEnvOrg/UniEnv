@@ -26,7 +26,7 @@ class MujocoIKWrapper(Generic[
     MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], ActorWrapperActT, Any, np.dtype, np.random.Generator,
     ActorStateT, ActorActT, Any, np.dtype, np.random.Generator
 ], EndEffectorFuncActorMixin[
-    MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], Any, np.random.Generator
+    MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, ActorWrapperActT, ActorActT, MujocoIKTargetT, MujocoIKStateT], Any, np.random.Generator
 ]):
     def __init__(
         self,
@@ -49,6 +49,10 @@ class MujocoIKWrapper(Generic[
     @property
     def is_eef_relative(self) -> bool:
         return self.ik.is_eef_relative
+
+    @property
+    def num_eefs(self) -> int:
+        return 1
 
     @property
     def action_space(self) -> Space[ActorWrapperActT, Any, Any, np.dtype, np.random.Generator]:
@@ -248,3 +252,19 @@ class MujocoIKWrapper(Generic[
             actor_state,
             target_transform=target_transform
         )
+    
+    def set_target_eef_in_action(
+        self, 
+        state: MujocoFuncWorldState, 
+        common_state: FuncEnvCommonState[Any, np.random.Generator], 
+        actor_state: MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], 
+        action: Any, 
+        position: Optional[np.ndarray], 
+        quaternion: Optional[np.ndarray]
+    ) -> Tuple[
+        MujocoFuncWorldState, 
+        FuncEnvCommonState[Any, np.ndarray], 
+        MujocoIKWrapperState[ActorStateT, ActorWrapperActT, MujocoIKTargetT, MujocoIKStateT], 
+        Any
+    ]:
+        raise NotImplementedError

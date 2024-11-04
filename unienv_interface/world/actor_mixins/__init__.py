@@ -1,1 +1,1 @@
-from .eef_actor import EndEffectorActorMixin, EndEffectorFuncActorMixin
+from .manipulator_actor import EndEffectorActorMixin, EndEffectorFuncActorMixin, GripperActorMixin, GripperFuncActorMixin
