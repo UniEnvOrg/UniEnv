@@ -201,3 +201,25 @@ class Wrapper(
     @rng.setter
     def rng(self, value: WrapperBRngT):
         self.env.rng = value
+
+class ActionWrapper(
+    Wrapper[
+        ContextType, ObsType, WrapperActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT,
+        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    ],
+    Generic[
+        WrapperActType, 
+        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    ]
+):
+    @abc.abstractmethod
+    def map_action(self, action : WrapperActType) -> ActType:
+        raise NotImplementedError
+    
+    def reverse_map_action(self, action : ActType) -> WrapperActType:
+        raise NotImplementedError
+    
+    def step(
+        self, action: WrapperActType
+    ) -> Tuple[ObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
+        return self.env.step(self.map_action(action))
