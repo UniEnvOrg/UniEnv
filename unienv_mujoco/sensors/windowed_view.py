@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 import numpy as np
 from .. import mjcf_util
 from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+import time
 
 @dataclass(frozen=True)
 class MujocoFuncWindowedViewSensorState:
@@ -83,9 +84,11 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
     ]:
         # We may need to close and re-open the viewer here, since mjdata handle might have been re-created
         state, common_state = self.close(state, common_state, sensor_state)
+        time.sleep(0.1)
         state, common_state, sensor_state = self.initial(
-            state=state,
-            common_state=common_state,
+            world,
+            state,
+            common_state,
             render_kwargs=sensor_state.render_kwargs,
             seed=seed_util.next_seed(common_state.np_rng),
             scene_option=sensor_state.scene_option
