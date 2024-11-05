@@ -51,7 +51,6 @@ class ToGymnasiumEnv(
             backend=context_space.backend,
             spaces=spaces,
             device=context_space.device,
-            seed=seed_util.next_seed(context_space.np_rng)
         )
     
     @staticmethod
