@@ -16,7 +16,7 @@ class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
         return self.observation_space.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
+    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.observation_space.backend
 
     @abstractmethod
@@ -77,7 +77,7 @@ class FuncSensor(
         return self.observation_space.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
+    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.observation_space.backend
     
     @abstractmethod

@@ -173,7 +173,7 @@ class Wrapper(
         return self.env.render_fps
 
     @property
-    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]]:
+    def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
         return self.env.backend
 
     @property

@@ -12,7 +12,7 @@ _GymDataT = TypeVar("_GymDataT", covariant=True)
 class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]],
+        backend : ComputeBackend[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT],
         shape: Optional[Sequence[int]] = None,
         device : Optional[_SpaceBDeviceT] = None,
         dtype: Optional[_SpaceBDTypeT] = None,
@@ -31,7 +31,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         raise NotImplementedError
 
     @abc.abstractmethod
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Space":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Space":
         raise NotImplementedError
 
     @property
@@ -89,7 +89,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         return data
     
     @abc.abstractmethod
-    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> SpaceDataT:
+    def from_other_backend(self, other_data : Any, backend : ComputeBackend) -> SpaceDataT:
         """Convert data from another backend to this backend."""
         raise NotImplementedError
     

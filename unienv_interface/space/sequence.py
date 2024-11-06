@@ -12,7 +12,7 @@ class Sequence(
 ):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
     ):
         assert isinstance(
@@ -38,7 +38,7 @@ class Sequence(
             space=self.feature_space.to_device(device)
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Space":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Space":
         return Sequence(
             backend=backend,
             space=self.feature_space.to_backend(backend, device)
@@ -111,7 +111,7 @@ class Sequence(
         """Convert this space to a gym space."""
         return tuple(self.feature_space.to_gym_data(part) for part in data)
     
-    def from_other_backend(self, other_data : Tuple[Any, ...], backend : Type[ComputeBackend]) -> Tuple[Any, ...]:
+    def from_other_backend(self, other_data : Tuple[Any, ...], backend : ComputeBackend) -> Tuple[Any, ...]:
         return tuple(self.feature_space.from_other_backend(part, backend) for part in other_data)
     
     def from_same_backend(self, other_data : Tuple[Any, ...]) -> Tuple[Any, ...]:

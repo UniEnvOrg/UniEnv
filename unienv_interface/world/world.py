@@ -4,7 +4,7 @@ from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
 from abc import ABC, abstractmethod
 
 class World(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):
-    backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]
+    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType]
 
     """The physical timestep in seconds, if None, the world is asynchronous (real-time)"""
@@ -56,7 +56,7 @@ class FuncWorld(
     world_timestep : Optional[float]
     is_real : bool
 
-    backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]
+    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType]
     
     @abstractmethod
@@ -140,11 +140,11 @@ class WorldWrapper(
         self._device : Optional[WrapperBDeviceType] = self.world.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
+    def backend(self) -> ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]:
         return self._backend or self.world.backend
     
     @backend.setter
-    def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
+    def backend(self, value : ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]) -> None:
         self._backend = value
 
     @property
@@ -241,11 +241,11 @@ class FuncWorldWrapper(
         self._device : Optional[WrapperBDeviceType] = self.world.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]:
+    def backend(self) -> ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]:
         return self._backend or self.world.backend
     
     @backend.setter
-    def backend(self, value : Type[ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]]) -> None:
+    def backend(self, value : ComputeBackend[Any, WrapperBDeviceType, WrapperBDtypeType, WrapperBRNGType]) -> None:
         self._backend = value
 
     @property

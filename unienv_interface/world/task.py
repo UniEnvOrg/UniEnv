@@ -89,7 +89,7 @@ class FuncTask(
     def initial(
         self, 
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
-        actor : FuncActor[StateType, ActorStateT, Any, BDeviceType, BDtypeType, BRNGType],
+        actor : FuncActor[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : FuncActorCombinedState[ActorStateT],
@@ -108,7 +108,7 @@ class FuncTask(
     def reset(
         self, 
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
-        actor : FuncActor[StateType, ActorStateT, Any, BDeviceType, BDtypeType, BRNGType],
+        actor : FuncActor[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : FuncActorCombinedState[ActorStateT],
@@ -348,7 +348,7 @@ class FuncTaskWrapper(
     def initial(
         self,
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
-        actor : FuncActor[StateType, ActorStateT, Any, BDeviceType, BDtypeType, BRNGType],
+        actor : FuncActor[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : FuncActorCombinedState[TaskWrapperStateT],
@@ -376,7 +376,7 @@ class FuncTaskWrapper(
     def reset(
         self,
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
-        actor : FuncActor[StateType, ActorStateT, Any, BDeviceType, BDtypeType, BRNGType],
+        actor : FuncActor[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : FuncActorCombinedState[ActorStateT],

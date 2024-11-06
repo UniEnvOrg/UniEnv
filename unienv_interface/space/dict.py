@@ -10,7 +10,7 @@ from collections.abc import KeysView
 class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend: Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        backend: ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         spaces: None | DictType[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] | Sequence[tuple[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]] = None,
         device : Optional[BDeviceType] = None,
     ):
@@ -85,7 +85,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             device=device
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Dict":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Dict":
         return Dict(
             backend=backend,
             spaces={key: space.to_backend(backend, device) for key, space in self.spaces.items()},
@@ -173,7 +173,7 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             key: space.to_gym_data(data[key]) for key, space in self.spaces.items()
         }
     
-    def from_other_backend(self, other_data : DictType[str, Any], backend : Type[ComputeBackend]) -> DictType[str, Any]:
+    def from_other_backend(self, other_data : DictType[str, Any], backend : ComputeBackend) -> DictType[str, Any]:
         return {
             key: space.from_other_backend(other_data[key], backend) for key, space in self.spaces.items()
         }

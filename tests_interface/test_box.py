@@ -11,12 +11,12 @@ import jax
 import torch
 import numpy as np
 
-ALL_BACKENDS_AND_DEVICES : typing.Dict[typing.Type[ComputeBackend], typing.List[typing.Any]] = {
+ALL_BACKENDS_AND_DEVICES : typing.Dict[ComputeBackend, typing.List[typing.Any]] = {
     NumpyComputeBackend: [],
     JaxComputeBackend: jax.devices(),
     PyTorchComputeBackend: ['cpu'] if not torch.cuda.is_available() else ['cpu', 'cuda'],
 }
-ALL_BACKENDS_AND_DTYPES : typing.Dict[typing.Type[ComputeBackend], typing.List[typing.Any]] = {
+ALL_BACKENDS_AND_DTYPES : typing.Dict[ComputeBackend, typing.List[typing.Any]] = {
     NumpyComputeBackend: NumpyComputeBackend.list_real_floating_dtypes() + NumpyComputeBackend.list_real_integer_dtypes(),
     JaxComputeBackend: JaxComputeBackend.list_real_floating_dtypes() + JaxComputeBackend.list_real_integer_dtypes(),
     PyTorchComputeBackend: PyTorchComputeBackend.list_real_floating_dtypes() + PyTorchComputeBackend.list_real_integer_dtypes(),
@@ -56,7 +56,7 @@ def perform_single_space_cross_backend_device_test(space : Space, rng : typing.A
                 assert space.contains(converted_back_data)
 
 
-def perform_box_test(backend : typing.Type[ComputeBackend], device : typing.Optional[typing.Any], rng : typing.Any, np_rng : np.random.Generator):
+def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.Any], rng : typing.Any, np_rng : np.random.Generator):
     def generate_random_box_params(rng : typing.Any, np_rng : np.random.Generator):
         shape_ndims = np_rng.integers(1, 5)
         shape = tuple([np_rng.integers(1, 10) for _ in range(shape_ndims)])

@@ -10,7 +10,7 @@ import gymnasium as gym
 class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         spaces: Iterable[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]],
         device : Optional[BDeviceType] = None,
     ):
@@ -66,7 +66,7 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
             device=device
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Tuple":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Tuple":
         return Tuple(
             backend=backend,
             spaces=[space.to_backend(backend, device) for space in self.spaces],
@@ -131,7 +131,7 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
     def to_gym_data(self, data : TupleType[Any, ...]) -> TupleType[Any, ...]:
         return tuple(space.to_gym_data(part) for (space, part) in zip(self.spaces, data))
     
-    def from_other_backend(self, other_data : TupleType[Any, ...], backend : Type[ComputeBackend]) -> TupleType[Any, ...]:
+    def from_other_backend(self, other_data : TupleType[Any, ...], backend : ComputeBackend) -> TupleType[Any, ...]:
         return tuple(space.from_other_backend(part, backend) for (space, part) in zip(self.spaces, other_data))
     
     def from_same_backend(self, other_data : TupleType[Any, ...]) -> TupleType[Any, ...]:

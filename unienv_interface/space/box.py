@@ -8,7 +8,7 @@ import gymnasium as gym
 class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         low: SupportsFloat | BArrayType,
         high: SupportsFloat | BArrayType,
         dtype: BDtypeType,
@@ -105,7 +105,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             device=device
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Box":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Box":
         new_low = backend.from_other_backend(self.low, self.backend)
         new_high = backend.from_other_backend(self.high, self.backend)
 
@@ -239,6 +239,10 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             and self.backend.array_api_namespace.all(x >= self.low)
             and self.backend.array_api_namespace.all(x <= self.high)
         )
+    
+    def clip(self, x: BArrayType) -> BArrayType:
+        """Clip the values of x to be within the bounds of this space."""
+        return self.backend.clip(x, self.low, self.high)
 
     def __repr__(self) -> str:
         """A string representation of this space.
@@ -272,7 +276,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def from_gym_data(self, gym_data: np.ndarray) -> BArrayType:
         return self.backend.from_numpy(gym_data, dtype=self.dtype, device=self.device)
     
-    def from_other_backend(self, other_data: Any, backend : Type[ComputeBackend]) -> BArrayType:
+    def from_other_backend(self, other_data: Any, backend : ComputeBackend) -> BArrayType:
         new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
 

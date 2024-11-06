@@ -15,7 +15,7 @@ alphanumeric: frozenset[str] = frozenset(
 class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         max_length: int,
         *,
         min_length: int = 1,
@@ -33,7 +33,7 @@ class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
     def to_device(self, device : BDeviceType) -> "Text[BDeviceType, BDtypeType, BRNGType]":
         return self
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Text":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Text":
         return Text(
             backend=backend,
             max_length=self.max_length,
@@ -144,7 +144,7 @@ class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
         """Convert this space to a gym space."""
         return data
     
-    def from_other_backend(self, other_data : str, backend : Type[ComputeBackend]) -> str:
+    def from_other_backend(self, other_data : str, backend : ComputeBackend) -> str:
         """Convert data from another backend to this backend."""
         return other_data
     

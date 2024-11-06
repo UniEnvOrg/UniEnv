@@ -23,7 +23,7 @@ class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType])
 
     def __init__(
         self,
-        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         n: int,
         start: int = 0,
         device : Optional[BDeviceType] = None,
@@ -52,7 +52,7 @@ class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType])
             dtype=self.dtype
         )
     
-    def to_backend(self, backend: Type[ComputeBackend], device : Optional[Any]) -> "Discrete":
+    def to_backend(self, backend: ComputeBackend, device : Optional[Any]) -> "Discrete":
         return Discrete(
             backend=backend,
             n=self.n,
@@ -136,7 +136,7 @@ class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType])
         """Convert a gym space to this space."""
         return self.backend.array_api_namespace.asarray([gym_data], dtype=self.dtype, device=self.device)
 
-    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> BArrayType:
+    def from_other_backend(self, other_data : Any, backend : ComputeBackend) -> BArrayType:
         new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
 

@@ -11,7 +11,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
 
     def __init__(
         self,
-        backend: Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         nvec: BArrayType,
         start: Optional[BArrayType] = None,
         dtype: Optional[BDtypeType] = None,
@@ -162,7 +162,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
     def to_gym_data(self, data : BArrayType) -> np.ndarray:
         return self.backend.to_numpy(data).astype(int)
     
-    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> BArrayType:
+    def from_other_backend(self, other_data : Any, backend : ComputeBackend) -> BArrayType:
         new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
     

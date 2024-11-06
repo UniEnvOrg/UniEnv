@@ -9,7 +9,7 @@ import gymnasium as gym
 class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self, 
-        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         shape: Sequence[int],
         dtype: Optional[BDtypeType] = None,
         device : Optional[BDeviceType] = None,
@@ -90,7 +90,7 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
         """Convert a gym space to this space."""
         return self.backend.from_numpy(gym_data, self.dtype, self.device)
     
-    def from_other_backend(self, other_data : Any, backend : Type[ComputeBackend]) -> BArrayType:
+    def from_other_backend(self, other_data : Any, backend : ComputeBackend) -> BArrayType:
         new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
     

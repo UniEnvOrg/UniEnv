@@ -35,7 +35,7 @@ def to_gym_space(space: Space) -> gym.Space:
 @singledispatch
 def from_gym_space(
     gym_space : gym.Space,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Space:
@@ -52,7 +52,7 @@ def from_gym_data(space : Space, data: Any) -> Any:
 @from_gym_space.register(gym.spaces.Box)
 def _from_gym_space_box(
     gym_space : gym.spaces.Box,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Box:
@@ -69,7 +69,7 @@ def _from_gym_space_box(
 @from_gym_space.register(gym.spaces.Dict)
 def _from_gym_space_dict(
     gym_space : gym.spaces.Dict,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Dict:
@@ -82,7 +82,7 @@ def _from_gym_space_dict(
 @from_gym_space.register(gym.spaces.Discrete)
 def _from_gym_space_discrete(
     gym_space : gym.spaces.Discrete,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Discrete:
@@ -97,7 +97,7 @@ def _from_gym_space_discrete(
 @from_gym_space.register(gym.spaces.Graph)
 def _from_gym_space_graph(
     gym_space : gym.spaces.Graph,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Graph:
@@ -121,7 +121,7 @@ def _from_gym_space_graph(
 @from_gym_space.register(gym.spaces.MultiBinary)
 def _from_gym_space_multi_binary(
     gym_space : gym.spaces.MultiBinary,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> MultiBinary:
@@ -135,7 +135,7 @@ def _from_gym_space_multi_binary(
 @from_gym_space.register(gym.spaces.MultiDiscrete)
 def _from_gym_space_multi_discrete(
     gym_space : gym.spaces.MultiDiscrete,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> MultiDiscrete:
@@ -152,7 +152,7 @@ def _from_gym_space_multi_discrete(
 @from_gym_space.register(gym.spaces.Sequence)
 def _from_gym_space_sequence(
     gym_space : gym.spaces.Sequence,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Sequence:
@@ -171,7 +171,7 @@ def _from_gym_space_sequence(
 @from_gym_space.register(gym.spaces.Text)
 def _from_gym_space_text(
     gym_space : gym.spaces.Text,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Text:
@@ -187,7 +187,7 @@ def _from_gym_space_text(
 @from_gym_space.register(gym.spaces.Tuple)
 def _from_gym_space_tuple(
     gym_space : gym.spaces.Tuple,
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
 ) -> Tuple:
@@ -199,7 +199,7 @@ def _from_gym_space_tuple(
 
 def _from_gym_space_union(
     gym_space : "gym.spaces.OneOf",
-    backend : typing.Type[ComputeBackend],
+    backend : ComputeBackend,
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
     seed : Optional[int] = None

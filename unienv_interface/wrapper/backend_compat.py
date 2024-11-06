@@ -10,8 +10,8 @@ from unienv_interface.space import Space
 import array_api_compat
 
 def backend_dict_transform(
-    target_backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]],
-    source_backend : Type[ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]],
+    target_backend : ComputeBackend[Any, BDeviceT, Any, BRngT],
+    source_backend : ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT],
     data : Dict[str, Any]
 ) -> Dict[str, Any]:
     new_data = {}
@@ -32,8 +32,8 @@ def backend_dict_transform(
     return new_data
 
 def backend_array_transform(
-    target_backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]],
-    source_backend : Type[ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]],
+    target_backend : ComputeBackend[Any, BDeviceT, Any, BRngT],
+    source_backend : ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT],
     data : Any
 ) -> Any:
     if source_backend.is_backendarray(data):
@@ -53,7 +53,7 @@ class ToBackendWrapper(
     def __init__(
         self,
         env : Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
-        backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]],
+        backend : ComputeBackend[Any, BDeviceT, Any, BRngT],
         device : Optional[WrapperBDeviceT] = None,
     ) -> None:
         super().__init__(env)
@@ -78,7 +78,7 @@ class ToBackendWrapper(
         self._device = device
 
     @property
-    def backend(self) -> Type[ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]]:
+    def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
         return self._backend
     
     @property

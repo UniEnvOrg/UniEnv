@@ -26,7 +26,7 @@ class GraphInstance(Generic[BArrayType]):
 class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend : Type[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         node_space: Box | Discrete,
         edge_space: None | Box | Discrete,
         device : Optional[BDeviceType] = None,
@@ -75,7 +75,7 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
             device=device
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Graph":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Graph":
         return Graph(
             backend=backend,
             node_space=self.node_space.to_backend(backend, device),
@@ -242,7 +242,7 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
             edge_links=self.backend.to_numpy(data.edge_links) if data.edge_links is not None else None,
         )
     
-    def from_other_backend(self, other_data : GraphInstance[Any], backend : Type[ComputeBackend]) -> GraphInstance[BArrayType]:
+    def from_other_backend(self, other_data : GraphInstance[Any], backend : ComputeBackend) -> GraphInstance[BArrayType]:
         new_node = self.backend.from_other_backend(other_data.nodes, backend)
         new_edge = self.backend.from_other_backend(other_data.edges, backend) if other_data.edges is not None else None
         new_edge_links = self.backend.from_other_backend(other_data.edge_links, backend) if other_data.edge_links is not None else None

@@ -6,7 +6,7 @@ from unienv_interface.env_base.env import Env, RewardType, TerminationType
 from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderState, FuncEnvCommonState
 from .world import World, FuncWorld
 from .sensor import Sensor, FuncSensor
-from .actor import Actor, FuncActor, ActorActT, ActorStateT, FuncActorCombinedState
+from .actor import Actor, FuncActor, ActorStateT, FuncActorCombinedState
 from .sensors import CameraSensor, FuncCameraSensor, WindowedViewSensor, FuncWindowedViewSensor
 from .task import Task, FuncTask, TaskStateT
 import copy
@@ -35,12 +35,12 @@ class WorldBasedFuncEnvRenderState(
 
 WorldBasedFuncEnvInfoCallback = Callable[[
     FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
-    FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
+    FuncActor[WorldStateT, ActorStateT, BDeviceType, BDtypeType, BRNGType],
     WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
     FuncEnvCommonState[BDeviceType, BRNGType],
     Dict[str, Any], # Observation
     Optional[Dict[str, Any]], # Optional Context
-    Optional[ActorActT], # Optional Action (When stepping)
+    Optional[Any], # Optional Action (When stepping)
 ], Union[
     Dict[str, Any],
     Sequence[Dict[str, Any]]
@@ -52,7 +52,7 @@ class WorldBasedFuncEnv(
         WorldBasedFuncEnvRenderState[RenderSensorDataT], 
         Optional[Dict[str, Any]],
         Dict[str, Any],
-        ActorActT,
+        Any,
         RewardType,
         TerminationType,
         RenderSensorDataT,
@@ -65,7 +65,6 @@ class WorldBasedFuncEnv(
         TaskStateT,
         RenderSensorStateT,
         RenderSensorDataT,
-        ActorActT,
         RewardType,
         TerminationType,
         BDeviceType,
@@ -76,7 +75,7 @@ class WorldBasedFuncEnv(
     def __init__(
         self,
         world : FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
-        actor : FuncActor[WorldStateT, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType],
+        actor : FuncActor[WorldStateT, ActorStateT, BDeviceType, BDtypeType, BRNGType],
         task : FuncTask[WorldStateT, ActorStateT, TaskStateT, RewardType, TerminationType],
         render_sensor : Optional[Union[
             FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType],
@@ -111,7 +110,7 @@ class WorldBasedFuncEnv(
         }
 
     @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
+    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.world.backend
 
     @property
@@ -136,7 +135,7 @@ class WorldBasedFuncEnv(
         return self.task.context_space
     
     @property
-    def action_space(self) -> Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]:
+    def action_space(self) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         return self.actor.action_space
 
     def get_render_sensor_instance(self) -> Optional[FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType]]:
@@ -288,7 +287,7 @@ class WorldBasedFuncEnv(
         self,
         state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
-        action : ActorActT
+        action : Any
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         FuncEnvCommonState[BDeviceType, BRNGType],

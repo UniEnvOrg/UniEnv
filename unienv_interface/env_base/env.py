@@ -24,7 +24,7 @@ class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, Terminatio
     render_mode: Optional[str] = None
     render_fps : Optional[int] = None
 
-    backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
+    backend : ComputeBackend[Any, BDeviceT, Any, BRngT]
     device : Optional[BDeviceT]
 
     batch_size : Optional[int] = None

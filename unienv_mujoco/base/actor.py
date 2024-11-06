@@ -12,7 +12,7 @@ from .. import mjcf_util
 from .world import MujocoFuncWorldState, MujocoFuncWorld
 
 class MujocoDefaultFuncActor(
-    FuncActor[MujocoFuncWorldState, None, np.ndarray, Any, np.dtype, np.random.Generator]
+    FuncActor[MujocoFuncWorldState, None, Any, np.dtype, np.random.Generator]
 ):
     is_real = False
 
@@ -24,7 +24,7 @@ class MujocoDefaultFuncActor(
         self._world = world
 
         # Compute Observation Space
-        self.onboard_observation_space = DictSpace(
+        self.extra_observation_space = DictSpace(
             backend=NumpyComputeBackend,
             spaces={},
             device=None
@@ -33,7 +33,7 @@ class MujocoDefaultFuncActor(
         # Compute Action Space
         is_limited = world._mjmodel.actuator_ctrllimited.ravel().astype(bool)
         ctrlrange = world._mjmodel.actuator_ctrlrange
-        self.action_space = Box(
+        self.extra_action_space = Box(
             backend=NumpyComputeBackend,
             low=np.where(is_limited, ctrlrange[:, 0], -mujoco.mjMAXVAL),
             high=np.where(is_limited, ctrlrange[:, 1], mujoco.mjMAXVAL),
@@ -87,7 +87,7 @@ class MujocoDefaultFuncActor(
     ]:
         return state, common_state, None
     
-    def get_data_onboard(
+    def get_data_extra(
         self,
         state: MujocoFuncWorldState,
         common_state: FuncEnvCommonState[Any, np.random.Generator],
@@ -100,8 +100,8 @@ class MujocoDefaultFuncActor(
         Dict[str, Any]
     ]:
         return state, common_state, None , {}
-
-    def set_next_action(
+    
+    def set_next_extra_action(
         self, 
         state: MujocoFuncWorldState, 
         common_state: FuncEnvCommonState[Any, np.random.Generator], 

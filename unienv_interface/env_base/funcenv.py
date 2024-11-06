@@ -37,7 +37,7 @@ class FuncEnv(
         "render_modes": []
     }
 
-    backend : Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]
+    backend : ComputeBackend[Any, BDeviceT, Any, BRngT]
     device : Optional[BDeviceT]
 
     batch_size : Optional[int] = None
@@ -208,7 +208,7 @@ class FuncEnvBasedEnv(Env[
         return self.render_common_state.render_fps
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceT, Any, BRngT]]:
+    def backend(self) -> ComputeBackend[Any, BDeviceT, Any, BRngT]:
         return self.func_env.backend
 
     @property

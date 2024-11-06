@@ -1,4 +1,4 @@
-from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
+from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Protocol, Iterable, Union
 from abc import ABC, abstractmethod
 from ..space import Space
 from ..space.dict import Dict as DictSpace
@@ -8,18 +8,176 @@ from .sensor import Sensor, FuncSensor
 from .world import FuncWorld
 from dataclasses import dataclass
 
-ActorActT = TypeVar("ActorActT", covariant=True)
+ActorMixinT = TypeVar("ActorMixinT")
+ActorMixinFuncT = TypeVar("ActorMixinFuncT")
+class ActorMixin(Protocol, Generic[ActorMixinT, ActorMixinFuncT]):
+    """
+    Actor Mixins define standardized interfaces for adding additional functionality to actors.
+    For each mixin, the actor should have a dictionary of action / observation spaces
+    And the mixin should have its action / observation contained inside the actor's action / observation space, with the `mixin_name` as the key.
+    """
 
-"""
-Actor Interface
+    mixin_name : str
+    mixin_actor_type : Optional[Type[ActorMixinT]]
+    mixin_func_actor_type : Optional[Type[ActorMixinFuncT]]
 
-Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
-"""
-class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
-    onboard_observation_space : DictSpace[BDeviceType, BDtypeType, BRNGType]
-    action_space : Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]
+    def get_mixin_observation_space(
+        self,
+        instance : Union[ActorMixinT, ActorMixinFuncT],
+        backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType], 
+        device : BDeviceType
+    ) -> Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]:
+        raise NotImplementedError
+
+    def get_mixin_action_space(
+        self,
+        instance : Union[ActorMixinT, ActorMixinFuncT],
+        backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
+        device : BDeviceType
+    ) -> Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]:
+        raise NotImplementedError
+    
+    def read_mixin_data(
+        self,
+        instance : ActorMixinT,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError
+    
+    def read_mixin_data_func(
+        self,
+        instance : ActorMixinFuncT,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_state : "ActorStateT",
+        last_control_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        "ActorStateT",
+        Dict[str, Any]
+    ]:
+        raise NotImplementedError
+
+    def apply_mixin_action(
+        self,
+        instance : ActorMixinT,
+        action : Any
+    ) -> None:
+        raise NotImplementedError
+    
+    def apply_mixin_action_func(
+        self,
+        instance : ActorMixinFuncT,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_state : "ActorStateT",
+        action : Any,
+        last_control_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        "ActorStateT"
+    ]:
+        raise NotImplementedError
+
+    @classmethod
+    def is_actor_mixin_property(cls, name : str) -> bool:
+        cls._build_actor_mixin_properties()
+        return name in cls._actor_mixin_properties
+    
+    @classmethod
+    def is_actor_attachment_supported(cls, actor : "Actor") -> bool:
+        cls._build_actor_mixin_properties()
+        for prop in cls._actor_mixin_properties:
+            if not actor.has_wrapper_attr(prop):
+                return False
+        return True
+
+    @classmethod
+    def _build_actor_mixin_properties(cls) -> None:
+        if not hasattr(cls, "_actor_mixin_properties"):
+            properties_actor = vars(cls.mixin_actor_type).keys() if cls.mixin_actor_type is not None else []
+            properties_actor = [p for p in properties_actor if not p.startswith("_")]
+            cls._actor_mixin_properties = properties_actor
+
+    @classmethod
+    def is_func_actor_mixin_property(cls, name : str) -> bool:
+        cls._build_func_actor_mixin_properties()
+        return name in cls._func_actor_mixin_properties
+    
+    @classmethod
+    def is_func_actor_attachment_supported(cls, actor : "FuncActor") -> bool:
+        cls._build_func_actor_mixin_properties()
+        for prop in cls._func_actor_mixin_properties:
+            if not actor.has_wrapper_attr(prop):
+                return False
+        return True
+    
+    @classmethod
+    def _build_func_actor_mixin_properties(cls) -> None:
+        if not hasattr(cls, "_func_actor_mixin_properties"):
+            properties_func_actor = vars(cls.mixin_func_actor_type).keys() if cls.mixin_func_actor_type is not None else []
+            properties_func_actor = [p for p in properties_func_actor if not p.startswith("_")]
+            cls._func_actor_mixin_properties = properties_func_actor
+
+class Actor(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):
+    """
+    Actor Interface
+
+    Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
+    """
+    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
+    device : Optional[BDeviceType]
+
+    extra_observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
+    extra_action_space : Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = None
+
     control_timestep : float
     is_real : bool
+
+    @property
+    def action_space(self) -> Union[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        if len(self._mixin_action_spaces) > 0:
+            if self.extra_action_space is None:
+                new_spaces = self._mixin_action_spaces
+            else:
+                if isinstance(self.extra_action_space, DictSpace):
+                    new_spaces = {
+                        **self._mixin_action_spaces,
+                        **self.extra_action_space.spaces
+                    }
+                else:
+                    new_spaces = {
+                        **self._mixin_action_spaces,
+                        'extra': self.extra_action_space
+                    }
+            return DictSpace(
+                backend=self.backend,
+                spaces=new_spaces,
+                device=self.device
+            )
+        else:
+            assert self.extra_action_space is not None
+            return self.extra_action_space
+    
+    @property
+    def onboard_observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
+        if len(self._mixin_observation_spaces) > 0:
+            if self.extra_observation_space is None:
+                new_spaces = self._mixin_observation_spaces
+            else:
+                new_spaces = {
+                    **self._mixin_observation_spaces,
+                    **self.extra_observation_space.spaces
+                }
+            return DictSpace(
+                backend=self.backend,
+                spaces=new_spaces,
+                device=self.device
+            )
+        else:
+            assert self.extra_observation_space is not None
+            return self.extra_observation_space
 
     @property
     def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
@@ -33,18 +191,34 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
         )
 
     def __init__(
-        self
+        self,
+        mixins : Iterable[ActorMixin] = [],
     ):
         self._sensors : Dict[str, Sensor] = {}
+        self._mixins : List[ActorMixin] = list(mixins)
+        self._update_mixins_internal()
+    
+    def implements_mixin(self, mixin : Type[ActorMixin]) -> bool:
+        return any(m is mixin or isinstance(m, mixin) for m in self.mixins)
 
-        
-    @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
-        return self.observation_space.backend
+    def as_mixin(self, mixin : Type[ActorMixin[ActorMixinT, Any]]) -> ActorMixinT:
+        if not self.implements_mixin(mixin):
+            raise ValueError(f"Actor does not implement mixin {mixin.mixin_name}")
+        return self
 
-    @property
-    def device(self) -> Optional[BDeviceType]:
-        return self.observation_space.device
+    def _update_mixins_internal(self) -> None:
+        mixin_action_spaces = {}
+        mixin_observation_spaces = {}
+
+        for mixin in self.mixins:
+            action_space = mixin.get_mixin_action_space(self, self.backend, self.device)
+            if action_space is not None:
+                mixin_action_spaces[mixin.mixin_name] = action_space
+            observation_space = mixin.get_mixin_observation_space(self, self.backend, self.device)
+            if observation_space is not None:
+                mixin_observation_spaces[mixin.mixin_name] = observation_space
+        self._mixin_action_spaces = mixin_action_spaces
+        self._mixin_observation_spaces = mixin_observation_spaces
     
     def update(self, last_step_elapsed : float) -> None:
         self.update_onboard(last_step_elapsed=last_step_elapsed)
@@ -63,11 +237,39 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def get_onboard_data(self) -> Dict[str, Any]:
-        """Get the data from the sensor."""
+    def get_extra_data(self) -> Dict[str, Any]:
+        """
+        Get the extra data from the actor.
+        """
         raise NotImplementedError
+
+    def get_onboard_data(self) -> Dict[str, Any]:
+        if len(self._mixin_observation_spaces) == 0:
+            return self.get_extra_data()
+        
+        mixin_datas = {}
+        for mixin in self.mixins:
+            if mixin.mixin_name in self._mixin_observation_spaces.keys():
+                mixin_datas[mixin.mixin_name] = mixin.read_mixin_data(self)
+        if self.extra_observation_space is not None:
+            if isinstance(self.extra_observation_space, DictSpace):
+                obs_data = {
+                    **mixin_datas,
+                    **self.get_extra_data()
+                }
+            else:
+                obs_data = {
+                    **mixin_datas,
+                    'extra': self.get_extra_data()
+                }
+        else:
+            obs_data = mixin_datas
+        return obs_data
     
+    @property
+    def mixins(self) -> List[ActorMixin]:
+        return self._mixins
+
     @property
     def sensors(self) -> Dict[str, Sensor]:
         return self._sensors
@@ -82,13 +284,25 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
             ret[key] = sensor.get_data()
         return ret
 
-    @abstractmethod
-    def set_next_action(self, action: ActorActT) -> None:
+    def set_next_extra_action(self, action: Any) -> None:
         """
         Sets the next action to be executed by the actor when the environment steps.
         This method should be called before the environment steps, and should be non-blocking.
         """
         raise NotImplementedError
+
+    def set_next_action(self, action: Any) -> None:
+        if len(self._mixin_action_spaces) > 0:
+            assert isinstance(action, dict)
+            action : Dict[str, Any] = action.copy()
+            for mixin in self.mixins:
+                if mixin.mixin_name in self._mixin_action_spaces.keys():
+                    mixin.apply_mixin_action(self, action.pop(mixin.mixin_name))
+            if self.extra_action_space is not None:
+                extra_action = action.pop('extra') if 'extra' in action.keys() else action
+                self.set_next_extra_action(extra_action)
+        else:
+            self.set_next_extra_action(action)
     
     def pre_environment_step(self, last_step_elapsed : float) -> None:
         pass
@@ -126,46 +340,124 @@ class Actor(ABC, Generic[ActorActT, BDeviceType, BDtypeType, BRNGType]):
         """Sets the attribute `name` on the environment with `value`."""
         setattr(self, name, value)
 
-ActorStateT = TypeVar("ActorStateT")
+ActorStateT = TypeVar("ActorStateT", covariant=True)
 
 @dataclass(frozen=True)
 class FuncActorCombinedState(Generic[ActorStateT]):
     actor_state : ActorStateT
     sensor_states : Dict[str, Any]
 
-"""
-FuncActor Interface
 
-Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
-"""
 class FuncActor(
     ABC,
-    Generic[StateType, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType]
+    Generic[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType]
 ):
-    onboard_observation_space : DictSpace[BDeviceType, BDtypeType, BRNGType]
-    action_space : Space[ActorActT, Any, BDeviceType, BDtypeType, BRNGType]
+    """
+    FuncActor Interface
+
+    Note that each sensor attached should have control_timestep equal to the actor's control_timestep, or the control_timestep should be dividends of the actor's control_timestep.
+    """
+    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
+    device : Optional[BDeviceType]
+
+    extra_observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
+    extra_action_space : Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = None
+    
     control_timestep : float
     is_real : bool
 
     def __init__(
-        self
+        self,
+        mixins : Iterable[ActorMixin] = [],
     ):
         self._sensors : Dict[
             str, FuncSensor[Any, Any, Any, BDeviceType, BDtypeType, BRNGType]
         ] = {}
+        self._mixins : List[ActorMixin] = list(mixins)
+        self._update_mixins_internal()
+
+    def _update_mixins_internal(self) -> None:
+        mixin_action_spaces = {}
+        mixin_observation_spaces = {}
+
+        for mixin in self.mixins:
+            action_space = mixin.get_mixin_action_space(self, self.backend, self.device)
+            if action_space is not None:
+                mixin_action_spaces[mixin.mixin_name] = action_space
+            observation_space = mixin.get_mixin_observation_space(self, self.backend, self.device)
+            if observation_space is not None:
+                mixin_observation_spaces[mixin.mixin_name] = observation_space
+        self._mixin_action_spaces = mixin_action_spaces
+        self._mixin_observation_spaces = mixin_observation_spaces
+
+    def implements_mixin(self, mixin : Type[ActorMixin]) -> bool:
+        return any(m is mixin or isinstance(m, mixin) for m in self.mixins)
+
+    def as_mixin(self, mixin : Type[ActorMixin[Any, ActorMixinFuncT]]) -> ActorMixinFuncT:
+        if not self.implements_mixin(mixin):
+            raise ValueError(f"Actor does not implement mixin {mixin.mixin_name}")
+        return self
 
     @property
     def sensors(self) -> Dict[str, FuncSensor[Any, Any, Any, BDeviceType, BDtypeType, BRNGType]]:
         return self._sensors
 
     @property
+    def mixins(self) -> List[ActorMixin]:
+        return self._mixins
+
+    @property
     def device(self) -> Optional[BDeviceType]:
         return self.onboard_observation_space.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]]:
+    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.onboard_observation_space.backend
     
+    @property
+    def action_space(self) -> Union[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        if len(self._mixin_action_spaces) > 0:
+            if self.extra_action_space is None:
+                new_spaces = self._mixin_action_spaces
+            else:
+                if isinstance(self.extra_action_space, DictSpace):
+                    new_spaces = {
+                        **self._mixin_action_spaces,
+                        **self.extra_action_space.spaces
+                    }
+                else:
+                    new_spaces = {
+                        **self._mixin_action_spaces,
+                        'extra': self.extra_action_space
+                    }
+            return DictSpace(
+                backend=self.backend,
+                spaces=new_spaces,
+                device=self.device
+            )
+        else:
+            assert self.extra_action_space is not None
+            return self.extra_action_space
+    
+    @property
+    def onboard_observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
+        if len(self._mixin_observation_spaces) > 0:
+            if self.extra_observation_space is None:
+                new_spaces = self._mixin_observation_spaces
+            else:
+                new_spaces = {
+                    **self._mixin_observation_spaces,
+                    **self.extra_observation_space.spaces
+                }
+            return DictSpace(
+                backend=self.backend,
+                spaces=new_spaces,
+                device=self.device
+            )
+        else:
+            assert self.extra_observation_space is not None
+            return self.extra_observation_space
+
     @property
     def observation_space(self) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
         space = self.onboard_observation_space.spaces.copy()
@@ -220,7 +512,20 @@ class FuncActor(
     ]:
         raise NotImplementedError
 
-    @abstractmethod
+    def get_data_extra(
+        self,
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_state : ActorStateT,
+        last_control_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        ActorStateT,
+        Optional[Dict[str, Any]]
+    ]:
+        raise NotImplementedError
+
     def get_data_onboard(
         self,
         state : StateType,
@@ -233,18 +538,52 @@ class FuncActor(
         ActorStateT,
         Dict[str, Any]
     ]:
-        """
-        Reads the data when the actor is actionable.
-        """
-        raise NotImplementedError
+        if len(self._mixin_observation_spaces) == 0:
+            return self.get_data_extra(
+                state,
+                common_state,
+                actor_state,
+                last_control_step_elapsed
+            )
 
-    @abstractmethod
-    def set_next_action(
-        self, 
+        mixin_datas = {}
+        for mixin in self.mixins:
+            if mixin.mixin_name in self._mixin_observation_spaces.keys():
+                state, common_state, actor_state, mixin_datas[mixin.mixin_name] = mixin.read_mixin_data_func(
+                    self, 
+                    state, 
+                    common_state, 
+                    actor_state, 
+                    last_control_step_elapsed
+                )
+        if self.extra_observation_space is not None:
+            state, common_state, actor_state, extra_data = self.get_data_extra(
+                state,
+                common_state,
+                actor_state,
+                last_control_step_elapsed
+            )
+            if isinstance(self.extra_observation_space, DictSpace):
+                obs_data = {
+                    **mixin_datas,
+                    **extra_data
+                }
+            else:
+                obs_data = {
+                    **mixin_datas,
+                    'extra': extra_data
+                }
+        else:
+            obs_data = mixin_datas
+        return state, common_state, actor_state, obs_data
+        
+
+    def set_next_extra_action(
+        self,
         state : StateType,
         common_state : FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state : ActorStateT,
-        action : ActorActT,
+        action : Any,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
@@ -252,6 +591,50 @@ class FuncActor(
         ActorStateT
     ]:
         raise NotImplementedError
+
+    def set_next_action(
+        self, 
+        state : StateType,
+        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        actor_state : ActorStateT,
+        action : Any,
+        last_control_step_elapsed : float
+    ) -> Tuple[
+        StateType,
+        FuncEnvCommonState[BDeviceType, BRNGType],
+        ActorStateT
+    ]:
+        if len(self._mixin_action_spaces) > 0:
+            assert isinstance(action, dict)
+            action : Dict[str, Any] = action.copy()
+            for mixin in self.mixins:
+                if mixin.mixin_name in self._mixin_action_spaces.keys():
+                    state, common_state, actor_state = mixin.apply_mixin_action_func(
+                        self,
+                        state,
+                        common_state,
+                        actor_state,
+                        action.pop(mixin.mixin_name),
+                        last_control_step_elapsed
+                    )
+            if self.extra_action_space is not None:
+                extra_action = action.pop('extra') if 'extra' in action.keys() else action
+                state, common_state, actor_state = self.set_next_extra_action(
+                    state,
+                    common_state,
+                    actor_state,
+                    extra_action,
+                    last_control_step_elapsed
+                )
+        else:
+            state, common_state, actor_state = self.set_next_extra_action(
+                state,
+                common_state,
+                actor_state,
+                action,
+                last_control_step_elapsed
+            )
+        return state, common_state, actor_state
     
     @abstractmethod
     def onboard_close(
@@ -461,41 +844,30 @@ class FuncActor(
         """Sets the attribute `name` on the environment with `value`."""
         setattr(self, name, value)
 
-ActorWrapperActT = TypeVar("ActorWrapperActT")
 ActorWrapperBDeviceType = TypeVar("ActorWrapperBDeviceType")
 ActorWrapperBDtypeType = TypeVar("ActorWrapperBDtypeType")
 ActorWrapperBRNGType = TypeVar("ActorWrapperBRNGType")
 
 class ActorWrapper(
     Generic[
-        ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
-        ActorActT, BDeviceType, BDtypeType, BRNGType
+        ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
+        BDeviceType, BDtypeType, BRNGType
     ],
-    Actor[ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]
+    Actor[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]
 ):
     def __init__(
         self,
-        actor : Actor[ActorActT, BDeviceType, BDtypeType, BRNGType]
+        actor : Actor[BDeviceType, BDtypeType, BRNGType]
     ):
         self.actor = actor
-        self._onboard_action_space : Optional[DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]] = None
-        self._action_space : Optional[Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]] = None
-    
-    @property
-    def onboard_observation_space(self) -> DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
-        return self.actor.onboard_observation_space
-    
-    @onboard_observation_space.setter
-    def onboard_observation_space(self, value : DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]) -> None:
-        self.actor.onboard_observation_space = value
-    
-    @property
-    def action_space(self) -> Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
-        return self._action_space or self.actor.action_space
-    
-    @action_space.setter
-    def action_space(self, value : Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]) -> None:
-        self._action_space = value
+        self.extra_action_space : Space[
+            Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType
+        ] = actor.extra_action_space
+        self.extra_observation_space : Optional[DictSpace[
+            ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType
+        ]] = actor.extra_observation_space
+        self._sensors : Optional[Dict[str, Sensor]] = None
+        self._mixins : Optional[List[ActorMixin]] = None
 
     @property
     def control_timestep(self) -> float:
@@ -512,21 +884,27 @@ class ActorWrapper(
     def update_onboard(self, last_step_elapsed : float) -> None:
         self.actor.update_onboard(last_step_elapsed=last_step_elapsed)
     
-    def get_onboard_data(self) -> Dict[str, Any]:
-        return self.actor.get_onboard_data()
+    def get_extra_data(self) -> Dict[str, Any]:
+        return self.actor.get_extra_data()
     
     @property
     def sensors(self) -> Dict[str, Sensor]:
-        return self.actor.sensors
+        return self._sensors or self.actor.sensors
     
-    def update_sensors(self, last_step_elapsed : float) -> None:
-        self.actor.update_sensors(last_step_elapsed=last_step_elapsed)
+    @sensors.setter
+    def sensors(self, value : Dict[str, Sensor]) -> None:
+        self._sensors = value
 
-    def get_sensors_data(self) -> Dict[str, Any]:
-        return self.actor.get_sensors_data()
+    @property
+    def mixins(self) -> List[ActorMixin]:
+        return self._mixins or self.actor.mixins
     
-    def set_next_action(self, action : ActorWrapperActT) -> None:
-        self.actor.set_next_action(action=action)
+    @mixins.setter
+    def mixins(self, value : List[ActorMixin]) -> None:
+        self._mixins = value
+    
+    def set_next_extra_action(self, action: Any) -> None:
+        return self.actor.set_next_extra_action(action)
 
     def pre_environment_step(self, last_step_elapsed : float) -> None:
         self.actor.pre_environment_step(last_step_elapsed=last_step_elapsed)
@@ -535,14 +913,30 @@ class ActorWrapper(
         self.actor.reset()
     
     def close(self) -> None:
+        super().close()
         self.actor.close()
     
+    # ========== Property Override for Mixins ==========
+    def __getattr__(self, name : str) -> Any:
+        if any(mixin.is_actor_mixin_property(name) for mixin in self.mixins):
+            return self.get_wrapper_attr(name)
+        else:
+            return super().__getattr__(name)
+    
+    def __setattr__(self, name : str, value : Any) -> None:
+        if any(mixin.is_actor_mixin_property(name) for mixin in self.mixins):
+            self.set_wrapper_attr(name, value)
+        else:
+            super().__setattr__(name, value)
+    
+    # ========== Wrapper methods ==========
+
     @property
     def unwrapped(self) -> "Actor":
         return self.actor.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> "Actor[ActorActT, BDeviceType, BDtypeType, BRNGType]":
+    def prev_wrapper_layer(self) -> "Actor[BDeviceType, BDtypeType, BRNGType]":
         return self.actor
     
     def has_wrapper_attr(self, name: str) -> bool:
@@ -578,16 +972,25 @@ class ActorWrapper(
 ActorWrapperStateT = TypeVar("ActorWrapperStateT")
 class FuncActorWrapper(
     Generic[
-        StateType, ActorWrapperStateT, ActorWrapperActT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
-        ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType    
+        StateType, 
+        ActorWrapperStateT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType,
+        ActorStateT, BDeviceType, BDtypeType, BRNGType    
     ],
-    FuncActor[StateType, ActorWrapperStateT, ActorWrapperStateT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]
+    FuncActor[StateType, ActorWrapperStateT, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]
 ):
     def __init__(
         self,
-        actor : FuncActor[StateType, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType]
+        actor : FuncActor[StateType, ActorStateT, BDeviceType, BDtypeType, BRNGType]
     ):
         self.actor = actor
+        self.extra_action_space : Optional[Space[
+            Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType
+        ]] = actor.extra_action_space
+        self.extra_observation_space : Optional[DictSpace[
+            ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType
+        ]] = actor.extra_observation_space
+        self._sensors : Optional[Dict[str, FuncSensor[Any, Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]] = None
+        self._mixins : Optional[List[ActorMixin]] = None
     
     def _translate_to_inner_actor_state(
         self, 
@@ -601,14 +1004,6 @@ class FuncActorWrapper(
         old_wrapper_state : ActorWrapperStateT,
     ) -> ActorWrapperStateT:
         raise NotImplementedError
-
-    @property
-    def onboard_observation_space(self) -> DictSpace[ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
-        return self.actor.onboard_observation_space
-    
-    @property
-    def action_space(self) -> Space[ActorWrapperActT, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
-        return self.actor.action_space
     
     @property
     def control_timestep(self) -> float:
@@ -619,15 +1014,27 @@ class FuncActorWrapper(
         return self.actor.is_real
     
     @property
+    def mixins(self) -> List[ActorMixin]:
+        return self._mixins or self.actor.mixins
+    
+    @mixins.setter
+    def mixins(self, value : List[ActorMixin]) -> None:
+        self._mixins = value
+
+    @property
     def sensors(self) -> Dict[str, FuncSensor[Any, Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]:
-        return self.actor.sensors
+        return self._sensors or self.actor.sensors
+    
+    @sensors.setter
+    def sensors(self, value : Dict[str, FuncSensor[Any, Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]) -> None:
+        self._sensors = value
     
     @property
     def device(self) -> Optional[ActorWrapperBDeviceType]:
         return self.actor.device
     
     @property
-    def backend(self) -> Type[ComputeBackend[Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]:
+    def backend(self) -> ComputeBackend[Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]:
         return self.actor.backend
     
     @property
@@ -700,7 +1107,7 @@ class FuncActorWrapper(
             actor_state
         )
 
-    def get_data_onboard(
+    def get_data_extra(
         self, 
         state: StateType, 
         common_state: FuncEnvCommonState[ActorWrapperBDeviceType, ActorWrapperBRNGType], 
@@ -712,7 +1119,7 @@ class FuncActorWrapper(
         ActorWrapperStateT, 
         Dict[str, Any]
     ]:
-        state, common_state, inner_actor_state, onboard_data = self.actor.get_data_onboard(
+        state, common_state, inner_actor_state, onboard_data = self.actor.get_data_extra(
             state, 
             common_state, 
             actor_state=self._translate_to_inner_actor_state(actor_state), 
@@ -722,13 +1129,13 @@ class FuncActorWrapper(
             inner_actor_state, 
             actor_state
         ), onboard_data
-    
-    def set_next_action(
+
+    def set_next_extra_action(
         self, 
         state: StateType, 
         common_state: FuncEnvCommonState[ActorWrapperBDeviceType, ActorWrapperBRNGType], 
         actor_state: ActorWrapperStateT, 
-        action: ActorWrapperActT,
+        action: Any,
         last_control_step_elapsed: float
     ) -> Tuple[
         StateType, 
@@ -762,13 +1169,26 @@ class FuncActorWrapper(
             actor_state=self._translate_to_inner_actor_state(actor_state)
         )
 
+    # ========== Property Override for Mixins ==========
+    def __getattr__(self, name : str) -> Any:
+        if any(mixin.is_func_actor_mixin_property(name) for mixin in self.mixins):
+            return self.get_wrapper_attr(name)
+        else:
+            return super().__getattr__(name)
+        
+    def __setattr__(self, name : str, value : Any) -> None:
+        if any(mixin.is_func_actor_mixin_property(name) for mixin in self.mixins):
+            self.set_wrapper_attr(name, value)
+        else:
+            super().__setattr__(name, value)
+
     # ========== Wrapper methods ==========
     @property
     def unwrapped(self) -> "FuncActor":
         return self.actor.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> "FuncActor[StateType, ActorStateT, ActorActT, BDeviceType, BDtypeType, BRNGType]":
+    def prev_wrapper_layer(self) -> "FuncActor[StateType, ActorStateT, Any, BDeviceType, BDtypeType, BRNGType]":
         return self.actor
     
     def has_wrapper_attr(self, name: str) -> bool:

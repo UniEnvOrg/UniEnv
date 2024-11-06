@@ -9,7 +9,7 @@ import gymnasium as gym
 class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        backend: Type[ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]],
+        backend: ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         spaces: Iterable[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]],
         device: Optional[BDeviceType] = None,
     ):
@@ -62,7 +62,7 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRN
             device=device,
         )
 
-    def to_backend(self, backend : Type[ComputeBackend], device : Optional[Any]) -> "Union":
+    def to_backend(self, backend : ComputeBackend, device : Optional[Any]) -> "Union":
         return Union(
             backend=backend,
             spaces=[space.to_backend(backend, device) for space in self.spaces],
@@ -137,7 +137,7 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRN
         """Convert this space to a gym space."""
         return (data[0], self.spaces[data[0]].to_gym_data(data[1]))
     
-    def from_other_backend(self, other_data : Tuple[int, Any], backend : Type[ComputeBackend]) -> Tuple[int, Any]:
+    def from_other_backend(self, other_data : Tuple[int, Any], backend : ComputeBackend) -> Tuple[int, Any]:
         """Convert data from another backend to this backend."""
         return (other_data[0], self.spaces[other_data[0]].from_other_backend(other_data[1], backend))
     

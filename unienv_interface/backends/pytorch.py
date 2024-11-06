@@ -40,7 +40,7 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, Union[torch.device, str
         return data.cpu().numpy()
 
     @classmethod
-    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type[ComputeBackend]) -> torch.Tensor:
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : ComputeBackend) -> torch.Tensor:
         t = torch.from_dlpack(data)
         if t.dtype in PYTORCH_DTYPE_CAST_MAP.keys():
             t = t.to(PYTORCH_DTYPE_CAST_MAP[t.dtype])
