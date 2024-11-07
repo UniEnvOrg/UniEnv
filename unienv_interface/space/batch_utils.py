@@ -5,7 +5,6 @@ from copy import deepcopy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
 
-import numpy as np
 from unienv_interface.space import (
     Box,
     Dict,

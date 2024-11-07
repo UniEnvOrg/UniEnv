@@ -242,7 +242,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     
     def clip(self, x: BArrayType) -> BArrayType:
         """Clip the values of x to be within the bounds of this space."""
-        return self.backend.clip(x, self.low, self.high)
+        return self.backend.array_api_namespace.clip(x, self.low, self.high)
 
     def __repr__(self) -> str:
         """A string representation of this space.

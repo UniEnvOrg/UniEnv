@@ -50,7 +50,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     def flat_dim(self) -> int | None:
         """Return the shape of the space as an immutable property."""
         raise NotImplementedError
-    
+
     def flatten(self, data : SpaceDataT) -> Any:
         """Flatten the data."""
         raise NotImplementedError

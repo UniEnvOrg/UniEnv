@@ -93,7 +93,7 @@ class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
             device=self.device,
         )
         for i, char in enumerate(data):
-            dat[i] = self.character_index(char)
+            dat = self.backend.replace_inplace(dat, i, self.character_index(char))
         return dat
 
     def unflatten(self, data : Any) -> str:
