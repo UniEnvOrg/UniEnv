@@ -868,6 +868,8 @@ class ActorWrapper(
         ]] = actor.extra_observation_space
         self._sensors : Optional[Dict[str, Sensor]] = None
         self._mixins : Optional[List[ActorMixin]] = None
+        self._mixin_action_spaces = actor._mixin_action_spaces
+        self._mixin_observation_spaces = actor._mixin_observation_spaces
 
     @property
     def control_timestep(self) -> float:
@@ -902,6 +904,7 @@ class ActorWrapper(
     @mixins.setter
     def mixins(self, value : List[ActorMixin]) -> None:
         self._mixins = value
+        self._update_mixins_internal()
     
     def set_next_extra_action(self, action: Any) -> None:
         return self.actor.set_next_extra_action(action)
@@ -921,13 +924,9 @@ class ActorWrapper(
         if any(mixin.is_actor_mixin_property(name) for mixin in self.mixins):
             return self.get_wrapper_attr(name)
         else:
-            return super().__getattr__(name)
-    
-    def __setattr__(self, name : str, value : Any) -> None:
-        if any(mixin.is_actor_mixin_property(name) for mixin in self.mixins):
-            self.set_wrapper_attr(name, value)
-        else:
-            super().__setattr__(name, value)
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )
     
     # ========== Wrapper methods ==========
 
@@ -991,6 +990,8 @@ class FuncActorWrapper(
         ]] = actor.extra_observation_space
         self._sensors : Optional[Dict[str, FuncSensor[Any, Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]] = None
         self._mixins : Optional[List[ActorMixin]] = None
+        self._mixin_action_spaces = actor._mixin_action_spaces
+        self._mixin_observation_spaces = actor._mixin_observation_spaces
     
     def _translate_to_inner_actor_state(
         self, 
@@ -1020,6 +1021,7 @@ class FuncActorWrapper(
     @mixins.setter
     def mixins(self, value : List[ActorMixin]) -> None:
         self._mixins = value
+        self._update_mixins_internal()
 
     @property
     def sensors(self) -> Dict[str, FuncSensor[Any, Any, Any, ActorWrapperBDeviceType, ActorWrapperBDtypeType, ActorWrapperBRNGType]]:
@@ -1174,13 +1176,9 @@ class FuncActorWrapper(
         if any(mixin.is_func_actor_mixin_property(name) for mixin in self.mixins):
             return self.get_wrapper_attr(name)
         else:
-            return super().__getattr__(name)
-        
-    def __setattr__(self, name : str, value : Any) -> None:
-        if any(mixin.is_func_actor_mixin_property(name) for mixin in self.mixins):
-            self.set_wrapper_attr(name, value)
-        else:
-            super().__setattr__(name, value)
+            raise AttributeError(
+                f"wrapper {type(self).__name__} has no attribute {name!r}"
+            )
 
     # ========== Wrapper methods ==========
     @property

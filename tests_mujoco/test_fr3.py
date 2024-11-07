@@ -7,6 +7,7 @@ from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvBasedEnv
 from unienv_interface.world.world import FuncEnvCommonState
 from unienv_interface.world.tasks import LambdaFuncTask
 from unienv_interface.world.env_utils import WorldBasedFuncEnv
+from unienv_interface.world.actor_mixins import EndEffectorActorMixin
 import unienv_mujoco.ik.ik_util as ik_util
 import os.path
 import mink
@@ -75,18 +76,14 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         ])
     )
 
-    return MujocoIKWrapper(
+    actor = MujocoIKWrapper(
         actor=fr3_actor,
         ik=bulk_ik,
-        mj_model=fr3_world._mjmodel,
-        new_action_space=EEF_SE3_WORKSPACE,
-        fn_target_transform=lambda action: mink.SE3.from_rotation_and_translation(
-            rotation=mink.SO3.from_rpy_radians(*action[3:]),
-            translation=action[:3]
-        ),
-        fn_action_transform=lambda action, target_q: target_q
+        ik_mj_model=fr3_world._mjmodel,
+        new_action_space=None
     )
-
+    actor.mixins = actor.mixins + [EndEffectorActorMixin]
+    return actor
 
 def eef_reward_and_termination_fn(
     target_transform : mink.SE3,
@@ -116,7 +113,7 @@ def eef_reward_and_termination_fn(
             return 0.0, False, False
     return eef_reward_and_termination
 
-def get_fr3_eef_task() -> typing.Tuple[LambdaFuncTask, np.ndarray]:
+def get_fr3_eef_task():
     target_eef = EEF_SE3_WORKSPACE.sample(np.random.default_rng())[1]
     assert target_eef.shape == (6,)
     assert EEF_SE3_WORKSPACE.contains(target_eef)
@@ -125,19 +122,21 @@ def get_fr3_eef_task() -> typing.Tuple[LambdaFuncTask, np.ndarray]:
         rotation=mink.SO3.from_rpy_radians(*target_eef[3:]),
         translation=target_eef[:3]
     )
+    
     return LambdaFuncTask(
         eef_reward_and_termination_fn(target_transform)
-    ), np.concatenate([target_transform.translation(), target_transform.rotation().as_rpy_radians()])
+    ), target_transform, {
+        "eef": {
+            "position": target_transform.translation(),
+            "euler": np.asarray(target_transform.rotation().as_rpy_radians())
+        }
+    }
 
 def test_fr3_eef(
     fr3_world : MujocoFuncWorld,
     fr3_eef_actor : MujocoIKWrapper
 ):
-    task, target_action = get_fr3_eef_task()
-    target_transform = mink.SE3.from_rotation_and_translation(
-        rotation=mink.SO3.from_rpy_radians(*target_action[3:]),
-        translation=target_action[:3]
-    )
+    task, target_transform, target_action = get_fr3_eef_task()
 
     funcenv = WorldBasedFuncEnv(
         world=fr3_world,

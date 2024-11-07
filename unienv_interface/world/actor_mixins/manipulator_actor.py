@@ -44,16 +44,6 @@ class EndEffectorActorInterface():
         raise NotImplementedError
     
     @abstractmethod
-    def get_current_eef_quaternion(
-        self,
-    ) -> BArrayType:
-        """
-        Get the current quaternion of the end effector, with shape (num_eefs, 4) if num_eefs > 1 else (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 4) if num_eefs > 1 else (B, 4)
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
     def get_current_eef_euler(
         self,
     ) -> BArrayType:
@@ -64,26 +54,14 @@ class EndEffectorActorInterface():
         raise NotImplementedError
     
     @abstractmethod
-    def set_eef(
-        self,
-        position: Optional[BArrayType],
-        quaternion: Optional[BArrayType]
-    ) -> None:
-        """
-        Set the position and quaternion of the end effector, with shape (num_eefs, 3) and (num_eefs, 4) if num_eefs > 1 else (3,) and (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 4) if num_eefs > 1 else (B, 3) and (B, 4)
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
     def set_target_eef(
         self,
         position: BArrayType,
-        quaternion: BArrayType
+        euler: BArrayType
     ) -> None:
         """
-        Set the position and quaternion of the end effector in the action, with shape (num_eefs, 3) and (num_eefs, 4) if num_eefs > 1 else (3,) and (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 4) if num_eefs > 1 else (B, 3) and (B, 4)
+        Set the position and quaternion of the end effector in the action, with shape (num_eefs, 3) and (num_eefs, 3) if num_eefs > 1 else (3,) and (3,)
+        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 3) if num_eefs > 1 else (B, 3) and (B, 3)
         """
         raise NotImplementedError
 
@@ -111,19 +89,6 @@ class EndEffectorFuncActorInterface(
         raise NotImplementedError
     
     @abstractmethod
-    def get_current_eef_quaternion(
-        self,
-        state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state: ActorStateT
-    ) -> BArrayType:
-        """
-        Get the current quaternion of the end effector, with shape (num_eefs, 4) if num_eefs > 1 else (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 4) if num_eefs > 1 else (B, 4)
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
     def get_current_eef_euler(
         self,
         state : StateType,
@@ -135,25 +100,6 @@ class EndEffectorFuncActorInterface(
         If the actor is a batched actor, the shape would be (B, num_eefs, 3) if num_eefs > 1 else (B, 3)
         """
         raise NotImplementedError
-    
-    @abstractmethod
-    def set_eef(
-        self,
-        state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state: ActorStateT,
-        position: Optional[BArrayType],
-        quaternion: Optional[BArrayType]
-    ) -> Tuple[
-        StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
-        ActorStateT
-    ]:
-        """
-        Set the position and quaternion of the end effector, with shape (num_eefs, 3) and (num_eefs, 4) if num_eefs > 1 else (3,) and (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 4) if num_eefs > 1 else (B, 3) and (B, 4)
-        """
-        raise NotImplementedError
 
     @abstractmethod
     def set_target_eef(
@@ -162,15 +108,15 @@ class EndEffectorFuncActorInterface(
         common_state: FuncEnvCommonState[BDeviceType, BRNGType],
         actor_state: ActorStateT,
         position: BArrayType,
-        quaternion: BArrayType
+        euler: BArrayType
     ) -> Tuple[
         StateType,
         FuncEnvCommonState[BDeviceType, BRNGType],
         ActorStateT
     ]:
         """
-        Set the position and quaternion of the end effector in the action, with shape (num_eefs, 3) and (num_eefs, 4) if num_eefs > 1 else (3,) and (4,)
-        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 4) if num_eefs > 1 else (B, 3) and (B, 4)
+        Set the position and quaternion of the end effector in the action, with shape (num_eefs, 3) and (num_eefs, 3) if num_eefs > 1 else (3,) and (3,)
+        If the actor is a batched actor, the shape would be (B, num_eefs, 3) and (B, num_eefs, 3) if num_eefs > 1 else (B, 3) and (B, 3)
         """
         raise NotImplementedError
 
@@ -200,7 +146,7 @@ class EndEffectorActorMixin(ActorMixin[EndEffectorActorInterface, EndEffectorFun
             low=-np.pi,
             high=np.pi,
             dtype=backend.default_floating_dtype,
-            shape=batch_space + (4, )
+            shape=batch_space + (3, )
         )
         return DictSpace(
             backend,
@@ -295,7 +241,7 @@ class EndEffectorActorMixin(ActorMixin[EndEffectorActorInterface, EndEffectorFun
         action: Dict[str, BArrayType]
     ) -> None:
         target_position, target_rotation = cls.clip_target_eef(instance, action['position'], action['euler'])
-        instance.set_target_eef(target_position, euler_to_quaternion(instance.backend, target_rotation))
+        instance.set_target_eef(target_position, target_rotation)
 
     @classmethod
     def apply_mixin_action_func(
@@ -317,7 +263,7 @@ class EndEffectorActorMixin(ActorMixin[EndEffectorActorInterface, EndEffectorFun
             common_state, 
             actor_state, 
             target_position, 
-            euler_to_quaternion(instance.backend, target_rotation)
+            target_rotation
         )
 
 class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
@@ -374,7 +320,7 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         delta_translation = action_space.spaces['position'].clip(action['position'])
         delta_rotation = action_space.spaces['euler'].clip(action['euler'])
         target_translation = current_translation + delta_translation
-        target_rotation = normalize_euler(instance.backend, current_rotation + delta_rotation)
+        target_rotation = current_rotation + delta_rotation
         return target_translation, target_rotation
 
     @classmethod
@@ -447,17 +393,6 @@ class GripperActorInterface:
         raise NotImplementedError
     
     @abstractmethod
-    def set_gripper(
-        self,
-        position: BArrayType
-    ) -> None:
-        """
-        Set the position of the gripper, with shape (num_grippers, 1) if num_grippers > 1 else (1,)
-        If the actor is a batched actor, the shape would be (B, num_grippers, 1) if num_grippers > 1 else (B, 1)
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
     def set_target_gripper(
         self,
         position: BArrayType
@@ -483,24 +418,6 @@ class GripperFuncActorInterface(
     ) -> BArrayType:
         """
         Get the current position of the gripper, with shape (num_grippers, 1) if num_grippers > 1 else (1,)
-        If the actor is a batched actor, the shape would be (B, num_grippers, 1) if num_grippers > 1 else (B, 1)
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
-    def set_gripper(
-        self,
-        state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
-        actor_state: ActorStateT,
-        position: BArrayType
-    ) -> Tuple[
-        StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
-        ActorStateT
-    ]:
-        """
-        Set the position of the gripper, with shape (num_grippers, 1) if num_grippers > 1 else (1,)
         If the actor is a batched actor, the shape would be (B, num_grippers, 1) if num_grippers > 1 else (B, 1)
         """
         raise NotImplementedError
