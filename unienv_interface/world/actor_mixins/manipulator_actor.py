@@ -22,7 +22,7 @@ def euler_to_quaternion(backend : ComputeBackend, rotation: BArrayType) -> BArra
     return array_workspace.stack([qx, qy, qz, qw], axis=-1)
 
 def normalize_euler(backend : ComputeBackend, euler: BArrayType) -> BArrayType:
-    return (euler + np.pi) % (2 * np.pi) - np.pi
+    return (euler + 2*np.pi + np.pi) % (2 * np.pi) - np.pi
 
 class EndEffectorActorInterface():
     """
@@ -309,19 +309,42 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         )
     
     @classmethod
-    def get_target_eef(
+    def map_target_abs_eef(
         cls,
         instance: Union[EndEffectorActorInterface, EndEffectorFuncActorInterface],
         current_translation: BArrayType,
         current_rotation: BArrayType,
         action: Dict[str, BArrayType],
-    ) -> Tuple[BArrayType, BArrayType]:
+    ) -> Dict[str, BArrayType]:
         action_space = cls.get_mixin_action_space(instance, instance.backend, instance.device)
         delta_translation = action_space.spaces['position'].clip(action['position'])
         delta_rotation = action_space.spaces['euler'].clip(action['euler'])
         target_translation = current_translation + delta_translation
         target_rotation = current_rotation + delta_rotation
-        return target_translation, target_rotation
+        return {
+            "position": target_translation,
+            "euler": target_rotation
+        }
+
+    @classmethod
+    def map_target_relative_eef(
+        cls,
+        instance: Union[EndEffectorActorInterface, EndEffectorFuncActorInterface],
+        current_translation: BArrayType,
+        current_rotation: BArrayType,
+        action: Dict[str, BArrayType],
+    ) -> Dict[str, BArrayType]:
+        action_space = cls.get_mixin_action_space(instance, instance.backend, instance.device)
+        delta_translation = action['position'] - current_translation
+        delta_rotation = action['euler'] - current_rotation
+        delta_rotation = normalize_euler(instance.backend, delta_rotation)
+        delta_translation = action_space.spaces['position'].clip(delta_translation)
+        delta_rotation = action_space.spaces['euler'].clip(delta_rotation)
+
+        return {
+            "position": delta_translation,
+            "euler": delta_rotation
+        }
 
     @classmethod
     def apply_mixin_action(
@@ -329,7 +352,7 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         instance: EndEffectorActorInterface,
         action: Dict[str, BArrayType]
     ) -> None:
-        target_position, target_rotation = self.get_target_eef(
+        target_abs_action = self.map_target_abs_eef(
             instance, 
             instance.get_current_eef_position(), 
             instance.get_current_eef_euler(), 
@@ -337,10 +360,7 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         )
         EndEffectorActorMixin.apply_mixin_action(
             instance,
-            {
-                "position": target_position,
-                "euler": target_rotation
-            }
+            target_abs_action
         )
 
     @classmethod
@@ -357,7 +377,7 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         FuncEnvCommonState[BDeviceType, BRNGType],
         ActorStateT
     ]:
-        target_position, target_rotation = self.get_target_eef(
+        target_abs_action = self.map_target_abs_eef(
             instance, 
             instance.get_current_eef_position(state, common_state, actor_state), 
             instance.get_current_eef_euler(state, common_state, actor_state), 
@@ -368,12 +388,10 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
             state,
             common_state,
             actor_state,
-            {
-                "position": target_position,
-                "euler": target_rotation
-            },
+            target_abs_action,
             last_control_step_elapsed
         )
+
 
 class GripperActorInterface:
     """
