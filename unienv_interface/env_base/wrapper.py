@@ -234,16 +234,14 @@ class ContextObservationWrapper(
         ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
     ]
 ):
-    @abc.abstractmethod
     def map_context(self, context : WrapperContextType) -> ContextType:
-        raise NotImplementedError
+        return context
     
     def reverse_map_context(self, context : ContextType) -> WrapperContextType:
         raise NotImplementedError
     
-    @abc.abstractmethod
     def map_observation(self, observation : WrapperObsType) -> ObsType:
-        raise NotImplementedError
+        return observation
     
     def reverse_map_observation(self, observation : ObsType) -> WrapperObsType:
         raise NotImplementedError
@@ -259,5 +257,5 @@ class ContextObservationWrapper(
     def step(
         self, action: ActType
     ) -> Tuple[WrapperObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
-        observation, reward, done, info = self.env.step(action)
-        return self.map_observation(observation), reward, done, info
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        return self.map_observation(observation), reward, terminated, truncated, info
