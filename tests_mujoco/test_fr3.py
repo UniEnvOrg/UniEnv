@@ -18,8 +18,8 @@ SUBSTEP_TIMESTEP = 0.005
 AVOID_BODY_NAMES = ["fr3_link3", "fr3_link7"]
 EEF_WORKSPACE = Box(
     backend=NumpyComputeBackend,
-    low=np.array([0.2, -0.2, 0.2]),
-    high=np.array([0.3, 0.2, 0.4]),
+    low=np.array([0.3, -0.2, 0.2]),
+    high=np.array([0.4, 0.2, 0.4]),
     dtype=np.float32
 )
 EEF_SE3_WORKSPACE = Box(
