@@ -24,6 +24,20 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     # @abc.abstractmethod
     # def is_backenddict(cls, data : Any) -> bool:
     #     raise NotImplementedError
+    @classmethod
+    @abc.abstractmethod
+    def is_device_tpu(cls, device : BDeviceType) -> bool:
+        raise NotImplementedError
+
+    @classmethod
+    @abc.abstractmethod
+    def is_device_gpu(cls, device : BDeviceType) -> bool:
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def is_device_cpu(cls, device : BDeviceType) -> bool:
+        raise NotImplementedError
 
     @classmethod
     @abc.abstractmethod
@@ -37,9 +51,10 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
 
     @classmethod
     @abc.abstractmethod
-    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Type["ComputeBackend"]) -> BArrayType:
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Optional["ComputeBackend"] = None) -> BArrayType:
         raise NotImplementedError
 
+    
     # @classmethod
     # def from_dict(cls, data : Dict[str,Any]) -> _BDictType:
     #     new_data = {}

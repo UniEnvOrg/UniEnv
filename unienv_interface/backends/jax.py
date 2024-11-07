@@ -1,4 +1,5 @@
 from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
+
 from .base import ComputeBackend
 import numpy as np
 import dlpack
@@ -25,6 +26,18 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
         return isinstance(data, jax.Array)
 
     @classmethod
+    def is_device_tpu(cls, device: JaxDevice) -> bool:
+        return device.platform == "tpu"
+
+    @classmethod
+    def is_device_gpu(cls, device: JaxDevice) -> bool:
+        return device.platform == "gpu"
+
+    @classmethod
+    def is_device_cpu(cls, device: JaxDevice) -> bool:
+        return device.platform == "cpu"
+
+    @classmethod
     def from_numpy(cls, data : np.ndarray, dtype : Optional[np.dtype] = None, device : Optional[JaxDevice] = None) -> jax.Array:
         return jax.numpy.asarray(data, dtype=dtype, device=device)
 
@@ -35,12 +48,14 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
         return np.asarray(data)
 
     @classmethod
-    def from_other_backend(cls, data : dlpack.DLPackObject, backend : ComputeBackend) -> jax.Array:
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend : Optional[ComputeBackend] = None) -> jax.Array:
         try:
             # if hasattr(data, "contiguous"): # Fix for torch non-standard strides
             #     data = data.contiguous()
             return jax.dlpack.from_dlpack(data)
-        except:
+        except Exception as e:
+            if backend is None:
+                raise e
             # jax sometimes has tiling issues with dlpack converted data
             np = backend.to_numpy(data)
             return cls.from_numpy(np)

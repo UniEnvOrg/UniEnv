@@ -14,6 +14,18 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return array_api_compat.is_numpy_array(data)
 
     @classmethod
+    def is_device_tpu(cls, device: Any) -> bool:
+        return False
+
+    @classmethod
+    def is_device_gpu(cls, device: Any) -> bool:
+        return False
+    
+    @classmethod
+    def is_device_cpu(cls, device: Any) -> bool:
+        return True
+
+    @classmethod
     def from_numpy(cls, data : np.ndarray, dtype : Optional[np.dtype] = None, device : Optional[Any] = None) -> np.ndarray:
         if dtype is not None:
             data = data.astype(dtype)
@@ -24,7 +36,7 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return data
 
     @classmethod
-    def from_other_backend(cls, data : dlpack.DLPackObject, backend: ComputeBackend) -> np.ndarray:
+    def from_other_backend(cls, data : dlpack.DLPackObject, backend: Optional[ComputeBackend] = None) -> np.ndarray:
         return np.from_dlpack(data)
 
     @classmethod
