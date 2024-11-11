@@ -40,22 +40,38 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         return self._shape
 
     @property
-    @abc.abstractmethod
     def is_flattenable(self) -> bool:
         """Checks whether this space can be flattened to a :class:`Box`."""
-        raise NotImplementedError
+        return False
     
     @property
-    @abc.abstractmethod
+    def is_batch_flattenable(self) -> bool:
+        """Checks whether this space can be flattened to a :class:`Box`."""
+        return False
+
+    @property
     def flat_dim(self) -> int | None:
         """Return the shape of the space as an immutable property."""
-        raise NotImplementedError
+        return None
+    
+    @property
+    def batch_flat_dim(self) -> int | None:
+        """Return the shape of the space as an immutable property."""
+        return None
 
     def flatten(self, data : SpaceDataT) -> Any:
         """Flatten the data."""
         raise NotImplementedError
     
+    def flatten_batch(self, data : SpaceDataT) -> Any:
+        """Flatten the data."""
+        raise NotImplementedError
+
     def unflatten(self, data : Any) -> SpaceDataT:
+        """Unflatten the data."""
+        raise NotImplementedError
+    
+    def unflatten_batch(self, data : Any) -> SpaceDataT:
         """Unflatten the data."""
         raise NotImplementedError
 

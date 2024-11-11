@@ -1,28 +1,15 @@
-from typing import Any, Callable, Generic, TypeVar, Tuple, Dict, Optional, SupportsFloat, Type, Sequence
+from typing import Any, Callable, Generic, TypeVar, Tuple, Dict, Optional, SupportsFloat, Type, Sequence, Union
 import abc
 import numpy as np
-from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils import seed_util
 import gymnasium as gym
 from ..space import Space
 from dataclasses import dataclass, replace as dataclass_replace
-from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
-StateType = TypeVar("StateType")
-RenderStateType = TypeVar("RenderStateType")
+from .env import Env, ContextType, ObsType, ActType, RenderFrame
 
-# ObsType = TypeVar("ObsType")
-# ActType = TypeVar("ActType")
-# RewardType = TypeVar("RewardType")
-# TerminationType = TypeVar("TerminalType")
-# RenderFrame = TypeVar("RenderFrame")
-# BDeviceT = TypeVar("BDeviceT")
-# BRngT = TypeVar("BRngT")
-
-@dataclass(frozen=True)
-class FuncEnvCommonState(Generic[BDeviceT, BRngT]):
-    np_rng : np.random.Generator
-    rng : BRngT
-    device : Optional[BDeviceT] = None
+StateType = TypeVar("StateType", covariant=True)
+RenderStateType = TypeVar("RenderStateType", covariant=True)
 
 @dataclass(frozen=True)
 class FuncEnvCommonRenderState:
@@ -31,25 +18,28 @@ class FuncEnvCommonRenderState:
 
 class FuncEnv(
     abc.ABC,
-    Generic[StateType, RenderStateType, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+    Generic[
+        StateType, RenderStateType, 
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
+    ]
 ):
     metadata : Dict[str, Any] = {
         "render_modes": []
     }
 
-    backend : ComputeBackend[Any, BDeviceT, Any, BRngT]
-    device : Optional[BDeviceT]
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
+    device : Optional[BDeviceType] = None
 
     batch_size : Optional[int] = None
 
-    observation_space: Space[Any, Any, BDeviceT, Any, BRngT]
-    action_space: Space[Any, Any, BDeviceT, Any, BRngT]
-    context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
+    observation_space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType]
+    action_space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType]
+    context_space: Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]] = None
 
     @abc.abstractmethod
-    def initial(self, *, seed : int) -> Tuple[
+    def initial(self, *, rng : BRNGType) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceT, BRngT],
+        BRNGType,
         ContextType,
         ObsType,
         Dict[str, Any]
@@ -57,36 +47,41 @@ class FuncEnv(
         """Initial state."""
         raise NotImplementedError
     
+    @abc.abstractmethod
     def reset(
         self, 
         state : StateType, 
-        common_state : FuncEnvCommonState[BDeviceT, BRngT]
+        rng : BRNGType,
+        *,
+        mask : Optional[BArrayType] = None,
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceT, BRngT],
+        BRNGType,
         ContextType,
         ObsType,
         Dict[str, Any]
     ]:
-        """Reset the environment."""
-        return self.initial(
-            seed=seed_util.next_seed(common_state.np_rng)
-        )
+        """
+        Resets the environment to its initial state and returns the initial context and observation.
+        If mask is provided, it will only return the masked context and observation, so the batch dimension in the output will not be same as the batch dimension in the context and observation spaces.
+        Note that state and rng should be with their full batch dimensions
+        """
+        raise NotImplementedError
 
     @abc.abstractmethod
-    def step(self, state: StateType, common_state : FuncEnvCommonState[BDeviceT, BRngT], action : ActType) -> Tuple[
+    def step(self, state: StateType, rng : BRNGType, action : ActType) -> Tuple[
         StateType, 
-        FuncEnvCommonState[BDeviceT, BRngT],
+        BRNGType,
         ObsType, 
-        RewardType, 
-        TerminationType, 
-        TerminationType, 
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
         Dict[str, Any]
     ]:
         """Transition."""
         raise NotImplementedError
     
-    def close(self, state: StateType, common_state : FuncEnvCommonState[BDeviceT, BRngT]) -> None:
+    def close(self, state: StateType, rng : BRNGType) -> None:
         """Close the environment."""
         return
 
@@ -94,13 +89,13 @@ class FuncEnv(
     def render_image(
         self, 
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceT, BRngT],
+        rng : BRNGType,
         render_state : RenderStateType,
         render_common_state : FuncEnvCommonRenderState
     ) -> Tuple[
         RenderFrame | Sequence[RenderFrame] | None, 
         StateType,
-        FuncEnvCommonState[BDeviceT, BRngT],
+        BRNGType,
         RenderStateType,
         FuncEnvCommonRenderState
     ]:
@@ -111,12 +106,12 @@ class FuncEnv(
     def render_init(
         self, 
         state : StateType, 
-        common_state : FuncEnvCommonState[BDeviceT, BRngT], 
+        rng : BRNGType,
         *,
         render_mode : Optional[str] = None, 
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceT, BRngT],
+        BRNGType,
         RenderStateType,
         FuncEnvCommonRenderState
     ]:
@@ -127,37 +122,36 @@ class FuncEnv(
     def render_close(
         self, 
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceT, BRngT],
+        rng : BRNGType,
         render_state : RenderStateType,
         render_common_state : FuncEnvCommonRenderState
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceT, BRngT]
+        BRNGType
     ]:
         """Close the render state."""
         raise NotImplementedError
 
 class FuncEnvBasedEnv(Env[
-    ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ],Generic[
     StateType, RenderStateType, 
-    ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+    BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
     def __init__(
         self,
-        func_env : FuncEnv[StateType, RenderStateType, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT],
-        *instance_args,
+        func_env : FuncEnv[StateType, RenderStateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+        *,
+        rng : BRNGType,
         instance_kwargs : Dict[str, Any] = {},
         render_mode : Optional[str] = None,
         render_kwargs : Dict[str, Any] = {},
-        seed : int = 0,
     ):
         self.func_env = func_env
-        
-        self.state, self.common_state, context, obs, info = self.func_env.initial(
-            *instance_args, seed=seed, **instance_kwargs
+
+        self.state, self.rng, _, _, _ = self.func_env.initial(
+            rng=rng, **instance_kwargs
         )
-        self._first_instance_reset : Optional[Tuple[ContextType, ObsType, Dict[str, Any]]] = (context, obs, info)
 
         self.render_state : Optional[RenderStateType] = None
         self.render_common_state : Optional[FuncEnvCommonRenderState] = None
@@ -172,17 +166,17 @@ class FuncEnvBasedEnv(Env[
         self._render_kwargs = render_kwargs
 
     def _init_render(self) -> None:
-        if self.render_state is not None:
+        if self.render_common_state is not None:
             return
         
         (
             self.state,
-            self.common_state,
+            self.rng,
             self.render_state,
             self.render_common_state
         ) = self.func_env.render_init(
             self.state,
-            self.common_state,
+            self.rng,
             render_mode=self._render_mode,
             **self._render_kwargs
         )
@@ -208,11 +202,11 @@ class FuncEnvBasedEnv(Env[
         return self.render_common_state.render_fps
     
     @property
-    def backend(self) -> ComputeBackend[Any, BDeviceT, Any, BRngT]:
+    def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.func_env.backend
 
     @property
-    def device(self) -> Optional[BDeviceT]:
+    def device(self) -> Optional[BDeviceType]:
         return self.func_env.device
 
     @property
@@ -220,73 +214,59 @@ class FuncEnvBasedEnv(Env[
         return self.func_env.batch_size
 
     @property
-    def action_space(self) -> Space[ActType, Any, BDeviceT, Any, BRngT]:
+    def action_space(self) -> Space[ActType, Any, BDeviceType, BDtypeType, BRNGType]:
         return self.func_env.action_space
 
     @property
-    def observation_space(self) -> Space[ObsType, Any, BDeviceT, Any, BRngT]:
+    def observation_space(self) -> Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]:
         return self.func_env.observation_space
 
     @property
-    def context_space(self) -> Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]]:
+    def context_space(self) -> Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]]:
         return self.func_env.context_space
-
-    @property
-    def np_rng(self) -> np.random.Generator:
-        return self.common_state.np_rng
-    
-    @np_rng.setter
-    def np_rng(self, value: np.random.Generator):
-        self.common_state = dataclass_replace(self.common_state, np_rng=value)
-
-    @property
-    def rng(self) -> BRngT:
-        return self.common_state.rng
-    
-    @rng.setter
-    def rng(self, value: BRngT):
-        self.common_state = dataclass_replace(self.common_state, rng=value)
-    
-    def reset(
-        self,
-        seed : Optional[int] = None,
-    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
-        if (
-            self._first_instance_reset is not None and
-            seed is None
-        ):
-            reset_ret = self._first_instance_reset
-            self._first_instance_reset = None
-            return reset_ret
-        else:
-            self.state, self.common_state, context, obs, info = self.func_env.reset(
-                self.state, self.common_state
-            )
-            return context, obs, info
     
     def step(
         self,
         action : ActType
-    ) -> Tuple[ObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
-        self.state, self.common_state, obs, rew, terminated, truncated, info = self.func_env.step(
-            self.state, self.common_state, action
+    ) -> Tuple[
+        ObsType,
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
+        Dict[str, Any]
+    ]:
+        self.state, self.rng, obs, rew, terminated, truncated, info = self.func_env.step(
+            self.state, self.rng, action
         )
         return obs, rew, terminated, truncated, info
 
+    def reset(
+        self,
+        *,
+        mask : Optional[BArrayType] = None,
+        seed : Optional[int] = None,
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        self.state, self.rng, context, obs, info = self.func_env.reset(
+            self.state, self.rng, mask=mask
+        )
+        return context, obs, info
+
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         self._init_render()
-        image, self.state, self.common_state, self.render_state, self.render_common_state = self.func_env.render_image(
-            self.state, self.common_state, self.render_state, self.render_common_state
+        image, self.state, self.rng, self.render_state, self.render_common_state = self.func_env.render_image(
+            self.state, self.rng, self.render_state, self.render_common_state
         )
         return image
     
     def close(self) -> None:
         if self.render_state is not None:
-            self.state, self.common_state = self.func_env.render_close(
-                self.state, self.common_state, self.render_state, self.render_common_state
+            self.state, self.rng = self.func_env.render_close(
+                self.state, self.rng, self.render_state, self.render_common_state
             )
-        self.func_env.close(self.state, self.common_state)
+        self.func_env.close(self.state, self.rng)
     
+    # ========== Wrapper methods ==========
+
     def has_wrapper_attr(self, name: str) -> bool:
         return hasattr(self, name) or hasattr(self.func_env, name)
 

@@ -52,21 +52,6 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
             dtype=None,
         )
 
-    @property
-    def is_flattenable(self):
-        return False
-    
-    @property
-    def flat_dim(self) -> None:
-        """Return the shape of the space as an immutable property."""
-        return None
-    
-    def flatten(self, data : GraphInstance[BArrayType]) -> BArrayType:
-        raise NotImplementedError("Graph space is not flattenable.")
-    
-    def unflatten(self, data : BArrayType) -> GraphInstance[BArrayType]:
-        raise NotImplementedError("Graph space is not flattenable.")
-
     def to_device(self, device : BDeviceType) -> "Graph[BDeviceType, BDtypeType, BRNGType]":
         return Graph(
             backend=self.backend,

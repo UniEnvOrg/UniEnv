@@ -15,6 +15,7 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
         device : Optional[BDeviceType] = None,
     ):
         assert dtype is None or backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
+        assert len(shape) > 0, "Shape must be a non-empty sequence"
         super().__init__(
             backend=backend,
             shape=tuple(shape),
@@ -43,20 +44,37 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
         )
 
     @property
-    def is_flattenable(self):
+    def is_flattenable(self) -> bool:
         """Checks whether this space can be flattened to a :class:`spaces.Box`."""
         return True
     
+    @property
+    def is_batch_flattenable(self) -> bool:
+        """Checks whether this space can be flattened to a :class:`spaces.Box`."""
+        return len(self.shape) > 1
+
     @property
     def flat_dim(self) -> int:
         """Return the shape of the space as an immutable property."""
         return int(np.prod(self.shape))
     
+    @property
+    def batch_flat_dim(self) -> int:
+        """Return the shape of the space as an immutable property."""
+        assert len(self.shape) > 1, "Batch flat dim is only available for batch-flattenable spaces"
+        return int(np.prod(self.shape[1:]))
+
     def flatten(self, data : BArrayType) -> BArrayType:
         return self.backend.array_api_namespace.reshape(data, (-1,))
     
+    def flatten_batch(self, data : BArrayType) -> BArrayType:
+        return self.backend.array_api_namespace.reshape(data, (data.shape[0], -1))
+
     def unflatten(self, data : BArrayType) -> BArrayType:
         return self.backend.array_api_namespace.reshape(data, self.shape)
+
+    def unflatten_batch(self, data : BArrayType) -> BArrayType:
+        return self.backend.array_api_namespace.reshape(data, (data.shape[0],) + self.shape[1:])
 
     def sample(self, rng : BRNGType) -> Tuple[
         BRNGType, BArrayType

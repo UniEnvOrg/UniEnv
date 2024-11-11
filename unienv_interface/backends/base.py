@@ -14,6 +14,7 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     array_api_namespace : Any
     default_integer_dtype : BDtypeType
     default_floating_dtype : BDtypeType
+    default_boolean_dtype : BDtypeType
 
     @classmethod
     @abc.abstractmethod
@@ -133,4 +134,14 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     @classmethod
     @abc.abstractmethod
     def list_real_floating_dtypes(cls) -> Sequence[BDtypeType]:
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def dtype_is_boolean(cls, dtype : BDtypeType) -> bool:
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def list_boolean_dtypes(cls) -> Sequence[BDtypeType]:
         raise NotImplementedError

@@ -69,17 +69,35 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
         return True
 
     @property
+    def is_batch_flattenable(self):
+        """Checks whether this space can be flattened to a :class:`spaces.Box`."""
+        return len(self.shape) > 1
+
+    @property
     def flat_dim(self) -> int:
         """Return the shape of the space as an immutable property."""
         return int(np.prod(self.nvec))
     
+    @property
+    def batch_flat_dim(self) -> int:
+        """Return the shape of the space as an immutable property."""
+        assert len(self.shape) > 1, "Batch flat dim is only available for batch-flattenable spaces"
+        return int(np.prod(self.nvec[1:]))
+
     def flatten(self, data : BArrayType) -> BArrayType:
         """Flatten the data."""
         return self.backend.array_api_namespace.reshape(data, (-1,))
     
+    def flatten_batch(self, data : BArrayType) -> BArrayType:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.reshape(data, (data.shape[0], -1))
+
     def unflatten(self, data : BArrayType) -> BArrayType:
         """Unflatten the data."""
         return self.backend.array_api_namespace.reshape(data, self.shape)
+
+    def unflatten_batch(self, data : BArrayType) -> BArrayType:
+        return self.backend.array_api_namespace.reshape(data, (data.shape[0],) + self.shape[1:])
 
     def sample(
         self,

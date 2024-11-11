@@ -3,21 +3,21 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from ..space import Space
 from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
+from ..env_base.funcenv import FuncEnv, StateType
 from .world import FuncWorld
 
 SensorDataT = TypeVar("SensorDataT", covariant=True)
 class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
     observation_space : Space[SensorDataT, Any, BDeviceType, BDtypeType, BRNGType]
     control_timestep : float
-
-    @property
-    def device(self) -> Optional[BDeviceType]:
-        return self.observation_space.device
     
     @property
     def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.observation_space.backend
+
+    @property
+    def device(self) -> Optional[BDeviceType]:
+        return self.observation_space.device
 
     @abstractmethod
     def update(self, last_step_elapsed : float) -> None:
@@ -85,12 +85,10 @@ class FuncSensor(
         self,
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType, 
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType], 
-        *, 
-        seed : int
+        rng : BRNGType, 
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         SensorStateT
     ]:
         raise NotImplementedError
@@ -100,11 +98,11 @@ class FuncSensor(
         self,
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
         sensor_state : SensorStateT
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         SensorStateT
     ]:
         raise NotImplementedError
@@ -113,12 +111,12 @@ class FuncSensor(
     def step(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
         sensor_state : SensorStateT,
         last_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         SensorStateT
     ]:
         raise NotImplementedError
@@ -127,12 +125,12 @@ class FuncSensor(
     def get_data(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
         sensor_state : SensorStateT,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         SensorStateT,
         SensorDataT
     ]:
@@ -142,13 +140,13 @@ class FuncSensor(
     def close(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
         sensor_state : SensorStateT
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType]
+        BRNGType
     ]:
-        return state, common_state
+        return state, rng
     
     # ========== Wrapper methods ==========
     @property
@@ -293,21 +291,19 @@ class FuncSensorWrapper(
         self,
         world : FuncWorld[StateType, WrapperDeviceT, WrapperDtypeT, WrapperRNGT],
         state : StateType, 
-        common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT], 
+        rng : WrapperRNGT, 
         *args, 
-        seed : int,
         **kwargs
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        WrapperRNGT,
         WrapperStateT
     ]:
         return self.sensor.initial(
             world,
             state,
-            common_state,
+            rng,
             *args,
-            seed=seed,
             **kwargs
         )
 
@@ -315,34 +311,34 @@ class FuncSensorWrapper(
         self,
         world : FuncWorld[StateType, WrapperDeviceT, WrapperDtypeT, WrapperRNGT],
         state : StateType,
-        common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        rng : WrapperRNGT,
         sensor_state : WrapperStateT
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        WrapperRNGT,
         WrapperStateT
     ]:
         return self.sensor.reset(
             world,
             state,
-            common_state,
+            rng,
             sensor_state
         )
     
     def step(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        rng : WrapperRNGT,
         sensor_state : WrapperStateT,
         last_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        WrapperRNGT,
         WrapperStateT
     ]:
         return self.sensor.step(
             state,
-            common_state,
+            rng,
             sensor_state,
             last_step_elapsed
         )
@@ -350,18 +346,18 @@ class FuncSensorWrapper(
     def get_data(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        rng : WrapperRNGT,
         sensor_state : WrapperStateT,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        WrapperRNGT,
         WrapperStateT,
         WrapperDataT
     ]:
         return self.sensor.get_data(
             state,
-            common_state,
+            rng,
             sensor_state,
             last_control_step_elapsed
         )
@@ -369,15 +365,15 @@ class FuncSensorWrapper(
     def close(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[WrapperDeviceT, WrapperRNGT],
+        rng : WrapperRNGT,
         sensor_state : WrapperStateT
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[WrapperDeviceT, WrapperRNGT]
+        WrapperRNGT
     ]:
         return self.sensor.close(
             state,
-            common_state,
+            rng,
             sensor_state
         )
 

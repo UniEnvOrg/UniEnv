@@ -1,7 +1,7 @@
 from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal
 from unienv_interface.env_base.wrapper import ActionWrapper
-from unienv_interface.backends.base import ComputeBackend, BDtypeType, BRNGType, BDeviceType
-from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame
+from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.space import batch_utils, Box
 from unienv_interface.utils import seed_util
 import os
@@ -14,12 +14,12 @@ This wrapper will rescale the action space to a new range.
 class ActionRescaleWrapper(
     ActionWrapper[
         ActType,
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
     def __init__(
         self,
-        env : Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType],
+        env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
         new_low : Union[Any, float] = -1.0,
         new_high : Union[Any, float] = 1.0,
     ):

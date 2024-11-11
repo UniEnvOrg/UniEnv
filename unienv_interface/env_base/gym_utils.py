@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from .env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Space, Dict as DictSpace
@@ -11,12 +11,13 @@ from unienv_interface.utils import seed_util
 
 class ToGymnasiumEnv(
     gym.Env[Any, Any],
-    Generic[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+    Generic[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
 ):
     def __init__(
         self,
-        env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]
+        env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
     ):
+        assert env.batch_size is None, "Parallel Environments is not supported by this wrapper."
         self.env = env
 
         self._metadata : Optional[Dict[str, Any]] = None
@@ -26,12 +27,13 @@ class ToGymnasiumEnv(
         )
         self.observation_space = gym_utils.to_gym_space(self._unienv_combined_space)
         self._episode_context : Optional[ContextType] = None
+        self._np_rng : Optional[np.random.Generator] = None
 
     @staticmethod
     def combine_context_obs_space(
-        context_space: Space[ContextType, Any, BDeviceT, Any, BRngT],
-        observation_space: Space[ObsType, Any, BDeviceT, Any, BRngT]
-    ) -> Space[Union[ContextType, ObsType], Any, BDeviceT, Any, BRngT]:
+        context_space: Space[ContextType, Any, BDeviceType, BDeviceType, BRNGType],
+        observation_space: Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]
+    ) -> Space[Union[ContextType, ObsType], Any, BDeviceType, BDtypeType, BRNGType]:
         if isinstance(context_space, DictSpace) and isinstance(observation_space, DictSpace):
             spaces = context_space.spaces.copy()
             spaces.update(observation_space.spaces)
@@ -99,9 +101,16 @@ class ToGymnasiumEnv(
     def render_mode(self, value: Optional[str]):
         self.env.render_mode = value
     
+    def _init_np_rng(self):
+        if self._np_rng is None:
+            self._np_rng = np.random.default_rng(
+                seed_util.next_seed_rng(self.env.rng, self.env.backend)
+            )
+
     @property
     def np_random(self) -> np.random.Generator:
-        return self.env.np_rng
+        self._init_np_rng()
+        return self._np_rng
 
     def step(self, action: ActType) -> Tuple[
         ObsType, 
@@ -126,13 +135,18 @@ class ToGymnasiumEnv(
     def reset(
         self,
         *args,
+        mask : Optional[BArrayType] = None,
         seed : Optional[int] = None,
         options : Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Tuple[ObsType, Dict[str, Any]]:
+        assert mask is None, "Batched environment param `mask` is not supported by this wrapper."
         kwargs = kwargs.update(options) if options is not None else kwargs
         context, obs, info = self.env.reset(
-            *args, seed=seed, **kwargs
+            *args, 
+            mask=None, 
+            seed=seed, 
+            **kwargs
         )
         self._episode_context = context
         c_obs = gym_utils.to_gym_data(
@@ -151,7 +165,7 @@ class ToGymnasiumEnv(
         return f'{type(self).__name__}<{self.env}>'
 
 class FromGymnasiumEnv(
-    Env[None, ObsType, ActType, SupportsFloat, bool, RenderFrame, Any, np.random.Generator],
+    Env[np.ndarray, None, ObsType, ActType, RenderFrame, Any, np.dtype, np.random.Generator],
     Generic[ObsType, ActType, RenderFrame]
 ):
     def __init__(
@@ -159,17 +173,19 @@ class FromGymnasiumEnv(
         env: gym.Env[Any, Any]
     ):
         self.env = env
-        self.backend = NumpyComputeBackend
-        self.device = None
 
         self._metadata : Optional[Dict[str, Any]] = None
         self._render_fps : Optional[int] = None
+
+        self.backend = NumpyComputeBackend
+        self.device = None
+
+        self.batch_size = None
 
         self.action_space = gym_utils.from_gym_space(env.action_space)
         self.observation_space = gym_utils.from_gym_space(env.observation_space)
         self.context_space = None
 
-        self._np_rng = env.np_random
         self._rng = env.np_random
     
     @property
@@ -201,10 +217,6 @@ class FromGymnasiumEnv(
     @render_fps.setter
     def render_fps(self, value: Optional[int]):
         self._render_fps = value
-
-    @property
-    def np_rng(self) -> np.random.Generator:
-        return self._np_rng
     
     @property
     def rng(self) -> np.random.Generator:
@@ -212,12 +224,18 @@ class FromGymnasiumEnv(
 
     def step(
         self, action: ActType
-    ) -> Tuple[ObsType, SupportsFloat, bool, bool, Dict[str, Any]]:
+    ) -> Tuple[
+        ObsType, 
+        SupportsFloat, 
+        bool, 
+        bool, 
+        Dict[str, Any]
+    ]:
         c_action = gym_utils.to_gym_data(
-            self.env.action_space, action
+            self.action_space, action
         )
         obs, rew, terminated, truncated, info = self.env.step(c_action)
-        c_obs = gym_utils.from_gym_data(self.env.observation_space, obs)
+        c_obs = gym_utils.from_gym_data(self.observation_space, obs)
         c_rew = rew
         c_terminated = terminated
         c_truncated = truncated
@@ -226,11 +244,17 @@ class FromGymnasiumEnv(
     def reset(
         self,
         *args,
+        mask : Optional[np.ndarray] = None,
         seed: Optional[int] = None,
         **kwargs,
     ) -> Tuple[None, ObsType, Dict[str, Any]]:
-        obs, info = self.env.reset(*args, seed=seed, **kwargs)
-        c_obs = gym_utils.from_gym_data(self.env.observation_space, obs)
+        assert mask is None, "Batched environment param `mask` is not supported by this wrapper."
+        obs, info = self.env.reset(
+            *args, 
+            seed=seed, 
+            **kwargs
+        )
+        c_obs = gym_utils.from_gym_data(self.observation_space, obs)
         return None, c_obs, info
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
@@ -241,6 +265,10 @@ class FromGymnasiumEnv(
     
     def __str__(self):
         return f'{type(self).__name__}<{self.env}>'
+
+    # =========== Wrapper Methods ===========
+
+    # We'll not change unwrapped property as the inside env is not a standard UniEnv Environment
 
     def has_wrapper_attr(self, name: str) -> bool:
         return hasattr(self, name) or (

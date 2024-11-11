@@ -1,7 +1,7 @@
-from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal
+from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal, SupportsFloat
 from unienv_interface.env_base.wrapper import Wrapper
-from unienv_interface.backends.base import ComputeBackend, BDtypeType, BRNGType, BDeviceType
-from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame
+from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 import os
 import numpy as np
 
@@ -10,17 +10,28 @@ This wrapper will accumulate the render frames of each step in the episode, and 
 """
 class EpisodeRenderStackWrapper(
     Wrapper[
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType,
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
     def __init__(
         self,
-        env : Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType]
+        env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+        *,
+        rendered_env_index : Optional[int] = None
     ):
+        """
+        Initialize the wrapper.
+        For a batched environment, you can specify the `rendered_env_index`, which is used to check if the episode for the rendering environment has ended.
+        """
         super().__init__(env)
-        self._step_frame = None
+        self.rendered_env_index = rendered_env_index
+
+        self._step_frame = None # Cache the frame of the current step
         self.episodic_frames = []
+        self._has_post_episode = False
+
+        # step info accumulator
         self.video_episode_num = 0
         self.video_step_num = 0
         self.video_episode_start_step = 0
@@ -29,21 +40,43 @@ class EpisodeRenderStackWrapper(
         self, action: ActType
     ) -> Tuple[
         ObsType, 
-        RewardType, 
-        TerminationType, 
-        TerminationType, 
+        Union[SupportsFloat, BArrayType], 
+        Union[bool, BArrayType], 
+        Union[bool, BArrayType],
         Dict[str, Any]
     ]:
         self._step_frame = None
         self.video_step_num += 1
         obs, rew, termination, truncation, info = self.env.step(action)
         self._post_step_render()
-        if self.env.backend.array_api_namespace.any(self.env.backend.array_api_namespace.logical_or(
-            termination, truncation
-        )):
+        
+        if not self._has_post_episode and self._is_render_termination(termination, truncation):
             self._post_episode()
+            self._has_post_episode = True
+        
         return obs, rew, termination, truncation, info
     
+    def _is_render_termination(
+        self,
+        termination: Union[bool, BArrayType],
+        truncation: Union[bool, BArrayType]
+    ) -> bool:
+        if self.env.batch_size is None:
+            return termination or truncation
+        else:
+            if self.rendered_env_index is None:
+                return self.env.backend.array_api_namespace.any(
+                    self.env.backend.array_api_namespace.logical_or(
+                        termination, truncation
+                    )
+                )
+            else:
+                return self.env.backend.array_api_namespace.any(
+                    self.env.backend.array_api_namespace.logical_or(
+                        termination[self.rendered_env_index], truncation[self.rendered_env_index]
+                    )
+                )
+
     def _post_step_render(self) -> None:
         self._step_frame = self.env.render()
         self.episodic_frames.append(self._step_frame)
@@ -54,16 +87,32 @@ class EpisodeRenderStackWrapper(
     def reset(
         self,
         *args,
+        mask : Optional[BArrayType] = None,
         seed : Optional[int] = None,
         **kwargs
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
-        if self.episodic_frames is not None:
-            self._post_episode()
-        if len(self.episodic_frames) > 1:
-            self.video_episode_num += 1
-        self.episodic_frames = []
-        self.video_episode_start_step = self.video_step_num
-        self._step_frame = None
+        render_terminated = False
+        if self.env.batch_size is None:
+            render_terminated = True
+        else:
+            if mask is None:
+                render_terminated = True
+            else:
+                if self.rendered_env_index is None:
+                    render_terminated = self.env.backend.array_api_namespace.any(mask)
+                else:
+                    render_terminated = bool(mask[self.rendered_env_index])
+
+        if render_terminated:
+            if len(self.episodic_frames) > 1:
+                if not self._has_post_episode:
+                    self._post_episode()
+                self.video_episode_num += 1
+            
+            self.episodic_frames = []
+            self._has_post_episode = False
+            self.video_episode_start_step = self.video_step_num
+        
         ret = self.env.reset(*args, seed=seed, **kwargs)
         self._post_step_render()
         return ret
@@ -81,21 +130,23 @@ class EpisodeRenderStackWrapper(
 
 class EpisodeVideoWrapper(
     EpisodeRenderStackWrapper[
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
     def __init__(
         self, 
-        env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType],
+        env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+        *,
         store_dir: os.PathLike | str,
-        store_format : Literal['mp4', 'gif', 'webm'] = 'webm'
+        format : Literal['mp4', 'gif', 'webm'] = 'webm',
+        rendered_env_index : Optional[int] = None
     ):
-        super().__init__(env)
+        super().__init__(env, rendered_env_index=rendered_env_index)
         store_dir = os.path.abspath(store_dir)
         if not os.path.exists(store_dir):
             os.makedirs(store_dir)
         self.store_dir = store_dir
-        self.store_format = store_format
+        self.store_format = format
 
     def _post_episode(self) -> None:
         if len(self.episodic_frames) <= 1:
@@ -124,17 +175,19 @@ class EpisodeVideoWrapper(
     
 class EpisodeWandbVideoWrapper(
     EpisodeRenderStackWrapper[
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
     def __init__(
         self, 
-        env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceType, BRNGType],
+        env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+        *,
         wandb_log_key: str,
-        store_format : Literal['mp4', 'gif', 'webm'] = 'webm',
-        control_wandb_step: bool = False # Whether to auto-increment the wandb log step
+        format : Literal['mp4', 'gif', 'webm'] = 'webm',
+        control_wandb_step: bool = False, # Whether to auto-increment the wandb log step
+        rendered_env_index : Optional[int] = None
     ):
-        super().__init__(env)
+        super().__init__(env, rendered_env_index=rendered_env_index)
         try:
             import wandb
         except ImportError as e:
@@ -145,7 +198,7 @@ class EpisodeWandbVideoWrapper(
         self.wandb = wandb
         self.wandb_log_key = wandb_log_key
         self.control_wandb_step = control_wandb_step
-        self.store_format = store_format
+        self.store_format = format
 
     def _post_episode(self) -> None:
         if len(self.episodic_frames) <= 1:
