@@ -81,6 +81,7 @@ def fr3_eef_actor(fr3_world : MujocoFuncWorld, fr3_actor : MujocoDefaultFuncActo
         ik_mj_model=fr3_world._mjmodel,
         new_action_space=None
     )
+    assert EndEffectorActorMixin.is_func_actor_attachment_supported(actor)
     actor.mixins = actor.mixins + [EndEffectorActorMixin]
     return actor
 
@@ -112,8 +113,8 @@ def eef_reward_and_termination_fn(
             return 0.0, False, False
     return eef_reward_and_termination
 
-def get_fr3_eef_task():
-    target_eef = EEF_SE3_WORKSPACE.sample(np.random.default_rng())[1]
+def get_fr3_eef_task(rng : np.random.Generator):
+    target_eef = EEF_SE3_WORKSPACE.sample(rng)[1]
     assert target_eef.shape == (6,)
     assert EEF_SE3_WORKSPACE.contains(target_eef)
     print(f"Target EEF: {target_eef}")
@@ -131,12 +132,14 @@ def get_fr3_eef_task():
         }
     }
 
+@pytest.mark.parametrize("seed", [0, 1024, 2048, 4096])
 def test_fr3_eef(
     fr3_world : MujocoFuncWorld,
-    fr3_eef_actor : MujocoIKWrapper
+    fr3_eef_actor : MujocoIKWrapper,
+    seed : int
 ):
-    task, target_transform, target_action = get_fr3_eef_task()
-
+    rng = np.random.default_rng(seed)
+    task, target_transform, target_action = get_fr3_eef_task(rng)
     funcenv = WorldBasedFuncEnv(
         world=fr3_world,
         actor=fr3_eef_actor,
@@ -144,10 +147,12 @@ def test_fr3_eef(
         render_sensor=None,
         info_callback=None
     )
+    assert funcenv._n_world_step == 1
     env = FuncEnvBasedEnv(
         funcenv,
-        rng=np.random.default_rng()
+        rng=rng
     )
+
     env.reset()
     ik_util.move_mocap_to_transformation(
         env.state.world_state.mj_model,

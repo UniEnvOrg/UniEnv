@@ -77,3 +77,33 @@ class MujocoFuncJointVelSensor(
             qvel[i] = state.data.joint(joint_name).qvel[0]
         return qvel
     
+class MujocoFuncJointAccSensor(
+    FuncLambdaSensor[MujocoFuncWorldState, np.ndarray, Any, np.dtype, np.random.Generator]
+):
+    def __init__(
+        self,
+        control_timestep : float,
+        joint_names : Sequence[str],
+    ):
+        assert len(joint_names) > 0
+        self.joint_names = joint_names
+
+        observation_space = Box(
+            backend=NumpyComputeBackend,
+            low=-np.inf,
+            high=np.inf,
+            dtype=np.float32,
+            device=None,
+            shape=(len(joint_names),)
+        )
+        super().__init__(
+            observation_space=observation_space,
+            control_timestep=control_timestep,
+            data_fn=self.read_joint_accelerations
+        )
+    
+    def read_joint_accelerations(self, state : MujocoFuncWorldState) -> np.ndarray:
+        qacc = np.zeros(len(self.joint_names), dtype=np.float32)
+        for i, joint_name in enumerate(self.joint_names):
+            qacc[i] = state.data.joint(joint_name).qacc[0]
+        return qacc

@@ -1,8 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, Literal
 from abc import ABC, abstractmethod
 
-import mujoco.viewer
-
 from unienv_interface.world.sensor import FuncSensor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Space, Box
@@ -92,14 +90,3 @@ class MujocoFuncGenericSensor(
     ]:
         sensor_data = state.data.sensor(self.sensor_name).data.astype(np.float32).copy()
         return state, rng, None, sensor_data
-
-    def close(
-        self, 
-        state: MujocoFuncWorldState, 
-        rng: np.random.Generator, 
-        sensor_state: None
-    ) -> Tuple[
-        MujocoFuncWorldState,
-        np.random.Generator
-    ]:
-        return state, rng

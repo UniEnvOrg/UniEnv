@@ -148,7 +148,7 @@ class MujocoIKWrapper(Generic[
             last_step_elapsed
         )
         actor_state.ik_state = ik_state
-        if actor_state.inner_actor_remaining_elapsed > 0:
+        if actor_state.inner_actor_remaining_elapsed <= 0:
             state, rng, inner_actor_state = self.actor.set_next_action(
                 state,
                 rng,

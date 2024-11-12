@@ -17,8 +17,15 @@ class MJXFuncWorldState(struct.PyTreeNode):
     mjx_data : mjx.Data
     home_qpos : JaxComputeBackend.ARRAY_TYPE
     home_ctrl : JaxComputeBackend.ARRAY_TYPE
+    
+    # Stored here as a reference for recompilation
     mjcf_model : mjcf.RootElement = struct.field(pytree_node=False)
     mj_model : mujoco.MjModel = struct.field(pytree_node=False)
+    
+    """ 
+    This is used if something isn't supported by MJX yet (like camera rendering)
+    Everything that uses this should first check if `mj_data_updated` is True, and use `mjx.get_data_into` if it is not updated yet.
+    """
     mj_data : Union[mujoco.MjData, List[mujoco.MjData]] = struct.field(pytree_node=False)
     mj_data_updated : bool = struct.field(pytree_node=False, default=False)
 
@@ -146,7 +153,7 @@ class MJXFuncWorld(
             pass
         
         mujoco.mj_forward(mj_model, mj_data)
-        
+
         # Cache the home qpos and ctrl for reset
         home_qpos = jnp.asarray(mj_data.qpos, device=self.device)
         home_ctrl = jnp.asarray(mj_data.ctrl, device=self.device)

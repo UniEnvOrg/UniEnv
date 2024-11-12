@@ -7,7 +7,7 @@ import mujoco
 import os.path
 from dm_control import mjcf
 from .. import mjcf_util
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 import numpy as np
 
 @dataclass(frozen=True)
@@ -15,11 +15,17 @@ class MujocoFuncWorldState:
     mjcf_model : mjcf.RootElement
     mj_model : mujoco.MjModel
     data : mujoco.MjData
+    home_qpos : np.ndarray
+    home_ctrl : np.ndarray
+
+    def replace(self, **kwargs) -> 'MujocoFuncWorldState':
+        return dataclass_replace(self, **kwargs)
 
 class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE_TYPE, NumpyComputeBackend.DTYPE_TYPE, NumpyComputeBackend.RNG_TYPE]):
-    is_real = False
     backend = NumpyComputeBackend
     device = None
+
+    is_real = False
 
     def __init__(
         self,
@@ -50,12 +56,13 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE
             value = self._world_timestep
         self.set_timestep(max(self.world_timestep, value), value)
 
-    def recompile_mjcf(self) -> None:
-        self._mjmodel = mjcf_util.compile_mjcf(self._mjcf_model)
-        self._mjmodel.opt.timestep = self._world_subtimestep
-
-    def recompile_mjcf_state(self, state : MujocoFuncWorldState) -> MujocoFuncWorldState:
-        mj_model = mjcf_util.compile_mjcf(state.mjcf_model)
+    def recompile_mjcf_state(self, mjcf_root : mjcf.RootElement) -> MujocoFuncWorldState:
+        """
+        This is used to re-compile the world state if the mjcf model is changed (by the Task / Sensor / Actor)
+        When making changes to the mjcf model, it is recommended to first call `copy.deepcopy` on the mjcf contained in the world state
+            to avoid contaminating the original mjcf model in the World object
+        """
+        mj_model = mjcf_util.compile_mjcf(mjcf_root)
         mj_model.opt.timestep = self._world_subtimestep
         mj_data = mujoco.MjData(mj_model)
         
@@ -66,12 +73,17 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE
         except:
             pass
 
+        home_qpos = mj_data.qpos.copy()
+        home_ctrl = mj_data.ctrl.copy()
+
         mujoco.mj_forward(mj_model, mj_data)
 
         return MujocoFuncWorldState(
-            mjcf_model=state.mjcf_model,
+            mjcf_model=mjcf_root,
             mj_model=mj_model,
             data=mj_data,
+            home_qpos=home_qpos,
+            home_ctrl=home_ctrl
         )
 
     def set_timestep(self, world_timestep : float, world_subtimestep : Optional[float] = None) -> None:
@@ -106,15 +118,20 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE
             mj_data.ctrl[:] = home_keypose.ctrl.copy()
         except:
             pass
+        
+        home_qpos = mj_data.qpos.copy()
+        home_ctrl = mj_data.ctrl.copy()
 
         mujoco.mj_forward(self._mjmodel, mj_data)
 
-        world_state = MujocoFuncWorldState(
+        state = MujocoFuncWorldState(
             mjcf_model=self._mjcf_model,
             mj_model=self._mjmodel,
-            data=mj_data
+            data=mj_data,
+            home_qpos=home_qpos,
+            home_ctrl=home_ctrl
         )
-        return world_state, rng
+        return state, rng
     
     def reset(
         self,
@@ -124,9 +141,12 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE
         MujocoFuncWorldState,
         np.random.Generator
     ]:
-        return self.initial(
-            rng=rng
-        )
+        mj_data = state.data
+        mj_data.qpos[:] = state.home_qpos.copy()
+        mj_data.qvel[:] = 0
+        mj_data.ctrl[:] = state.home_ctrl.copy()
+        mujoco.mj_forward(state.mj_model, mj_data)
+        return state, rng
     
     def step(
         self,
@@ -137,17 +157,8 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE
         MujocoFuncWorldState,
         np.random.Generator
     ]:
-        mj_data = state.data
-        mujoco.mj_step(state.mj_model, mj_data, nstep=self._nstep)
-        return (
-            state.mj_model.opt.timestep,
-            MujocoFuncWorldState(
-                mjcf_model=state.mjcf_model,
-                mj_model=state.mj_model,
-                data=mj_data
-            ),
-            rng
-        )
+        mujoco.mj_step(state.mj_model, state.data, nstep=self._nstep)
+        return self._world_timestep, state, rng
     
     def close(
         self,

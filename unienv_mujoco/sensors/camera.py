@@ -27,7 +27,6 @@ class MujocoFuncCameraSensorState:
 Camera sensor for Mujoco environment.
 Some useful information for segmentation:
 mujoco.mju_type2Str and mujoco.mju_str2Type can be used to convert between object type id and name
-
 """
 class MujocoFuncCameraSensor(
     FuncCameraSensor[MujocoFuncWorldState, MujocoFuncCameraSensorState, np.ndarray, Any, np.dtype, np.random.Generator],
