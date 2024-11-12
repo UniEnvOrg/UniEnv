@@ -146,7 +146,7 @@ class Wrapper(
         return self.env.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
+    def prev_wrapper_layer(self) -> Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]:
         return self.env
 
     def has_wrapper_attr(self, name: str) -> bool:

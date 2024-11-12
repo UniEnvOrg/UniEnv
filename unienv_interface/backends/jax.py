@@ -17,6 +17,11 @@ JaxDevice = Union[jax.Device, jax.sharding.Sharding]
 JaxRNG = jax.Array
 
 class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
+    ARRAY_TYPE = jax.Array
+    DEVICE_TYPE = JaxDevice
+    DTYPE_TYPE = np.dtype
+    RNG_TYPE = JaxRNG
+
     array_api_namespace = jax_array_api
     default_integer_dtype = int
     default_floating_dtype = float

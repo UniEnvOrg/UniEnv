@@ -1,18 +1,19 @@
-from typing import Optional, Any, Dict, Callable, Tuple
+from typing import Optional, Any, Dict, Callable, Tuple, Union, SupportsFloat
 from unienv_interface.space import Space, Dict as DictSpace
-from ..task import StateType, Task, TaskStateT, FuncTask, RewardType, TerminationType, FuncEnvCommonState
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from ..task import StateType, Task, TaskStateT, FuncTask
 from ..world import FuncWorld
 from ..actor import FuncActor, FuncActorCombinedState
 
-class LambdaTask(Task[RewardType, TerminationType]):
+class LambdaTask(Task[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        reward_fn : Callable[[], RewardType],
-        termination_fn : Callable[[], TerminationType],
-        truncation_fn : Callable[[], TerminationType],
-        observation_space : Optional[DictSpace[Any, Any, Any]] = None,
+        reward_fn : Callable[[], Union[SupportsFloat, BArrayType]],
+        termination_fn : Callable[[], Union[bool, BArrayType]],
+        truncation_fn : Callable[[], Union[bool, BArrayType]],
+        observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None,
         observation_fn : Optional[Callable[[], Dict[str, Any]]] = None,
-        context_space : Optional[DictSpace[Any, Any, Any]] = None,
+        context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None,
         context_fn : Optional[Callable[[], Dict[str, Any]]] = None,
     ):
         assert observation_space is None or not observation_fn is None, "observation_fn must be provided if observation_space is provided"
@@ -36,25 +37,25 @@ class LambdaTask(Task[RewardType, TerminationType]):
             return None
         return self.context_fn()
 
-    def get_reward(self) -> RewardType:
+    def get_reward(self) -> Union[SupportsFloat, BArrayType]:
         return self.reward_fn()
 
-    def get_termination(self) -> TerminationType:
+    def get_termination(self) -> Union[bool, BArrayType]:
         return self.termination_fn()
     
-    def get_truncation(self) -> TerminationType:
+    def get_truncation(self) -> Union[bool, BArrayType]:
         return self.truncation_fn()
     
 class LambdaFuncTask(
-    FuncTask[StateType, Any, None, RewardType, TerminationType],
+    FuncTask[StateType, Any, None, BArrayType, BDeviceType, BDtypeType, BRNGType],
 ):
     def __init__(
         self,
-        control_step_fn : Callable[[StateType, FuncEnvCommonState, Any, Any, float], Tuple[RewardType, TerminationType, TerminationType]],
-        observation_space : Optional[DictSpace[Any, Any, Any]] = None,
-        observation_fn : Optional[Callable[[StateType, FuncEnvCommonState, Any], Dict[str, Any]]] = None,
-        context_space : Optional[DictSpace[Any, Any, Any]] = None,
-        context_fn : Optional[Callable[[StateType, FuncEnvCommonState, Any], Dict[str, Any]]] = None,
+        control_step_fn : Callable[[StateType, BRNGType, Any, Any, float], Tuple[Union[SupportsFloat, BArrayType], Union[bool, BArrayType], Union[bool, BArrayType]]],
+        observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None,
+        observation_fn : Optional[Callable[[StateType, BRNGType, Any], Dict[str, Any]]] = None,
+        context_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None,
+        context_fn : Optional[Callable[[StateType, BRNGType], Dict[str, Any]]] = None,
     ):
         assert observation_space is None or not observation_fn is None, "observation_fn must be provided if observation_space is provided"
         assert context_space is None or not context_fn is None, "context_fn must be provided if context_space is provided"
@@ -70,35 +71,33 @@ class LambdaFuncTask(
         world : FuncWorld[StateType, Any, Any, Any],
         actor : FuncActor[StateType, Any, Any, Any, Any],
         state : StateType,
-        common_state : FuncEnvCommonState,
+        rng : BRNGType,
         actor_state : FuncActorCombinedState[Any],
-        *, 
-        seed : int,
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState,
+        BRNGType,
         FuncActorCombinedState[Any],
         None,
         Optional[Dict[str, Any]]
     ]:
         if self.context_fn is not None:
-            context = self.context_fn(state, common_state)
+            context = self.context_fn(state, rng)
         else:
             context = None
         
-        return state, common_state, actor_state, None, context
+        return state, rng, actor_state, None, context
     
     def reset(
         self,
         world : FuncWorld[StateType, Any, Any, Any],
         actor : FuncActor[StateType, Any, Any, Any, Any],
         state : StateType,
-        common_state : FuncEnvCommonState,
+        rng : BRNGType,
         actor_state : FuncActorCombinedState[Any],
         task_state : None
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState,
+        BRNGType,
         FuncActorCombinedState[Any],
         None,
         Optional[Dict[str, Any]]
@@ -107,34 +106,33 @@ class LambdaFuncTask(
             world,
             actor,
             state,
-            common_state,
-            actor_state,
-            seed=0
+            rng,
+            actor_state
         )
     
     def control_step(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState,
+        rng : BRNGType,
         actor_state : FuncActorCombinedState[Any],
         observation : Any,
         task_state : None,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState,
+        BRNGType,
         FuncActorCombinedState[Any],
         None,
-        RewardType,
-        TerminationType,
-        TerminationType,
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
     ]:
-        return (state, common_state, actor_state, None, *self.control_step_fn(state, common_state, actor_state, observation, last_control_step_elapsed))
+        return (state, rng, actor_state, None, *self.control_step_fn(state, rng, actor_state, observation, last_control_step_elapsed))
 
     def get_data(
         self, 
         state: StateType, 
-        common_state: FuncEnvCommonState, 
+        rng: BRNGType, 
         actor_state: FuncActorCombinedState[Any],
         observation : Any,
         task_state : None,
@@ -142,5 +140,5 @@ class LambdaFuncTask(
     ) -> Dict[str, Any] | None:
         if self.observation_fn is None:
             return None
-        return self.observation_fn(state, common_state, actor_state)
+        return self.observation_fn(state, rng, actor_state)
     

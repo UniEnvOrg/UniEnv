@@ -3,7 +3,7 @@ from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
 from ..world import FuncWorld
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Box
-from unienv_interface.env_base.funcenv import FuncEnvCommonState, StateType
+from unienv_interface.env_base.funcenv import StateType
 
 
 class LambdaSensor(
@@ -50,52 +50,52 @@ class FuncLambdaSensor(
         self, 
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state: StateType, 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         *, 
         seed: int
     ) -> Tuple[
         StateType, 
-        FuncEnvCommonState[BDeviceType, BRNGType], 
+        BRNGType, 
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
     
     def reset(
         self, 
         world : FuncWorld[StateType, BDeviceType, BDtypeType, BRNGType],
         state: StateType, 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         sensor_state: None
     ) -> Tuple[
         StateType, 
-        FuncEnvCommonState[BDeviceType, BRNGType], 
+        BRNGType, 
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
     
     def step(
         self, 
         state: StateType, 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         sensor_state: None, 
         last_step_elapsed: float
     ) -> Tuple[
         StateType, 
-        FuncEnvCommonState[BDeviceType, BRNGType], 
+        BRNGType, 
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
     
     def get_data(
         self,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         sensor_state: None,
         last_control_step_elapsed: float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         None,
         SensorDataT
     ]:
-        return state, common_state, None, self.data_fn(state)
+        return state, rng, None, self.data_fn(state)

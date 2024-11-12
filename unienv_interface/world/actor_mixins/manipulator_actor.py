@@ -2,9 +2,9 @@ from abc import abstractmethod
 from typing import Tuple, Type, Union, Any, Generic, TypeVar, Optional, Dict
 
 from unienv_interface.space import Dict as DictSpace, Box, Space
-from ..actor import StateType, ActorStateT, FuncEnvCommonState, ActorMixin
+from ..actor import StateType, ActorStateT, ActorMixin
 from unienv_interface.space import batch_utils as space_batch_utils
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BRNGType
+from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import numpy as np
 
 def euler_to_quaternion(backend : ComputeBackend, rotation: BArrayType) -> BArrayType:
@@ -19,12 +19,12 @@ def euler_to_quaternion(backend : ComputeBackend, rotation: BArrayType) -> BArra
     qz = array_workspace.cos(roll/2) * array_workspace.cos(pitch/2) * array_workspace.sin(yaw/2) - array_workspace.sin(roll/2) * array_workspace.sin(pitch/2) * array_workspace.cos(yaw/2)
     qw = array_workspace.cos(roll/2) * array_workspace.cos(pitch/2) * array_workspace.cos(yaw/2) + array_workspace.sin(roll/2) * array_workspace.sin(pitch/2) * array_workspace.sin(yaw/2)
 
-    return array_workspace.stack([qx, qy, qz, qw], axis=-1)
+    return array_workspace.stack([qw, qx, qy, qz], axis=-1)
 
 def normalize_euler(backend : ComputeBackend, euler: BArrayType) -> BArrayType:
     return (euler + 2*np.pi + np.pi) % (2 * np.pi) - np.pi
 
-class EndEffectorActorInterface():
+class EndEffectorActorInterface(Generic[BArrayType]):
     """
     An end effector actor is an actor that can control the end effector of the robot.
     """
@@ -66,7 +66,7 @@ class EndEffectorActorInterface():
         raise NotImplementedError
 
 class EndEffectorFuncActorInterface(
-    Generic[StateType, ActorStateT, BDeviceType, BRNGType]
+    Generic[StateType, ActorStateT, BArrayType, BDeviceType, BRNGType]
 ):
     num_eefs : int
     is_eef_relative : bool # Whether the end-effector SE(3) is relative to a moving part of the robot or fixed in the world frame
@@ -79,7 +79,7 @@ class EndEffectorFuncActorInterface(
     def get_current_eef_position(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT
     ) -> BArrayType:
         """
@@ -92,7 +92,7 @@ class EndEffectorFuncActorInterface(
     def get_current_eef_euler(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT
     ) -> BArrayType:
         """
@@ -105,13 +105,13 @@ class EndEffectorFuncActorInterface(
     def set_target_eef(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         position: BArrayType,
         euler: BArrayType
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT
     ]:
         """
@@ -206,18 +206,18 @@ class EndEffectorActorMixin(ActorMixin[EndEffectorActorInterface, EndEffectorFun
         cls, 
         instance: EndEffectorFuncActorInterface,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT,
         Dict[str, Any]
     ]:
-        return state, common_state, actor_state, {
-            "position": instance.get_current_eef_position(state, common_state, actor_state),
-            "euler": instance.get_current_eef_euler(state, common_state, actor_state)
+        return state, rng, actor_state, {
+            "position": instance.get_current_eef_position(state, rng, actor_state),
+            "euler": instance.get_current_eef_euler(state, rng, actor_state)
         }
     
     @classmethod
@@ -248,19 +248,19 @@ class EndEffectorActorMixin(ActorMixin[EndEffectorActorInterface, EndEffectorFun
         cls,
         instance: EndEffectorFuncActorInterface,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         action: Dict[str, BArrayType],
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT
     ]:
         target_position, target_rotation = cls.clip_target_eef(instance, action['position'], action['euler'])
         return instance.set_target_eef(
             state, 
-            common_state, 
+            rng, 
             actor_state, 
             target_position, 
             target_rotation
@@ -368,32 +368,32 @@ class RelativeEndEffectorActorMixin(EndEffectorActorMixin):
         self,
         instance: EndEffectorFuncActorInterface,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         action: Dict[str, BArrayType],
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT
     ]:
         target_abs_action = self.map_target_abs_eef(
             instance, 
-            instance.get_current_eef_position(state, common_state, actor_state), 
-            instance.get_current_eef_euler(state, common_state, actor_state), 
+            instance.get_current_eef_position(state, rng, actor_state), 
+            instance.get_current_eef_euler(state, rng, actor_state), 
             action
         )
         return EndEffectorActorMixin.apply_mixin_action_func(
             instance,
             state,
-            common_state,
+            rng,
             actor_state,
             target_abs_action,
             last_control_step_elapsed
         )
 
 
-class GripperActorInterface:
+class GripperActorInterface(Generic[BArrayType]):
     """
     An gripper actor is an actor that can control the gripper of the robot.
     """
@@ -422,7 +422,7 @@ class GripperActorInterface:
         raise NotImplementedError
 
 class GripperFuncActorInterface(
-    Generic[StateType, ActorStateT, BDeviceType, BRNGType]
+    Generic[StateType, ActorStateT, BArrayType, BDeviceType, BRNGType]
 ):
     num_grippers : int
     is_gripper_relative : bool # Whether the gripper position is relative to a moving part of the robot or fixed in the world frame
@@ -431,7 +431,7 @@ class GripperFuncActorInterface(
     def get_current_gripper_position(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT
     ) -> BArrayType:
         """
@@ -444,12 +444,12 @@ class GripperFuncActorInterface(
     def set_target_gripper(
         self,
         state : StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         position: BArrayType
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT
     ]:
         """
@@ -509,16 +509,16 @@ class GripperActorMixin(ActorMixin[GripperActorInterface, GripperFuncActorInterf
         cls, 
         instance: GripperFuncActorInterface,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT,
         BArrayType
     ]:
-        return state, common_state, actor_state, instance.get_current_gripper_position(state, common_state, actor_state)
+        return state, rng, actor_state, instance.get_current_gripper_position(state, rng, actor_state)
     
     @classmethod
     def apply_mixin_action(
@@ -533,13 +533,13 @@ class GripperActorMixin(ActorMixin[GripperActorInterface, GripperFuncActorInterf
         cls,
         instance: GripperFuncActorInterface,
         state: StateType,
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType],
+        rng: BRNGType,
         actor_state: ActorStateT,
         action: BArrayType,
         last_control_step_elapsed : float
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         ActorStateT
     ]:
-        return instance.set_target_gripper(state, common_state, actor_state, action)
+        return instance.set_target_gripper(state, rng, actor_state, action)

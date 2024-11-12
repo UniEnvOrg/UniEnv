@@ -5,6 +5,11 @@ import numpy as np
 import dlpack
 
 class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator]):
+    ARRAY_TYPE = np.ndarray
+    DEVICE_TYPE = Any
+    DTYPE_TYPE = np.dtype
+    RNG_TYPE = np.random.Generator
+
     array_api_namespace = array_api_compat.numpy
     default_integer_dtype = int
     default_floating_dtype = float

@@ -340,7 +340,7 @@ class FuncTaskWrapper(
         TaskWrapperStateT, TaskWrapperBArrayT, TaskWrapperBDeviceT, TaskWrapperBDtypeT, TaskWrapperBRNGT,
         StateType, ActorStateT, TaskStateT, BArrayType, BDeviceType, BDtypeType, BRNGType,
     ],
-    FuncTask[StateType, ActorStateT, TaskWrapperStateT, TaskWrapperBDeviceT, TaskWrapperBDtypeT, TaskWrapperBRNGT]
+    FuncTask[StateType, ActorStateT, TaskWrapperStateT, TaskWrapperBArrayT, TaskWrapperBDeviceT, TaskWrapperBDtypeT, TaskWrapperBRNGT]
 ):
     def __init__(
         self,

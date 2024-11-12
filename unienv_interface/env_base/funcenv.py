@@ -37,7 +37,7 @@ class FuncEnv(
     context_space: Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]] = None
 
     @abc.abstractmethod
-    def initial(self, *, rng : BRNGType) -> Tuple[
+    def initial(self, rng : BRNGType) -> Tuple[
         StateType,
         BRNGType,
         ContextType,
@@ -52,7 +52,6 @@ class FuncEnv(
         self, 
         state : StateType, 
         rng : BRNGType,
-        *,
         mask : Optional[BArrayType] = None,
     ) -> Tuple[
         StateType,
@@ -150,7 +149,7 @@ class FuncEnvBasedEnv(Env[
         self.func_env = func_env
 
         self.state, self.rng, _, _, _ = self.func_env.initial(
-            rng=rng, **instance_kwargs
+            rng, **instance_kwargs
         )
 
         self.render_state : Optional[RenderStateType] = None

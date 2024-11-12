@@ -15,6 +15,11 @@ PYTORCH_DTYPE_CAST_MAP = {
 TorchDevice = Union[torch.device, str]
 
 class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtype, torch.Generator]):
+    ARRAY_TYPE = torch.Tensor
+    DEVICE_TYPE = TorchDevice
+    DTYPE_TYPE = torch.dtype
+    RNG_TYPE = torch.Generator
+
     array_api_namespace = array_api_compat.torch
     default_integer_dtype = torch.int
     default_floating_dtype = torch.float

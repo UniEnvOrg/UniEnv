@@ -1,6 +1,6 @@
 from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple
 from ..backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
-from ..env_base.funcenv import FuncEnvCommonState, FuncEnv, StateType
+from ..env_base.funcenv import StateType
 from abc import ABC, abstractmethod
 
 class World(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):
@@ -52,19 +52,19 @@ class FuncWorld(
     ABC,
     Generic[StateType, BDeviceType, BDtypeType, BRNGType]
 ):
+    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
+    device : Optional[BDeviceType]
+
     world_subtimestep : Optional[float]
     world_timestep : Optional[float]
     is_real : bool
-
-    backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]
-    device : Optional[BDeviceType]
     
     @abstractmethod
     def initial(
-        self, *, seed : int
+        self, rng : BRNGType,
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType]
+        BRNGType
     ]:
         raise NotImplementedError
     
@@ -72,10 +72,10 @@ class FuncWorld(
     def reset(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType]
+        rng : BRNGType
     ) -> Tuple[
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType]
+        BRNGType
     ]:
         raise NotImplementedError
     
@@ -83,11 +83,11 @@ class FuncWorld(
     def step(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType]
+        rng : BRNGType
     ) -> Tuple[
         float, # elapsed time
         StateType,
-        FuncEnvCommonState[BDeviceType, BRNGType]
+        BRNGType
     ]:
         raise NotImplementedError
     
@@ -95,7 +95,7 @@ class FuncWorld(
     def close(
         self,
         state : StateType,
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType]
+        rng : BRNGType
     ) -> None:
         raise NotImplementedError
     
@@ -279,41 +279,41 @@ class FuncWorldWrapper(
     def initial(
         self,
         *args,
-        seed : int,
+        rng : WrapperBRNGType,
         **kwargs
     ) -> Tuple[
         WrapperStateType,
-        FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        WrapperBRNGType
     ]:
-        return self.world.initial(*args, seed=seed, **kwargs)
+        return self.world.initial(*args, rng=rng, **kwargs)
     
     def reset(
         self,
         state : WrapperStateType,
-        common_state : FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        rng : WrapperBRNGType
     ) -> Tuple[
         WrapperStateType,
-        FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        WrapperBRNGType
     ]:
-        return self.world.reset(state, common_state)
+        return self.world.reset(state, rng)
     
     def step(
         self,
         state : WrapperStateType,
-        common_state : FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        rng : WrapperBRNGType,
     ) -> Tuple[
         float, # elapsed time
         WrapperStateType,
-        FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        WrapperBRNGType
     ]:
-        return self.world.step(state, common_state)
+        return self.world.step(state, rng)
     
     def close(
         self,
         state : WrapperStateType,
-        common_state : FuncEnvCommonState[WrapperBDeviceType, WrapperBRNGType]
+        rng : WrapperBRNGType
     ) -> None:
-        return self.world.close(state, common_state)
+        return self.world.close(state, rng)
     
     # ========== Wrapper methods ==========
     @property
