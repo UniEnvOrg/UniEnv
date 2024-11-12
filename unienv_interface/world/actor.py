@@ -405,14 +405,6 @@ class FuncActor(
     @property
     def mixins(self) -> List[ActorMixin]:
         return self._mixins
-
-    @property
-    def device(self) -> Optional[BDeviceType]:
-        return self.onboard_observation_space.device
-    
-    @property
-    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
-        return self.onboard_observation_space.backend
     
     @property
     def action_space(self) -> Union[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
@@ -634,7 +626,6 @@ class FuncActor(
             )
         return state, rng, actor_state
     
-    @abstractmethod
     def onboard_close(
         self,
         state : StateType,
@@ -644,7 +635,7 @@ class FuncActor(
         StateType,
         BRNGType
     ]:
-        raise NotImplementedError
+        return state, rng
     
     def initial(
         self,
