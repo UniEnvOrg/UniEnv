@@ -1,20 +1,18 @@
-from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable
+from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, SupportsFloat
 from dataclasses import dataclass, replace as dataclass_replace
-from unienv_interface.backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Dict as DictSpace
-from unienv_interface.env_base.env import Env, RewardType, TerminationType
-from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderState, FuncEnvCommonState
+from unienv_interface.env_base.env import Env
+from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderState
 from .world import World, FuncWorld
 from .sensor import Sensor, FuncSensor
 from .actor import Actor, FuncActor, ActorStateT, FuncActorCombinedState
 from .sensors import CameraSensor, FuncCameraSensor, WindowedViewSensor, FuncWindowedViewSensor
 from .task import Task, FuncTask, TaskStateT
-import copy
 
 WorldStateT = TypeVar("WorldStateT")
 RenderSensorStateT = TypeVar("RenderSensorStateT")
 RenderSensorDataT = TypeVar("RenderSensorDataT")
-
 
 @dataclass(frozen=True)
 class WorldBasedFuncEnvState(
@@ -37,7 +35,7 @@ WorldBasedFuncEnvInfoCallback = Callable[[
     FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
     FuncActor[WorldStateT, ActorStateT, BDeviceType, BDtypeType, BRNGType],
     WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-    FuncEnvCommonState[BDeviceType, BRNGType],
+    BRNGType,
     Dict[str, Any], # Observation
     Optional[Dict[str, Any]], # Optional Context
     Optional[Any], # Optional Action (When stepping)
@@ -50,13 +48,13 @@ class WorldBasedFuncEnv(
     FuncEnv[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
         WorldBasedFuncEnvRenderState[RenderSensorDataT], 
-        Optional[Dict[str, Any]],
-        Dict[str, Any],
-        Any,
-        RewardType,
-        TerminationType,
+        BArrayType,
+        Optional[Dict[str, Any]], # Context
+        Dict[str, Any], # Observation
+        Any, # Action
         RenderSensorDataT,
         BDeviceType,
+        BDtypeType,
         BRNGType
     ],
     Generic[
@@ -65,8 +63,7 @@ class WorldBasedFuncEnv(
         TaskStateT,
         RenderSensorStateT,
         RenderSensorDataT,
-        RewardType,
-        TerminationType,
+        BArrayType,
         BDeviceType,
         BDtypeType,
         BRNGType
@@ -76,7 +73,7 @@ class WorldBasedFuncEnv(
         self,
         world : FuncWorld[WorldStateT, BDeviceType, BDtypeType, BRNGType],
         actor : FuncActor[WorldStateT, ActorStateT, BDeviceType, BDtypeType, BRNGType],
-        task : FuncTask[WorldStateT, ActorStateT, TaskStateT, RewardType, TerminationType],
+        task : FuncTask[WorldStateT, ActorStateT, TaskStateT, BArrayType, BDeviceType, BDtypeType, BRNGType],
         render_sensor : Optional[Union[
             FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType],
             str
@@ -110,7 +107,7 @@ class WorldBasedFuncEnv(
         }
 
     @property
-    def backend(self) -> ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType]:
+    def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.world.backend
 
     @property
@@ -148,7 +145,7 @@ class WorldBasedFuncEnv(
     
     def initial(
         self,
-        seed : int,
+        rng : BRNGType,
         world_kwargs : Dict[str, Any] = {},
         actor_kwargs : Dict[str, Any] = {},
         task_kwargs : Dict[str, Any] = {},
@@ -156,29 +153,29 @@ class WorldBasedFuncEnv(
         device : Optional[BDeviceType] = None
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         Optional[Dict[str, Any]], # Context
         Dict[str, Any], # Observation
         Dict[str, Any] # Info
     ]:
-        world_state, common_state = self.world.initial(
-            seed=seed, **world_kwargs
+        world_state, rng = self.world.initial(
+            rng, **world_kwargs
         )
-        world_state, common_state, actor_combined_state = self.actor.initial(
-            self.world, world_state, common_state, seed=seed, **actor_kwargs
+        world_state, rng, actor_combined_state = self.actor.initial(
+            self.world, world_state, rng, **actor_kwargs
         )
-        world_state, common_state, actor_combined_state, task_state, task_context = self.task.initial(
-            self.world, self.actor, world_state, common_state, actor_combined_state, seed=seed, **task_kwargs
+        world_state, rng, actor_combined_state, task_state, task_context = self.task.initial(
+            self.world, self.actor, world_state, rng, actor_combined_state, **task_kwargs
         )
         if self._need_update_render_sensor:
-            world_state, common_state, render_sensor_state = self.get_render_sensor_instance().initial(
-                self.world, world_state, common_state, seed=seed, **render_sensor_kwargs
+            world_state, rng, render_sensor_state = self.get_render_sensor_instance().initial(
+                self.world, world_state, rng, **render_sensor_kwargs
             )
         else:
             render_sensor_state = None
-        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+        world_state, rng, actor_combined_state, obs = self.actor.get_data(
             world_state,
-            common_state,
+            rng,
             actor_combined_state,
             0.0
         )
@@ -189,7 +186,7 @@ class WorldBasedFuncEnv(
 
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, actor_combined_state, obs, task_state, 0.0
+                world_state, rng, actor_combined_state, obs, task_state, 0.0
             )
             obs.update(task_obs)
         
@@ -206,46 +203,48 @@ class WorldBasedFuncEnv(
                 self.world,
                 self.actor,
                 env_state,
-                common_state,
+                rng,
                 obs,
                 task_context,
                 None # No action
             )
         else:
             info = {}
-        return env_state, common_state, task_context, obs, info
+        return env_state, rng, task_context, obs, info
 
     def reset(
         self,
         state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
+        mask : Optional[BArrayType] = None
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         Optional[Dict[str, Any]], # Context
         Dict[str, Any], # Observation
         Dict[str, Any] # Info
     ]:
+        assert mask is None, "The batched environment is not supported yet."
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
-        world_state, common_state = self.world.reset(
-            world_state, common_state
+        world_state, rng = self.world.reset(
+            world_state, rng
         )
-        world_state, common_state, actor_combined_state = self.actor.reset(
-            self.world, world_state, common_state, actor_combined_state
+        world_state, rng, actor_combined_state = self.actor.reset(
+            self.world, world_state, rng, actor_combined_state
         )
-        world_state, common_state, actor_combined_state, task_state, task_context = self.task.reset(
-            self.world, self.actor, world_state, common_state, actor_combined_state, task_state
+        world_state, rng, actor_combined_state, task_state, task_context = self.task.reset(
+            self.world, self.actor, world_state, rng, actor_combined_state, task_state
         )
         if self._need_update_render_sensor:
-            world_state, common_state, render_sensor_state = self.get_render_sensor_instance().reset(
-                self.world, world_state, common_state, render_sensor_state
+            world_state, rng, render_sensor_state = self.get_render_sensor_instance().reset(
+                self.world, world_state, rng, render_sensor_state
             )
         else:
             render_sensor_state = None
         
-        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+        world_state, rng, actor_combined_state, obs = self.actor.get_data(
             world_state,
-            common_state,
+            rng,
             actor_combined_state,
             0.0
         )
@@ -257,7 +256,7 @@ class WorldBasedFuncEnv(
         
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, actor_combined_state, obs, task_state, 0.0
+                world_state, rng, actor_combined_state, obs, task_state, 0.0
             )
             obs.update(task_obs)
 
@@ -274,67 +273,67 @@ class WorldBasedFuncEnv(
                 self.world,
                 self.actor,
                 env_state,
-                common_state,
+                rng,
                 obs,
                 task_context,
                 None # No action
             )
         else:
             info = {}
-        return env_state, common_state, task_context, obs, info
+        return env_state, rng, task_context, obs, info
 
     def step(
         self,
         state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
         action : Any
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         Dict[str, Any],
-        RewardType,
-        TerminationType,
-        TerminationType,
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
         Dict[str, Any]
     ]:
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
         if self._n_world_step is None:
             total_elapsed = 0.0
             while total_elapsed < self.actor.control_timestep:
-                elapsed_seconds, world_state, common_state = self.world.step(
-                    world_state, common_state
+                elapsed_seconds, world_state, rng = self.world.step(
+                    world_state, rng
                 )
                 total_elapsed += elapsed_seconds
-                world_state, common_state, actor_combined_state = self.actor.step(
-                    world_state, common_state, actor_combined_state, elapsed_seconds
+                world_state, rng, actor_combined_state = self.actor.step(
+                    world_state, rng, actor_combined_state, elapsed_seconds
                 )
-                world_state, common_state, actor_combined_state, task_state = self.task.step(
-                    world_state, common_state, actor_combined_state, task_state, elapsed_seconds
+                world_state, rng, actor_combined_state, task_state = self.task.step(
+                    world_state, rng, actor_combined_state, task_state, elapsed_seconds
                 )
                 if self._need_update_render_sensor:
-                    world_state, common_state, render_sensor_state = self.get_render_sensor_instance().step(
-                        world_state, common_state, render_sensor_state, elapsed_seconds
+                    world_state, rng, render_sensor_state = self.get_render_sensor_instance().step(
+                        world_state, rng, render_sensor_state, elapsed_seconds
                     )
         else:
             total_elapsed = self.actor.control_timestep
             for i in range(self._n_world_step):
-                elapsed_seconds, world_state, common_state = self.world.step(
-                    world_state, common_state
+                elapsed_seconds, world_state, rng = self.world.step(
+                    world_state, rng
                 )
-                world_state, common_state, actor_combined_state = self.actor.step(
-                    world_state, common_state, actor_combined_state, elapsed_seconds
+                world_state, rng, actor_combined_state = self.actor.step(
+                    world_state, rng, actor_combined_state, elapsed_seconds
                 )
-                world_state, common_state, actor_combined_state, task_state = self.task.step(
-                    world_state, common_state, actor_combined_state, task_state, elapsed_seconds
+                world_state, rng, actor_combined_state, task_state = self.task.step(
+                    world_state, rng, actor_combined_state, task_state, elapsed_seconds
                 )
                 if self._need_update_render_sensor:
-                    world_state, common_state, render_sensor_state = self.get_render_sensor_instance().step(
-                        world_state, common_state, render_sensor_state, elapsed_seconds
+                    world_state, rng, render_sensor_state = self.get_render_sensor_instance().step(
+                        world_state, rng, render_sensor_state, elapsed_seconds
                     )
         
-        world_state, common_state, actor_state = self.actor.set_next_action(
+        world_state, rng, actor_state = self.actor.set_next_action(
             world_state,
-            common_state,
+            rng,
             actor_combined_state.actor_state,
             action,
             total_elapsed
@@ -343,9 +342,9 @@ class WorldBasedFuncEnv(
             actor_combined_state,
             actor_state=actor_state
         )
-        world_state, common_state, actor_combined_state, obs = self.actor.get_data(
+        world_state, rng, actor_combined_state, obs = self.actor.get_data(
             world_state,
-            common_state,
+            rng,
             actor_combined_state,
             total_elapsed
         )
@@ -356,12 +355,12 @@ class WorldBasedFuncEnv(
 
         if self.task.observation_space is not None:
             task_obs = self.task.get_data(
-                world_state, common_state, actor_combined_state, obs, task_state, total_elapsed
+                world_state, rng, actor_combined_state, obs, task_state, total_elapsed
             )
             obs.update(task_obs)
         
-        world_state, common_state, actor_combined_state, task_state, reward, task_termination, task_truncation = self.task.control_step(
-            world_state, common_state, actor_combined_state, obs, task_state, total_elapsed
+        world_state, rng, actor_combined_state, task_state, reward, task_termination, task_truncation = self.task.control_step(
+            world_state, rng, actor_combined_state, obs, task_state, total_elapsed
         )
         
         env_state = WorldBasedFuncEnvState(
@@ -377,7 +376,7 @@ class WorldBasedFuncEnv(
                 self.world,
                 self.actor,
                 env_state,
-                common_state,
+                rng,
                 obs,
                 None, # No context
                 action
@@ -385,37 +384,37 @@ class WorldBasedFuncEnv(
         else:
             info = {}
         
-        return env_state, common_state, obs, reward, task_termination, task_truncation, info
+        return env_state, rng, obs, reward, task_termination, task_truncation, info
 
     def close(
         self,
         state : WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        common_state : FuncEnvCommonState[BDeviceType, BRNGType],
+        rng : BRNGType,
     ) -> None:
         world_state, actor_combined_state, task_state, render_sensor_state = state.world_state, state.actor_state, state.task_state, state.render_sensor_state
-        world_state, common_state, actor_combined_state = self.task.close(
-            world_state, common_state, actor_combined_state, task_state
+        world_state, rng, actor_combined_state = self.task.close(
+            world_state, rng, actor_combined_state, task_state
         )
         if self._need_update_render_sensor:
-            world_state, common_state = self.get_render_sensor_instance().close(
-                world_state, common_state, render_sensor_state
+            world_state, rng = self.get_render_sensor_instance().close(
+                world_state, rng, render_sensor_state
             )
-        world_state, common_state = self.actor.close(
-            world_state, common_state, actor_combined_state
+        world_state, rng = self.actor.close(
+            world_state, rng, actor_combined_state
         )
         self.world.close(
-            world_state, common_state
+            world_state, rng
         )
     
     def render_init(
         self, 
         state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         *, 
         render_mode: str | None = None
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        FuncEnvCommonState[BDeviceType, BRNGType],
+        BRNGType,
         WorldBasedFuncEnvRenderState[RenderSensorDataT],
         FuncEnvCommonRenderState
     ]:
@@ -425,8 +424,8 @@ class WorldBasedFuncEnv(
         if self._need_update_render_sensor:
             world_state, render_sensor_state = state.world_state, state.render_sensor_state
             real_render_sensor = self.get_render_sensor_instance()
-            world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
-                world_state, common_state, render_sensor_state, state.render_elapsed
+            world_state, rng, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
+                world_state, rng, render_sensor_state, state.render_elapsed
             )
             return dataclass_replace(
                 state,
@@ -434,7 +433,7 @@ class WorldBasedFuncEnv(
                 render_sensor_state=render_sensor_state,
                 render_sensor_data=None,
                 render_elapsed=0.0
-            ), common_state, WorldBasedFuncEnvRenderState(
+            ), rng, WorldBasedFuncEnvRenderState(
                 render_sensor_data=render_sensor_data
             ), FuncEnvCommonRenderState(
                 render_mode=render_mode,
@@ -444,7 +443,7 @@ class WorldBasedFuncEnv(
             return dataclass_replace(
                 state,
                 render_elapsed=0.0
-            ), common_state, WorldBasedFuncEnvRenderState(
+            ), rng, WorldBasedFuncEnvRenderState(
                 render_sensor_data=None
             ), FuncEnvCommonRenderState(
                 render_mode=render_mode,
@@ -454,13 +453,13 @@ class WorldBasedFuncEnv(
     def render_image(
         self, 
         state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         render_state: WorldBasedFuncEnvRenderState[RenderSensorDataT], 
-        render_common_state: FuncEnvCommonRenderState
+        render_rng: FuncEnvCommonRenderState
     ) -> Tuple[
         RenderSensorDataT | Sequence[RenderSensorDataT] | None,
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
-        FuncEnvCommonState[BDeviceType, BRNGType], 
+        BRNGType, 
         WorldBasedFuncEnvRenderState[RenderSensorDataT],
         FuncEnvCommonRenderState
     ]:
@@ -468,8 +467,8 @@ class WorldBasedFuncEnv(
             world_state, render_sensor_state = state.world_state, state.render_sensor_state
             real_render_sensor = self.get_render_sensor_instance()
             
-            world_state, common_state, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
-                world_state, common_state, render_sensor_state, state.render_elapsed
+            world_state, rng, render_sensor_state, render_sensor_data = real_render_sensor.get_data(
+                world_state, rng, render_sensor_state, state.render_elapsed
             )
             return render_sensor_data, dataclass_replace(
                 state,
@@ -477,24 +476,24 @@ class WorldBasedFuncEnv(
                 render_sensor_state=render_sensor_state,
                 render_sensor_data=None,
                 render_elapsed=0.0
-            ), common_state, dataclass_replace(
+            ), rng, dataclass_replace(
                 render_state,
                 render_sensor_data=render_sensor_data
-            ), render_common_state
+            ), render_rng
         else:
             return state.render_sensor_data, dataclass_replace(
                 state,
                 render_elapsed=0.0,
-            ), common_state, render_state, render_common_state
+            ), rng, render_state, render_rng
 
     def render_close(
         self, 
         state: WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT], 
-        common_state: FuncEnvCommonState[BDeviceType, BRNGType], 
+        rng: BRNGType, 
         render_state: WorldBasedFuncEnvRenderState[RenderSensorDataT], 
-        render_common_state: FuncEnvCommonRenderState
+        render_rng: FuncEnvCommonRenderState
     ) -> Tuple[
         WorldBasedFuncEnvState[WorldStateT, ActorStateT, TaskStateT, RenderSensorStateT],
-        FuncEnvCommonState[BDeviceType, BRNGType]
+        BRNGType
     ]:
-        return state, common_state
+        return state, rng

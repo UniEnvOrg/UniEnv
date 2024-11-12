@@ -1,7 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, Literal
 from abc import ABC, abstractmethod
 
-from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.camera import FuncCameraSensor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box
@@ -120,8 +119,7 @@ class MujocoFuncCameraSensor(
         self,
         world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator],
-        seed : int,
+        rng : np.random.Generator,
         # ---- Additional parameters ----
         render_kwargs : Dict[str, Any] = {},
         max_geom : int = 10_000,
@@ -129,7 +127,7 @@ class MujocoFuncCameraSensor(
         scene_callback : Optional[MujocoFuncEnvSceneCallback] = None,
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         MujocoFuncCameraSensorState
     ]:
         renderer = mujoco.Renderer(
@@ -161,43 +159,43 @@ class MujocoFuncCameraSensor(
             scene_option=scene_option,
             scene_callback=scene_callback
         )
-        return state, common_state, camera_state
+        return state, rng, camera_state
 
     def reset(
         self,
         world : MujocoFuncWorld,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator],
+        rng : np.random.Generator,
         sensor_state : MujocoFuncCameraSensorState
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         MujocoFuncCameraSensorState
     ]:
-        return state, common_state, sensor_state
+        return state, rng, sensor_state
 
     def step(
         self,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator],
+        rng : np.random.Generator,
         sensor_state : MujocoFuncCameraSensorState,
         last_step_elapsed : float
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         MujocoFuncCameraSensorState
     ]:
-        return state, common_state, sensor_state
+        return state, rng, sensor_state
     
     def get_data(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
+        rng: np.random.Generator, 
         sensor_state: MujocoFuncCameraSensorState,
         last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
-        FuncEnvCommonState[Any, np.random.Generator], 
+        np.random.Generator, 
         MujocoFuncCameraSensorState, 
         np.ndarray
     ]:
@@ -217,16 +215,16 @@ class MujocoFuncCameraSensor(
             rendered_image = rendered_image[:, :, 1:2]
         elif self.camera_mode == 'depth_array':
             rendered_image = rendered_image[:, :, np.newaxis]
-        return state, common_state, sensor_state, rendered_image
+        return state, rng, sensor_state, rendered_image
     
     def close(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
+        rng: np.random.Generator, 
         sensor_state: MujocoFuncCameraSensorState
     ) -> Tuple[
         MujocoFuncWorldState, 
-        FuncEnvCommonState[Any, np.random.Generator]
+        np.random.Generator
     ]:
         sensor_state.renderer.close()
-        return state, common_state
+        return state, rng

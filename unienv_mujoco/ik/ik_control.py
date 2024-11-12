@@ -16,8 +16,7 @@ class MujocoIKClass(ABC, Generic[MujocoIKStateT, MujocoIKTargetT]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        qpos : np.ndarray,
-        seed : Optional[int] = None
+        qpos : np.ndarray
     ) -> MujocoIKStateT:
         raise NotImplementedError
     
@@ -122,8 +121,7 @@ class MinkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        qpos : np.ndarray,
-        seed : Optional[int] = None
+        qpos : np.ndarray
     ) -> MinkIKState:
         limits = [
             mink.ConfigurationLimit(
@@ -320,11 +318,9 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     def initial(
         self,
         mj_model : mujoco.MjModel,
-        qpos : np.ndarray,
-        seed : Optional[int] = None
+        qpos : np.ndarray
     ) -> MinkIKState:
-        np_rng = np.random.default_rng(seed)
-        ik_state = self.ik.initial(mj_model, qpos, seed=seed)
+        ik_state = self.ik.initial(mj_model, qpos)
         return ik_state
     
     def try_solve_ik(

@@ -1,6 +1,5 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
-from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.actor import Actor, FuncActor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box
@@ -12,7 +11,7 @@ from .. import mjcf_util
 from .world import MujocoFuncWorldState, MujocoFuncWorld
 
 class MujocoDefaultFuncActor(
-    FuncActor[MujocoFuncWorldState, None, Any, np.dtype, np.random.Generator]
+    FuncActor[MujocoFuncWorldState, None, NumpyComputeBackend.DEVICE_TYPE, NumpyComputeBackend.DTYPE_TYPE, NumpyComputeBackend.RNG_TYPE]
 ):
     is_real = False
 
@@ -51,66 +50,64 @@ class MujocoDefaultFuncActor(
         self, 
         world: MujocoFuncWorld,
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
-        *, 
-        seed: int
+        rng : np.random.Generator,
     ) -> Tuple[
         MujocoFuncWorldState, 
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
     
     def onboard_reset(
         self,
         world: MujocoFuncWorld,
         state: MujocoFuncWorldState,
-        common_state: FuncEnvCommonState[Any, np.random.Generator],
+        rng: np.random.Generator,
         actor_state: None
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
 
     def onboard_step(
         self,
         state: MujocoFuncWorldState,
-        common_state: FuncEnvCommonState[Any, np.random.Generator],
+        rng: np.random.Generator,
         actor_state: None,
         last_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         None
     ]:
-        return state, common_state, None
+        return state, rng, None
     
     def get_data_extra(
         self,
         state: MujocoFuncWorldState,
-        common_state: FuncEnvCommonState[Any, np.random.Generator],
+        rng: np.random.Generator,
         actor_state: None,
         last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator],
+        np.random.Generator,
         None,
         Dict[str, Any]
     ]:
-        return state, common_state, None , {}
+        return state, rng, None , {}
     
     def set_next_extra_action(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator], 
+        rng: np.random.Generator, 
         actor_state: None,
         action: np.ndarray,
         last_control_step_elapsed: float
     ) -> Tuple[
         MujocoFuncWorldState, 
-        FuncEnvCommonState[Any, np.random.Generator], 
+        np.random.Generator, 
         None
     ]:
         mjdata = state.data
@@ -120,16 +117,16 @@ class MujocoDefaultFuncActor(
             mj_model=state.mj_model,
             data=mjdata
         )
-        return new_state, common_state, None
+        return new_state, rng, None
 
     def onboard_close(
         self, 
         state: MujocoFuncWorldState, 
-        common_state: FuncEnvCommonState[Any, np.random.Generator],
+        rng: np.random.Generator,
         actor_state: None
     ) -> Tuple[
         MujocoFuncWorldState, 
-        FuncEnvCommonState[Any, np.random.Generator]
+        np.random.Generator
     ]:
-        return state, common_state
+        return state, rng
 

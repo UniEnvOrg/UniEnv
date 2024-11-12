@@ -1,6 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
 from abc import ABC, abstractmethod
-from unienv_interface.world.world import FuncWorld, FuncEnvCommonState
+from unienv_interface.world.world import FuncWorld
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.utils import seed_util
 import mujoco
@@ -16,7 +16,7 @@ class MujocoFuncWorldState:
     mj_model : mujoco.MjModel
     data : mujoco.MjData
 
-class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.Generator]):
+class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, NumpyComputeBackend.DEVICE_TYPE, NumpyComputeBackend.DTYPE_TYPE, NumpyComputeBackend.RNG_TYPE]):
     is_real = False
     backend = NumpyComputeBackend
     device = None
@@ -46,7 +46,9 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.G
     
     @world_subtimestep.setter
     def world_subtimestep(self, value : Optional[float]) -> None:
-        self.set_timestep(max(self._world_timestep, value), value)
+        if value is None:
+            value = self._world_timestep
+        self.set_timestep(max(self.world_timestep, value), value)
 
     def recompile_mjcf(self) -> None:
         self._mjmodel = mjcf_util.compile_mjcf(self._mjcf_model)
@@ -73,7 +75,9 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.G
         )
 
     def set_timestep(self, world_timestep : float, world_subtimestep : Optional[float] = None) -> None:
-        assert world_timestep > 0 and (world_subtimestep is None or world_subtimestep > 0)
+        if world_subtimestep is None:
+            world_subtimestep = world_timestep
+        assert world_timestep > 0 and world_subtimestep > 0
         n_step = int(world_timestep / world_subtimestep)
         assert n_step > 0
         self._world_timestep = world_timestep
@@ -89,18 +93,11 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.G
 
     def initial(
         self,
-        *,
-        seed : int
+        rng : np.random.Generator,
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator]
+        np.random.Generator
     ]:
-        np_random = np.random.default_rng(seed)
-        common_state = FuncEnvCommonState(
-            np_rng=np_random,
-            rng=np_random,
-            device=None
-        )
         mj_data = mujoco.MjData(self._mjmodel)
         
         try:
@@ -117,28 +114,28 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.G
             mj_model=self._mjmodel,
             data=mj_data
         )
-        return world_state, common_state
+        return world_state, rng
     
     def reset(
         self,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator]
+        rng : np.random.Generator
     ) -> Tuple[
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator]
+        np.random.Generator
     ]:
         return self.initial(
-            seed=seed_util.next_seed(common_state.np_rng)
+            rng=rng
         )
     
     def step(
         self,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator]
+        rng : np.random.Generator
     ) -> Tuple[
         float, # elapsed time
         MujocoFuncWorldState,
-        FuncEnvCommonState[Any, np.random.Generator]
+        np.random.Generator
     ]:
         mj_data = state.data
         mujoco.mj_step(state.mj_model, mj_data, nstep=self._nstep)
@@ -149,12 +146,12 @@ class MujocoFuncWorld(FuncWorld[MujocoFuncWorldState, Any, np.dtype, np.random.G
                 mj_model=state.mj_model,
                 data=mj_data
             ),
-            common_state
+            rng
         )
     
     def close(
         self,
         state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[Any, np.random.Generator]
+        rng : np.random.Generator
     ) -> None:
         pass

@@ -1,7 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, Literal
 from abc import ABC, abstractmethod
 
-from unienv_interface.env_base.funcenv import FuncEnvCommonState
 from unienv_interface.world.sensors.lambda_sensor import FuncLambdaSensor
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Dict as DictSpace, Box

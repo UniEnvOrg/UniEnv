@@ -1,4 +1,4 @@
-from .env import Env, ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+from .env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
 from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
@@ -6,42 +6,130 @@ from ..space import Space
 from ..backends import ComputeBackend
 import numpy as np
 
-WrapperContextType = TypeVar("WrapperContextType")
-WrapperObsType = TypeVar("WrapperObsType")
-WrapperActType = TypeVar("WrapperActType")
-WrapperRewardType = TypeVar("WrapperRewardType", bound=SupportsFloat)
-WrapperTerminationType = TypeVar("WrapperTerminationType")
+WrapperBArrayT = TypeVar("WrapperBArrayT")
+WrapperContextT = TypeVar("WrapperContextT")
+WrapperObsT = TypeVar("WrapperObsT")
+WrapperActT = TypeVar("WrapperActT")
 WrapperBDeviceT = TypeVar("WrapperBDeviceT")
+WrapperBDtypeT = TypeVar("WrapperBDtypeT")
 WrapperBRngT = TypeVar("WrapperBRngT")
 WrapperRenderFrame = TypeVar("WrapperRenderFrame")
 
 class Wrapper(
-    Env[WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT],
+    Env[WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT],
     Generic[
-        WrapperContextType, WrapperObsType, WrapperActType, WrapperRewardType, WrapperTerminationType, WrapperRenderFrame, WrapperBDeviceT, WrapperBRngT,
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
-    def __init__(self, env: Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
+    # ========== Public Attribute Getters ==========
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """Returns the :attr:`Env` :attr:`metadata`."""
+        if self._metadata is None:
+            return self.env.metadata
+        return self._metadata
+
+    @metadata.setter
+    def metadata(self, value: Dict[str, Any]):
+        self._metadata = value
+
+    @property
+    def render_mode(self) -> Optional[WrapperRenderFrame]:
+        return self.env.render_mode
+
+    @property
+    def render_fps(self) -> Optional[int]:
+        return self.env.render_fps
+
+    @property
+    def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
+        return self.env.backend
+
+    @property
+    def device(self) -> Optional[WrapperBDeviceT]:
+        return self.env.device
+
+    @property
+    def batch_size(self) -> Optional[int]:
+        return self.env.batch_size
+
+    @property
+    def action_space(
+        self,
+    ) -> Space[WrapperActT, Any, WrapperBDeviceT, Any, WrapperBRngT]:
+        if self._action_space is None:
+            return self.env.action_space
+        return self._action_space
+
+    @action_space.setter
+    def action_space(self, space: Space[WrapperActT, Any, WrapperBDeviceT, Any, WrapperBRngT]):
+        self._action_space = space
+
+    @property
+    def observation_space(
+        self,
+    ) -> Space[WrapperObsT, Any, WrapperBDeviceT, Any, WrapperBRngT]:
+        if self._observation_space is None:
+            return self.env.observation_space
+        return self._observation_space
+
+    @observation_space.setter
+    def observation_space(self, space: Space[WrapperObsT, Any, WrapperBDeviceT, Any, WrapperBRngT]):
+        self._observation_space = space
+
+    @property
+    def context_space(
+        self,
+    ) -> Optional[Space[WrapperContextT, Any, WrapperBDeviceT, Any, WrapperBRngT]]:
+        return self._context_space
+    
+    @context_space.setter
+    def context_space(self, space: Optional[Space[WrapperContextT, Any, WrapperBDeviceT, Any, WrapperBRngT]]):
+        self._context_space = space
+
+    @property
+    def rng(self) -> WrapperBRngT:
+        """Returns the :attr:`Env` :attr:`rng` attribute."""
+        return self._rng or self.env.rng
+
+    @rng.setter
+    def rng(self, value: WrapperBRngT):
+        self._rng = value
+
+    def __init__(
+        self, 
+        env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
         self.env = env
         assert isinstance(env, Env)
 
-        self._action_space: Space[WrapperActType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = None
-        self._observation_space: Space[WrapperObsType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = None
-        self._context_space: Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT] | None = self.env.context_space
-        self._metadata: Dict[str, Any] | None = None
+        self._action_space: Optional[Space[WrapperActT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
+        self._observation_space: Optional[Space[WrapperObsT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
+        self._context_space: Optional[Space[WrapperContextT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = self.env.context_space
+        self._metadata: Optional[Dict[str, Any]] = None
+        self._rng : Optional[WrapperBRngT] = None
 
     def step(
-        self, action: WrapperActType
-    ) -> Tuple[WrapperObsType, WrapperRewardType, WrapperTerminationType, WrapperTerminationType, Dict[str, Any]]:
+        self, action: WrapperActT
+    ) -> Tuple[
+        WrapperObsT, 
+        Union[SupportsFloat, WrapperBArrayT], 
+        Union[bool, WrapperBArrayT], 
+        Union[bool, WrapperBArrayT], 
+        Dict[str, Any]
+    ]:
         return self.env.step(action)
 
     def reset(
         self, 
         *, 
+        mask : Optional[WrapperBArrayT] = None,
         seed: Optional[int] = None
-    ) -> Tuple[WrapperContextType, WrapperObsType, Dict[str, Any]]:
-        return self.env.reset(seed=seed)
+    ) -> Tuple[WrapperContextT, WrapperObsT, Dict[str, Any]]:
+        return self.env.reset(
+            mask=mask,
+            seed=seed
+        )
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         return self.env.render()
@@ -58,7 +146,7 @@ class Wrapper(
         return self.env.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> Env[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]:
+    def prev_wrapper_layer(self) -> Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]:
         return self.env
 
     def has_wrapper_attr(self, name: str) -> bool:
@@ -117,145 +205,79 @@ class Wrapper(
         """Returns the string representation of the wrapper."""
         return str(self)
 
-    # ========== Public Attribute Getters ==========
-
-    @property
-    def action_space(
-        self,
-    ) -> Space[WrapperActType, Any, WrapperBDeviceT, Any, WrapperBRngT]:
-        if self._action_space is None:
-            return self.env.action_space
-        return self._action_space
-
-    @action_space.setter
-    def action_space(self, space: Space[WrapperActType, Any, WrapperBDeviceT, Any, WrapperBRngT]):
-        self._action_space = space
-
-    @property
-    def observation_space(
-        self,
-    ) -> Space[WrapperObsType, Any, WrapperBDeviceT, Any, WrapperBRngT]:
-        if self._observation_space is None:
-            return self.env.observation_space
-        return self._observation_space
-
-    @observation_space.setter
-    def observation_space(self, space: Space[WrapperObsType, Any, WrapperBDeviceT, Any, WrapperBRngT]):
-        self._observation_space = space
-
-    @property
-    def context_space(
-        self,
-    ) -> Optional[Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT]]:
-        return self._context_space
-    
-    @context_space.setter
-    def context_space(self, space: Optional[Space[WrapperContextType, Any, WrapperBDeviceT, Any, WrapperBRngT]]):
-        self._context_space = space
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Returns the :attr:`Env` :attr:`metadata`."""
-        if self._metadata is None:
-            return self.env.metadata
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, value: Dict[str, Any]):
-        self._metadata = value
-
-    @property
-    def render_mode(self) -> Optional[WrapperRenderFrame]:
-        return self.env.render_mode
-
-    @property
-    def render_fps(self) -> Optional[int]:
-        return self.env.render_fps
-
-    @property
-    def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
-        return self.env.backend
-
-    @property
-    def device(self) -> Optional[WrapperBDeviceT]:
-        return self.env.device
-
-    @property
-    def batch_size(self) -> Optional[int]:
-        return self.env.batch_size
-
-    @property
-    def np_rng(self) -> np.random.Generator:
-        """Returns the :attr:`Env` :attr:`np_random` attribute."""
-        return self.env.np_rng
-
-    @np_rng.setter
-    def np_rng(self, value: np.random.Generator):
-        self.env.np_rng = value
-
-    @property
-    def rng(self) -> WrapperBRngT:
-        """Returns the :attr:`Env` :attr:`rng` attribute."""
-        return self.env.rng
-
-    @rng.setter
-    def rng(self, value: WrapperBRngT):
-        self.env.rng = value
-
 class ActionWrapper(
     Wrapper[
-        ContextType, ObsType, WrapperActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT,
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        BArrayType, ContextType, ObsType, WrapperActT, RenderFrame, BDeviceType, BDtypeType, BRNGType,
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ],
     Generic[
-        WrapperActType, 
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        WrapperActT, 
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ]
 ):
     @abc.abstractmethod
-    def map_action(self, action : WrapperActType) -> ActType:
+    def map_action(self, action : WrapperActT) -> ActType:
         raise NotImplementedError
     
-    def reverse_map_action(self, action : ActType) -> WrapperActType:
+    def reverse_map_action(self, action : ActType) -> WrapperActT:
         raise NotImplementedError
     
     def step(
-        self, action: WrapperActType
-    ) -> Tuple[ObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
+        self, action: WrapperActT
+    ) -> Tuple[
+        ObsType, 
+        Union[SupportsFloat, BArrayType], 
+        Union[bool, BArrayType], 
+        Union[bool, BArrayType], 
+        Dict[str, Any]
+    ]:
         return self.env.step(self.map_action(action))
     
 class ContextObservationWrapper(
     Wrapper[
-        WrapperContextType, WrapperObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT,
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        BArrayType, WrapperContextT, WrapperObsT, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ],
     Generic[
-        WrapperContextType, WrapperObsType, 
-        ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT
+        WrapperContextT, WrapperObsT, 
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ]
 ):
-    def map_context(self, context : WrapperContextType) -> ContextType:
+    def map_context(self, context : WrapperContextT) -> ContextType:
         return context
     
-    def reverse_map_context(self, context : ContextType) -> WrapperContextType:
+    def reverse_map_context(self, context : ContextType) -> WrapperContextT:
         raise NotImplementedError
     
-    def map_observation(self, observation : WrapperObsType) -> ObsType:
+    def map_observation(self, observation : WrapperObsT) -> ObsType:
         return observation
     
-    def reverse_map_observation(self, observation : ObsType) -> WrapperObsType:
+    def reverse_map_observation(self, observation : ObsType) -> WrapperObsT:
         raise NotImplementedError
     
     def reset(
         self, 
-        *, 
-        seed: Optional[int] = None
-    ) -> Tuple[WrapperContextType, WrapperObsType, Dict[str, Any]]:
-        context, observation, info = self.env.reset(seed=seed)
+        *args, 
+        mask : Optional[BArrayType] = None,
+        seed: Optional[int] = None,
+        **kwargs
+    ) -> Tuple[WrapperContextT, WrapperObsT, Dict[str, Any]]:
+        context, observation, info = self.env.reset(
+            *args,
+            mask=mask,
+            seed=seed,
+            **kwargs
+        )
         return self.map_context(context), self.map_observation(observation), info
     
     def step(
         self, action: ActType
-    ) -> Tuple[WrapperObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
+    ) -> Tuple[
+        WrapperObsT, 
+        Union[float, BArrayType], 
+        Union[bool, BArrayType], 
+        Union[bool, BArrayType], 
+        Dict[str, Any]
+    ]:
         observation, reward, terminated, truncated, info = self.env.step(action)
         return self.map_observation(observation), reward, terminated, truncated, info

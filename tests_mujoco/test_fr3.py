@@ -4,7 +4,6 @@ from unienv_mujoco import MujocoFuncWorld, MujocoDefaultFuncActor, MujocoIKWrapp
 from unienv_interface.space import *
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvBasedEnv
-from unienv_interface.world.world import FuncEnvCommonState
 from unienv_interface.world.tasks import LambdaFuncTask
 from unienv_interface.world.env_utils import WorldBasedFuncEnv
 from unienv_interface.world.actor_mixins import EndEffectorActorMixin
@@ -91,7 +90,7 @@ def eef_reward_and_termination_fn(
 ):
     def eef_reward_and_termination(
         world_state : MujocoFuncWorldState,
-        common_state : FuncEnvCommonState[typing.Any, np.random.Generator],
+        rng : np.random.Generator,
         actor_state : typing.Any,
         obs : typing.Dict[str, typing.Any],
         control_step_elapsed : float
@@ -147,7 +146,7 @@ def test_fr3_eef(
     )
     env = FuncEnvBasedEnv(
         funcenv,
-        seed=0
+        rng=np.random.default_rng()
     )
     env.reset()
     ik_util.move_mocap_to_transformation(

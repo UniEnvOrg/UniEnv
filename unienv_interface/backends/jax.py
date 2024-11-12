@@ -17,9 +17,15 @@ JaxDevice = Union[jax.Device, jax.sharding.Sharding]
 JaxRNG = jax.Array
 
 class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
+    ARRAY_TYPE = jax.Array
+    DEVICE_TYPE = JaxDevice
+    DTYPE_TYPE = np.dtype
+    RNG_TYPE = JaxRNG
+
     array_api_namespace = jax_array_api
     default_integer_dtype = int
     default_floating_dtype = float
+    default_boolean_dtype = bool
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
@@ -165,3 +171,11 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
     @classmethod
     def list_real_floating_dtypes(cls) -> Sequence[np.dtype]:
         return (jax.dtypes.bfloat16, np.float16, np.float32, np.float64, float)
+    
+    @classmethod
+    def dtype_is_boolean(cls, dtype : np.dtype) -> bool:
+        return dtype in cls.list_real_boolean_dtypes()
+    
+    @classmethod
+    def list_real_boolean_dtypes(cls) -> Sequence[np.dtype]:
+        return (np.bool_, bool)

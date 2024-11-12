@@ -15,9 +15,15 @@ PYTORCH_DTYPE_CAST_MAP = {
 TorchDevice = Union[torch.device, str]
 
 class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtype, torch.Generator]):
+    ARRAY_TYPE = torch.Tensor
+    DEVICE_TYPE = TorchDevice
+    DTYPE_TYPE = torch.dtype
+    RNG_TYPE = torch.Generator
+
     array_api_namespace = array_api_compat.torch
     default_integer_dtype = torch.int
     default_floating_dtype = torch.float
+    default_boolean_dtype = torch.bool
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
@@ -120,3 +126,11 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
     @classmethod
     def list_real_floating_dtypes(cls) -> Sequence[torch.dtype]:
         return (torch.float16, torch.float32, torch.float64, torch.float, torch.double, torch.bfloat16)
+    
+    @classmethod
+    def dtype_is_boolean(cls, dtype : torch.dtype) -> bool:
+        return dtype in cls.list_boolean_dtypes()
+    
+    @classmethod
+    def list_boolean_dtypes(cls) -> Sequence[torch.dtype]:
+        return (torch.bool,)

@@ -4,7 +4,7 @@ import PIL.Image
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Box
-from unienv_interface.env_base.funcenv import FuncEnvCommonState, StateType
+from unienv_interface.env_base.funcenv import StateType
 import PIL
 
 class CameraSensor(

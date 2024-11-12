@@ -56,17 +56,35 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         return all(space.is_flattenable for space in self.spaces.values())
 
     @property
+    def is_batch_flattenable(self):
+        """Checks whether this space can be flattened to a :class:`spaces.Box`."""
+        return all(space.is_batch_flattenable for space in self.spaces.values())
+
+    @property
     def flat_dim(self) -> Optional[int]:
         """Return the shape of the space as an immutable property."""
         if not self.is_flattenable:
             return None
         return sum(space.flat_dim for space in self.spaces.values())
     
+    @property
+    def batch_flat_dim(self) -> Optional[int]:
+        """Return the shape of the space as an immutable property."""
+        if not self.is_flattenable:
+            return None
+        return sum(space.batch_flat_dim for space in self.spaces.values())
+
     def flatten(self, data : DictType[str, Any]) -> Any:
         """Flatten the data."""
         return self.backend.array_api_namespace.concat([
             space.flatten(data[key]) for key, space in self.spaces.items()
-        ])
+        ], axis=0)
+    
+    def flatten_batch(self, data : Sequence[DictType[str, Any]]) -> Any:
+        """Flatten the data."""
+        return self.backend.array_api_namespace.concat([
+            space.flatten_batch([d[key] for d in data]) for key, space in self.spaces.items()
+        ], axis=1)
     
     def unflatten(self, data : Any) -> DictType[str, Any]:
         """Unflatten the data."""
@@ -75,6 +93,16 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         for key, space in self.spaces.items():
             end = start + space.flat_dim
             result[key] = space.unflatten(data[start:end])
+            start = end
+        return result
+
+    def unflatten_batch(self, data : Any) -> List[DictType[str, Any]]:
+        """Unflatten the data."""
+        result = {}
+        start = 0
+        for key, space in self.spaces.items():
+            end = start + space.batch_flat_dim
+            result[key] = space.unflatten_batch(data[:, start:end])
             start = end
         return result
 

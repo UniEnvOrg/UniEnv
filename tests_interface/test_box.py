@@ -55,7 +55,6 @@ def perform_single_space_cross_backend_device_test(space : Space, rng : typing.A
                 converted_back_data = space.from_other_backend(converted_data, target_backend) if target_backend != space.backend else space.from_same_backend(converted_data)
                 assert space.contains(converted_back_data)
 
-
 def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.Any], rng : typing.Any, np_rng : np.random.Generator):
     def generate_random_box_params(rng : typing.Any, np_rng : np.random.Generator):
         shape_ndims = np_rng.integers(1, 5)

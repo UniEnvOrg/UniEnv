@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import typing
-from copy import deepcopy
+import copy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import (
     Box,
@@ -23,7 +24,9 @@ __all__ = [
     "batch_space",
     "batch_differing_spaces",
     "iterate",
-    "concatenate"
+    "concatenate",
+    "read_batched_data_with_mask",
+    "write_batched_data_with_mask"
 ]
 
 @singledispatch
@@ -48,18 +51,14 @@ def _batch_size_dict(space: Dict):
 
 @batch_size.register(Tuple)
 def _batch_size_tuple(space: Tuple):
-    if len(space.spaces) == 0:
-        raise ValueError("Tuple space must have at least one subspace to determine the batch size.")
-    
-    first_subspace = space.spaces[0]
-    if isinstance(first_subspace, (Graph, Text, Sequence, Union)):
-        return len(space.spaces)
-    
-    for subspace in space.spaces:
-        try:
-            return batch_size(subspace)
-        except:
-            continue
+    if all(type(subspace) in batch_size.registry for subspace in space.spaces):
+        for subspace in space.spaces:
+            try:
+                return batch_size(subspace)
+            except:
+                continue
+
+    return len(space.spaces)
 
 @singledispatch
 def batch_space(space: Space, n: int = 1) -> Space:
@@ -128,11 +127,9 @@ def _batch_space_tuple(space: Tuple, n: int = 1):
 @batch_space.register(Union)
 @batch_space.register(Space)
 def _batch_space_custom(space: Graph | Text | Sequence | Union, n: int = 1):
-    # Without deepcopy, then the space.np_random is batched_space.spaces[0].np_random
-    # Which is an issue if you are sampling actions of both the original space and the batched space
     batched_space = Tuple(
         backend=space.backend,
-        spaces=[deepcopy(space) for _ in range(n)],
+        spaces=[copy.deepcopy(space) for _ in range(n)],
         device=space.device,
     )
     return batched_space
@@ -246,10 +243,10 @@ def _batch_differing_spaces_tuple(spaces: typing.Sequence[Tuple], device : Optio
 @batch_differing_spaces.register(Text)
 @batch_differing_spaces.register(Sequence)
 @batch_differing_spaces.register(Union)
-def _batch_spaces_undefined(spaces: typing.Sequence[Graph | Text | Sequence | Union], device : Optional[Any] = None):
+def _batch_differing_spaces_undefined(spaces: typing.Sequence[Graph | Text | Sequence | Union], device : Optional[Any] = None):
     return Tuple(
         backend=spaces[0].backend,
-        spaces=[deepcopy(space) for space in spaces],
+        spaces=[copy.deepcopy(space) for space in spaces],
         device=spaces[0].device, 
     )
 
@@ -354,3 +351,125 @@ def _concatenate_tuple(
 @concatenate.register(Union)
 def _concatenate_custom(space: Space, items: Iterable, out: None) -> tuple[Any, ...]:
     return tuple(items)
+
+@singledispatch
+def read_batched_data_with_mask(
+    batched_space : Space,
+    data : Any,
+    mask : BArrayType,
+):
+    raise TypeError(
+        f"The space provided to `read_batched_data_with_mask` is not a Space instance, type: {type(batched_space)}, {batched_space}"
+    )
+
+@read_batched_data_with_mask.register(Box)
+@read_batched_data_with_mask.register(MultiDiscrete)
+@read_batched_data_with_mask.register(MultiBinary)
+def _read_batched_data_with_mask_base(
+    batched_space : Box | MultiDiscrete | MultiBinary,
+    data : BArrayType,
+    mask : BArrayType,
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    return data[mask]
+
+@read_batched_data_with_mask.register(Dict)
+def _read_batched_data_with_mask_dict(
+    batched_space : Dict,
+    data : dict[str, Any],
+    mask : BArrayType,
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    return {
+        key: read_batched_data_with_mask(subspace, data[key], mask)
+        for key, subspace in batched_space.spaces.items()
+    }
+
+@read_batched_data_with_mask.register(Tuple)
+def _read_batched_data_with_mask_tuple(
+    batched_space : Tuple,
+    data : tuple[Any, ...],
+    mask : BArrayType,
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    if all(type(subspace) in read_batched_data_with_mask.registry for subspace in batched_space.spaces):
+        return tuple(
+            read_batched_data_with_mask(subspace, data[i], mask)
+            for i, subspace in enumerate(batched_space.spaces)
+        )
+    else:
+        ret = []
+        for i, subspace in enumerate(batched_space.spaces):
+            subspace_in_mask = bool(mask[i])
+            if not subspace_in_mask:
+                continue
+            ret.append(data[i])
+        return tuple(ret)
+
+@singledispatch
+def write_batched_data_with_mask(
+    batched_space : Space,
+    data : Any,
+    mask : BArrayType,
+    value : Any,
+):
+    raise TypeError(
+        f"The space provided to `write_batched_data_with_mask` is not a Space instance, type: {type(batched_space)}, {batched_space}"
+    )
+
+@write_batched_data_with_mask.register(Box)
+@write_batched_data_with_mask.register(MultiDiscrete)
+@write_batched_data_with_mask.register(MultiBinary)
+def _write_batched_data_with_mask_base(
+    batched_space : Box | MultiDiscrete | MultiBinary,
+    data : BArrayType,
+    mask : BArrayType,
+    value : BArrayType,
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    data = batched_space.backend.replace_inplace(data, mask, value)
+    return data
+
+@write_batched_data_with_mask.register(Dict)
+def _write_batched_data_with_mask_dict(
+    batched_space : Dict,
+    data : dict[str, Any],
+    mask : BArrayType,
+    value : dict[str, Any],
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    return {
+        key: write_batched_data_with_mask(subspace, data[key], mask, value[key])
+        for key, subspace in batched_space.spaces.items()
+    }
+
+@write_batched_data_with_mask.register(Tuple)
+def _write_batched_data_with_mask_tuple(
+    batched_space : Tuple,
+    data : tuple[Any, ...],
+    mask : BArrayType,
+    value : tuple[Any, ...],
+):
+    assert batched_space.backend.dtype_is_boolean(mask.dtype), f"Expected mask to be of boolean dtype, actually {mask.dtype}"
+    assert len(mask.shape) == 1, f"Expected mask to be 1D, actually {mask.shape}"
+    if all(type(subspace) in write_batched_data_with_mask.registry for subspace in batched_space.spaces):
+        return tuple(
+            write_batched_data_with_mask(subspace, data[i], mask, value[i])
+            for i, subspace in enumerate(batched_space.spaces)
+        )
+    else:
+        val_counter = 0
+        ret = []
+        for i in range(len(batched_space.spaces)):
+            subspace_in_mask = bool(mask[i])
+            if not subspace_in_mask:
+                ret.append(value[val_counter])
+                val_counter += 1
+            else:
+                ret.append(data[i])
+        return tuple(ret)

@@ -30,8 +30,9 @@ mujoco = [
     "dm_control>=1.0",
     "mink>=0.0.5"
 ]
-sapien = [
-    "sapien>=3.0.0b1"
+mjx = [
+    "mujoco-mjx>=3.0",
+    "flax"
 ]
 
 [tool.setuptools.packages.find]

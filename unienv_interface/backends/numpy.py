@@ -5,9 +5,15 @@ import numpy as np
 import dlpack
 
 class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator]):
+    ARRAY_TYPE = np.ndarray
+    DEVICE_TYPE = Any
+    DTYPE_TYPE = np.dtype
+    RNG_TYPE = np.random.Generator
+
     array_api_namespace = array_api_compat.numpy
     default_integer_dtype = int
     default_floating_dtype = float
+    default_boolean_dtype = bool
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
@@ -137,3 +143,11 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
     @classmethod
     def list_real_floating_dtypes(cls) -> Sequence[array_api_compat.numpy.dtype]:
         return (np.float16, np.float32, np.float64, float)
+    
+    @classmethod
+    def dtype_is_boolean(cls, dtype : np.dtype) -> bool:
+        return dtype in cls.list_boolean_dtypes()
+    
+    @classmethod
+    def list_boolean_dtypes(cls) -> Sequence[array_api_compat.numpy.dtype]:
+        return (np.bool_, bool)

@@ -2,19 +2,15 @@ from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
 from ..space import Space
-from ..backends import ComputeBackend
+from ..backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import numpy as np
 
-ObsType = TypeVar("ObsType")
 ContextType = TypeVar("ContextType")
+ObsType = TypeVar("ObsType")
 ActType = TypeVar("ActType")
-RewardType = TypeVar("RewardType", bound=SupportsFloat)
-TerminationType = TypeVar("TerminationType")
 RenderFrame = TypeVar("RenderFrame")
-BDeviceT = TypeVar("BDeviceT")
-BRngT = TypeVar("BRngT")
 
-class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, TerminationType, RenderFrame, BDeviceT, BRngT]):
+class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
     # metadata of the environment
     metadata: dict[str, Any] = {
         "render_modes": []
@@ -24,30 +20,40 @@ class Env(abc.ABC, Generic[ContextType, ObsType, ActType, RewardType, Terminatio
     render_mode: Optional[str] = None
     render_fps : Optional[int] = None
 
-    backend : ComputeBackend[Any, BDeviceT, Any, BRngT]
-    device : Optional[BDeviceT]
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
+    device : Optional[BDeviceType]
 
     batch_size : Optional[int] = None
 
-    action_space: Space[ActType, Any, BDeviceT, Any, BRngT]
-    observation_space: Space[ObsType, Any, BDeviceT, Any, BRngT]
-    context_space: Optional[Space[ContextType, Any, BDeviceT, Any, BRngT]] = None
+    action_space: Space[ActType, Any, BDeviceType, BDtypeType, BRNGType]
+    observation_space: Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]
+    context_space: Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]] = None
 
-    np_rng : np.random.Generator = None
-    rng : BRngT = None
+    rng : BRNGType = None
 
     @abc.abstractmethod
     def step(
         self, action: ActType
-    ) -> Tuple[ObsType, RewardType, TerminationType, TerminationType, Dict[str, Any]]:
+    ) -> Tuple[
+        ObsType, # Observation 
+        Union[SupportsFloat, BArrayType], # Reward
+        Union[bool, BArrayType], # Terminated
+        Union[bool, BArrayType], # Truncated
+        Dict[str, Any], # Info
+    ]:
         raise NotImplementedError
 
     @abc.abstractmethod
     def reset(
         self,
         *,
+        mask : Optional[BArrayType] = None,
         seed: Optional[int] = None,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """
+        Resets the environment to its initial state and returns the initial context and observation.
+        If mask is provided, it will only return the masked context and observation, so the batch dimension in the output will not be same as the batch dimension in the context and observation spaces.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
