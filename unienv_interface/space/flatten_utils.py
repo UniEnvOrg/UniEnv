@@ -331,7 +331,7 @@ def _batch_flatten_space_box(space: Box) -> Box:
 
 @batch_flatten_space.register(MultiBinary)
 @batch_flatten_space.register(MultiDiscrete)
-def _batch_flatten_space_multi_binary_discrete(space: Union[MultiBinary, MultiDiscrete]) -> Box:
+def _batch_flatten_space_multi_binary_discrete(space: typing.Union[MultiBinary, MultiDiscrete]) -> Box:
     return Box(
         space.backend,
         low=0, high=1, 

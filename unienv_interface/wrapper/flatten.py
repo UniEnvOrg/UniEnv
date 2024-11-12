@@ -17,7 +17,7 @@ class FlattenActionWrapper(
 ):
     def __init__(
         self, 
-        env: Env[ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
+        env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
     ):
         super().__init__(env)
         if env.batch_size is None:
