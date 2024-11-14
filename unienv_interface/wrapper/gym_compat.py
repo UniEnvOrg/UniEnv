@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from .env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import Space, Dict as DictSpace
