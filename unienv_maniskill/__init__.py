@@ -1,0 +1,1 @@
+from .wrapper.maniskill_compat import FromManiSkillEnv

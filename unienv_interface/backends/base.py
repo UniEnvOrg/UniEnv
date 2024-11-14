@@ -60,6 +60,10 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     def from_other_backend(cls, data : dlpack.DLPackObject, backend : Optional["ComputeBackend"] = None) -> BArrayType:
         raise NotImplementedError
 
+    @classmethod
+    @abc.abstractmethod
+    def to_device(cls, data : BArrayType, device : BDeviceType) -> BArrayType:
+        raise NotImplementedError
     
     # @classmethod
     # def from_dict(cls, data : Dict[str,Any]) -> _BDictType:

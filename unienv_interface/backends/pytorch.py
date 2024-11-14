@@ -64,6 +64,10 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
         if t.dtype in PYTORCH_DTYPE_CAST_MAP.keys():
             t = t.to(PYTORCH_DTYPE_CAST_MAP[t.dtype])
         return t
+    
+    @classmethod
+    def to_device(cls, data : torch.Tensor, device : TorchDevice) -> torch.Tensor:
+        return data.to(device=device)
 
     @classmethod
     def replace_inplace(cls, data: torch.Tensor, index: torch.Tensor, value: torch.Tensor) -> torch.Tensor:

@@ -1,7 +1,7 @@
 from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
-from ..space import Space
+from ..space import Space, batch_utils as space_batch_utils
 from ..backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import numpy as np
 
@@ -87,6 +87,36 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
     def sample_observation(self) -> ObsType:
         return self.sample_space(self.observation_space)    
     
+    def update_observation_post_reset(
+        self,
+        old_obs: ObsType,
+        newobs_masked: ObsType,
+        mask: BArrayType
+    ) -> ObsType:
+        assert self.batch_size is not None, "This method is used by batched environment after reset"
+        return space_batch_utils.write_batched_data_with_mask(
+            self.observation_space,
+            old_obs,
+            mask,
+            newobs_masked
+        )
+    
+    def update_context_post_reset(
+        self,
+        old_context: ContextType,
+        new_context: ContextType,
+        mask: BArrayType
+    ) -> ContextType:
+        assert self.batch_size is not None, "This method is used by batched environment after reset"
+        if self.context_space is None:
+            return None
+        return space_batch_utils.write_batched_data_with_mask(
+            self.context_space,
+            old_context,
+            mask,
+            new_context
+        )
+
     # ========== Wrapper methods ==========
 
     @property

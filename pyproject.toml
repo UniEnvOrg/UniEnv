@@ -17,7 +17,7 @@ video = [
 ]
 dev = [
     "pytest",
-    "tqdm"
+    "tqdm",
 ]
 torch = [
     "torch"
@@ -32,7 +32,12 @@ mujoco = [
 ]
 mjx = [
     "mujoco-mjx>=3.0",
-    "flax"
+    "flax",
+    "jax"
+]
+maniskill = [
+    "mani_skill>=3.0.0b12",
+    "torch"
 ]
 
 [tool.setuptools.packages.find]

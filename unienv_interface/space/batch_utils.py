@@ -21,6 +21,7 @@ from unienv_interface.space import (
 )
 
 __all__ = [
+    "batch_size",
     "batch_space",
     "batch_differing_spaces",
     "iterate",

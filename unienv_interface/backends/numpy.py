@@ -46,6 +46,10 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return np.from_dlpack(data)
 
     @classmethod
+    def to_device(cls, data: np.ndarray, device: Any) -> np.ndarray:
+        return data
+
+    @classmethod
     def replace_inplace(cls, data: np.ndarray, index: np.ndarray, value: np.ndarray) -> np.ndarray:
         data[index] = value
         return data

@@ -1,5 +1,8 @@
 from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
 
+from jax._src.sharding import Sharding
+from jaxlib.xla_extension import Device
+
 from .base import ComputeBackend
 import numpy as np
 import dlpack
@@ -65,6 +68,10 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
             # jax sometimes has tiling issues with dlpack converted data
             np = backend.to_numpy(data)
             return cls.from_numpy(np)
+
+    @classmethod
+    def to_device(cls, data: jax.Array, device: JaxDevice) -> jax.Array:
+        return jax.device_put(data, device)
 
     @classmethod
     def replace_inplace(cls, data: jax.Array, index: jax.Array, value: jax.Array) -> jax.Array:

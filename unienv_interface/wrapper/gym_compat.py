@@ -182,8 +182,14 @@ class FromGymnasiumEnv(
 
         self.batch_size = None
 
-        self.action_space = gym_utils.from_gym_space(env.action_space)
-        self.observation_space = gym_utils.from_gym_space(env.observation_space)
+        self.action_space = gym_utils.from_gym_space(
+            env.action_space,
+            self.backend,
+        )
+        self.observation_space = gym_utils.from_gym_space(
+            env.observation_space,
+            self.backend,
+        )
         self.context_space = None
 
         self._rng = env.np_random

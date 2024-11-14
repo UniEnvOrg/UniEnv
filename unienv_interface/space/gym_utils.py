@@ -57,10 +57,16 @@ def _from_gym_space_box(
     device : Optional[Any] = None,
 ) -> Box:
     assert isinstance(gym_space, gym.spaces.Box), f"Expects gym_space to be of type gym.spaces.Box, actual type: {type(gym_space)}"
+    new_low = backend.from_numpy(gym_space.low, dtype=dtype, device=device)
+    new_high = backend.from_numpy(gym_space.high, dtype=dtype, device=device)
+    dtype = dtype or new_low.dtype or backend.default_floating_dtype
+    if backend.dtype_is_boolean(dtype):
+        dtype = backend.default_floating_dtype
+
     return Box(
         backend=backend,
-        low=backend.from_numpy(gym_space.low, dtype=dtype, device=device),
-        high=backend.from_numpy(gym_space.high, dtype=dtype, device=device),
+        low=new_low,
+        high=new_high,
         device=device,
         dtype=dtype,
         shape=gym_space.shape,
