@@ -8,11 +8,11 @@ import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass, replace as dataclass_replace
 import numpy as np
-from .. import mjcf_util
-from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+from unienv_mujoco import mjcf_util
+from unienv_mujoco.base import *
 
 class MujocoFuncGenericSensor(
-    FuncSensor[MujocoFuncWorldState, None, np.ndarray, Any, np.dtype, np.random.Generator]
+    MujocoFuncSensor[None, np.ndarray]
 ):
     def __init__(
         self,

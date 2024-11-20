@@ -10,8 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 import PIL
 import PIL.Image
-from .. import mjcf_util
-from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+from unienv_mujoco import mjcf_util
+from unienv_mujoco.base import *
 import transforms3d as tr3d
 
 MujocoFuncEnvSceneCallback = Callable[[mujoco.MjvScene], None]

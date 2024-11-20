@@ -3,7 +3,8 @@ from unienv_interface.world.actor import FuncActorCombinedState, FuncActor, Func
 from unienv_interface.world.actor_mixins import EndEffectorFuncActorInterface
 from unienv_interface.backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Box, Dict as DictSpace
-from unienv_mujoco.base.world import MujocoFuncWorld, MujocoFuncWorldState
+
+from unienv_mujoco.base import *
 from dataclasses import dataclass, replace as dataclass_replace
 import mink
 import mujoco
@@ -21,10 +22,8 @@ class MujocoIKWrapperState(Generic[ActorStateT, MujocoIKTargetT, MujocoIKStateT]
 
 class MujocoIKWrapper(Generic[
     ActorStateT, MujocoIKTargetT, MujocoIKStateT
-], FuncActorWrapper[
-    MujocoFuncWorldState, 
-    MujocoIKWrapperState[ActorStateT, MujocoIKTargetT, MujocoIKStateT], Any, np.dtype, np.random.Generator,
-    ActorStateT, Any, np.dtype, np.random.Generator
+], MujocoFuncActorWrapper[
+    MujocoIKWrapperState[ActorStateT, MujocoIKTargetT, MujocoIKStateT], ActorStateT
 ], EndEffectorFuncActorInterface[
     MujocoFuncWorldState, MujocoIKWrapperState[ActorStateT, MujocoIKTargetT, MujocoIKStateT], np.ndarray, Any, np.random.Generator
 ]):

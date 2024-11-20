@@ -11,8 +11,8 @@ import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass, replace as dataclass_replace
 import numpy as np
-from .. import mjcf_util
-from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+from unienv_mujoco import mjcf_util
+from unienv_mujoco.base import *
 import time
 
 @dataclass(frozen=True)
@@ -33,9 +33,14 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
     def __init__(
         self,
         control_timestep : float,
+
+        # If True, the world is dirty (task or world will re-compile MJCF at reset) 
+        # and the window should be re-opened each episode
+        is_dirty_world : bool = False
     ):
         assert control_timestep > 0.0
         self.control_timestep = control_timestep
+        self.is_dirty_world = is_dirty_world
     
     def initial(
         self,
@@ -80,16 +85,20 @@ class MujocoFuncWindowedViewSensor(FuncWindowedViewSensor[MujocoFuncWorldState, 
         np.random.Generator,
         MujocoFuncWindowedViewSensorState
     ]:
-        # We may need to close and re-open the viewer here, since mjdata handle might have been re-created
-        state, rng = self.close(state, rng, sensor_state)
-        time.sleep(0.1)
-        state, rng, sensor_state = self.initial(
-            world,
-            state,
-            rng,
-            render_kwargs=sensor_state.render_kwargs,
-            scene_option=sensor_state.scene_option
-        )
+        if self.is_dirty_world:
+            # We may need to close and re-open the viewer here, since mjdata handle might have been re-created
+            state, rng = self.close(state, rng, sensor_state)
+            time.sleep(0.1)
+            state, rng, sensor_state = self.initial(
+                world,
+                state,
+                rng,
+                render_kwargs=sensor_state.render_kwargs,
+                scene_option=sensor_state.scene_option
+            )
+        else:
+            sensor_state.viewer.sync()
+        
         return state, rng, sensor_state
 
     def step(

@@ -8,9 +8,8 @@ import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass
 import numpy as np
-from .. import mjcf_util
-from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
-
+from unienv_mujoco import mjcf_util
+from unienv_mujoco.base import *
 
 class MujocoFuncJointPosSensor(
     FuncLambdaSensor[MujocoFuncWorldState, np.ndarray, Any, np.dtype, np.random.Generator]
