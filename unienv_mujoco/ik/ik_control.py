@@ -272,7 +272,7 @@ class MinkBulkIK(MujocoIKClass[MinkIKState, mink.SE3]):
     ) -> Tuple[MinkIKState, np.ndarray, float, bool]:
         if start_q is not None:
             if start_q.shape[0] < ik_state.configuration.nq:
-                start_q = np.concat([
+                start_q = np.concatenate([
                     start_q,
                     np.zeros(ik_state.configuration.nq - start_q.shape[0])
                 ])

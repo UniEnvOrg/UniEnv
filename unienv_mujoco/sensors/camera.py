@@ -12,6 +12,7 @@ import PIL
 import PIL.Image
 from .. import mjcf_util
 from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
+import transforms3d as tr3d
 
 MujocoFuncEnvSceneCallback = Callable[[mujoco.MjvScene], None]
 
@@ -31,6 +32,8 @@ mujoco.mju_type2Str and mujoco.mju_str2Type can be used to convert between objec
 class MujocoFuncCameraSensor(
     FuncCameraSensor[MujocoFuncWorldState, MujocoFuncCameraSensorState, np.ndarray, Any, np.dtype, np.random.Generator],
 ):
+    PINHOLE_ROTATION_MATRIX = tr3d.euler.euler2mat(np.pi, 0, 0)
+
     def __init__(
         self,
         camera : Union[int, str],
@@ -113,6 +116,46 @@ class MujocoFuncCameraSensor(
         else:
             image = PIL.Image.fromarray(data, mode='RGB')
         return image
+    
+    def get_intrinsic_matrix(
+        self,
+        state: MujocoFuncWorldState,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        cam_id = state.mj_model.camera_name2id(self.camera) if isinstance(self.camera, str) else self.camera
+        fovy = state.mj_model.cam_fovy[cam_id]
+        f = self.height / (2 * np.tan(fovy / 2))
+        return np.array([
+            [f, 0, self.width / 2],
+            [0, f, self.height / 2],
+            [0, 0, 1]
+        ])
+
+    def get_extrinsic_matrix(
+        self,
+        state: MujocoFuncWorldState,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        cam_id = state.mj_model.camera_name2id(self.camera) if isinstance(self.camera, str) else self.camera
+        cam_pos = state.data.cam_xpos[cam_id*3:cam_id*3+3]
+        cam_xmat = state.data.cam_xmat[cam_id*9:cam_id*9+9].reshape(3, 3)
+        cam_xmat_inv = cam_xmat.T
+
+        """
+        Because for our produced image (rendered), 
+        we have
+        x axis pointing to the right, 
+        y axis pointing downwards, 
+        and z axis pointing into the plane of the image
+
+        We rotate the default mujoco camera coordinate system (x right, y up, z out of the screen)
+        """
+        cam_extrinsic_rotation = self.PINHOLE_ROTATION_MATRIX @ cam_xmat_inv
+        cam_extrinsic_offset = -cam_extrinsic_rotation @ cam_pos
+        cam_extrinsic_matrix = np.eye(4)
+        cam_extrinsic_matrix[:3, :3] = cam_extrinsic_rotation
+        cam_extrinsic_matrix[:3, 3] = cam_extrinsic_offset
+        return cam_extrinsic_matrix
 
     def initial(
         self,
