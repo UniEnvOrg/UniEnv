@@ -337,8 +337,9 @@ class TaskWrapper(
 TaskWrapperStateT = TypeVar("TaskWrapperStateT")
 class FuncTaskWrapper(
     Generic[
+        StateType, ActorStateT,
         TaskWrapperStateT, TaskWrapperBArrayT, TaskWrapperBDeviceT, TaskWrapperBDtypeT, TaskWrapperBRNGT,
-        StateType, ActorStateT, TaskStateT, BArrayType, BDeviceType, BDtypeType, BRNGType,
+        TaskStateT, BArrayType, BDeviceType, BDtypeType, BRNGType,
     ],
     FuncTask[StateType, ActorStateT, TaskWrapperStateT, TaskWrapperBArrayT, TaskWrapperBDeviceT, TaskWrapperBDtypeT, TaskWrapperBRNGT]
 ):
