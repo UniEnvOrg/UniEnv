@@ -85,6 +85,13 @@ class FromManiSkillEnv(
             self.backend,
             device=self.device
         )
+        if env.num_envs <= 1:
+            # Weirdly Maniskill doesn't batch the action space when num_envs is 1 but will batch the observation space
+            self.action_space = space_batch_utils.batch_space(
+                self.action_space,
+                1
+            )
+        
         self.observation_space = space_gym_utils.from_gym_space(
             env.observation_space,
             self.backend,

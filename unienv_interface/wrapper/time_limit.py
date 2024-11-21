@@ -28,6 +28,8 @@ class TimeLimitWrapper(
                 self.env.batch_size, 
                 dtype=self.backend.default_integer_dtype
             )
+            if self.device is not None:
+                self._episode_time = self.backend.to_device(self._episode_time, self.device)
 
         self.time_limit = time_limit
 
@@ -70,6 +72,8 @@ class TimeLimitWrapper(
                     self.env.batch_size, 
                     dtype=self.backend.default_integer_dtype
                 )
+                if self.device is not None:
+                    self._episode_time = self.backend.to_device(self._episode_time, self.device)
             else:
                 self._episode_time = self.backend.replace_inplace(
                     self._episode_time,

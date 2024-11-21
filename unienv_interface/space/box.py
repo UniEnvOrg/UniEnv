@@ -5,6 +5,13 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 import array_api_compat
 import gymnasium as gym
 
+def abbreviate_array(backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], array : BArrayType) -> Union[float, int, BArrayType]:
+    first_idx = [0] * len(array.shape)
+    first_elem = array[tuple(first_idx)]
+    if backend.array_api_namespace.all(array == first_elem):
+        return first_elem
+    return array
+
 class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
@@ -272,7 +279,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         Returns:
             A representation of the space
         """
-        return f"Box({self.backend.__name__}, {self.low}, {self.high}, {self.shape}, {self.dtype}, {self.device})"
+        return f"Box({self.backend.__name__}, {abbreviate_array(self.backend, self.low)}, {abbreviate_array(self.backend, self.high)}, {self.shape}, {self.dtype}, {self.device})"
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
