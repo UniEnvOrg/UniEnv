@@ -24,6 +24,7 @@ __all__ = [
     "batch_size",
     "batch_space",
     "batch_differing_spaces",
+    "unbatch_spaces",
     "iterate",
     "concatenate",
     "read_batched_data_with_mask",
@@ -250,6 +251,77 @@ def _batch_differing_spaces_undefined(spaces: typing.Sequence[Graph | Text | Seq
         spaces=[copy.deepcopy(space) for space in spaces],
         device=spaces[0].device, 
     )
+
+@singledispatch
+def unbatch_spaces(space: Space) -> Iterable[Space]:
+    raise TypeError(
+        f"The space provided to `unbatch_spaces` is not a batched Space instance, type: {type(space)}, {space}"
+    )
+
+@unbatch_spaces.register(Box)
+def _unbatch_spaces_box(space: Box):
+    for i in range(space.shape[0]):
+        yield Box(
+            backend=space.backend,
+            low=space.low[i],
+            high=space.high[i],
+            dtype=space.dtype,
+            device=space.device,
+        )
+
+@unbatch_spaces.register(Dict)
+def _unbatch_spaces_dict(space: Dict):
+    subspace_iterators = {}
+    for key, subspace in space.spaces.items():
+        subspace_iterators[key] = unbatch_spaces(subspace)
+    for items in zip(*subspace_iterators.values()):
+        yield Dict(
+            backend=space.backend,
+            spaces={key: value for key, value in zip(subspace_iterators.keys(), items)},
+            device=space.device,
+        )
+
+@unbatch_spaces.register(MultiDiscrete)
+def _unbatch_spaces_multi_discrete(space: MultiDiscrete):
+    for i in range(space.nvec.shape[0]):
+        if len(space.shape) == 1:
+            yield Discrete(
+                backend=space.backend,
+                n=int(space.nvec[i]),
+                start=int(space.start[i]),
+                device=space.device,
+                dtype=space.dtype,
+            )
+        else:
+            yield MultiDiscrete(
+                backend=space.backend,
+                nvec=space.nvec[i],
+                start=space.start[i],
+                device=space.device,
+                dtype=space.dtype,
+            )
+
+@unbatch_spaces.register(MultiBinary)
+def _unbatch_spaces_multi_binary(space: MultiBinary):
+    for i in range(space.shape[0]):
+        yield MultiBinary(
+            backend=space.backend,
+            shape=space.shape[1:],
+            device=space.device,
+            dtype=space.dtype,
+        )
+
+@unbatch_spaces.register(Tuple)
+def _unbatch_spaces_tuple(space: Tuple):
+    if all(type(subspace) in unbatch_spaces.registry for subspace in space.spaces):
+        for unbatched_subspaces_i in zip(*[unbatch_spaces(subspace) for subspace in space.spaces]):
+            yield Tuple(
+                backend=space.backend,
+                spaces=unbatched_subspaces_i,
+                device=space.device,
+            )
+
+    yield from space.spaces
 
 @singledispatch
 def iterate(space: Space, items: Any) -> Iterator:
