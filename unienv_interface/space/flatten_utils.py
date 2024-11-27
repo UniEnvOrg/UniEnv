@@ -388,7 +388,7 @@ def _batch_flatten_data_common(space: typing.Union[
 ], data: Any) -> Any:
     return space.backend.array_api_namespace.reshape(
         data, 
-        (space.shape[0], -1)
+        (data.shape[0], -1)
     )
 
 @batch_unflatten_data.register(Box)
@@ -399,7 +399,7 @@ def _batch_unflatten_data_common(space: typing.Union[
 ], data: Any) -> Any:
     return space.backend.array_api_namespace.reshape(
         data, 
-        space.shape
+        (data.shape[0], *space.shape[1:])
     )
 
 @batch_flatten_data.register(Dict)
