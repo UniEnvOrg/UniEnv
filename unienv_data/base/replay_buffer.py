@@ -16,8 +16,29 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
     dtype : BDtypeType
     capacity : Optional[int] = None
     
-    next_cursor : int = 0
-    single_instance_shape : Tuple[int, ...]
+    def __init__(
+        self,
+        single_instance_shape : Tuple[int, ...],
+        default_value : Optional[BArrayType] = None,
+    ):
+        self.single_instance_shape = single_instance_shape
+        self._default_value = default_value
+        self.next_cursor = 0
+
+    @property
+    def default_value(self) -> BArrayType:
+        return self._default_value or self.backend.array_api_namespace.zeros(
+            self.single_instance_shape,
+            dtype=self.dtype,
+            device=self.device
+        )
+
+    @default_value.setter
+    def default_value(self, value : Optional[BArrayType]):
+        if self.backend.array_api_namespace.all(value == 0):
+            self._default_value = None
+        else:
+            self._default_value = value
 
     @abc.abstractmethod
     def get(self, index : Union[int, slice, BArrayType, None]) -> BArrayType:
@@ -35,6 +56,7 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
         if self.capacity is None:
             raise NotImplementedError("Please override this method for storage without fixed capacity")
 
+        assert values.shape[1:] == self.single_instance_shape, f"Value shape {values.shape[1:]} does not match single instance shape {self.single_instance_shape}"
         b = values.shape[0]
         stop_index = self.next_cursor + b
         if stop_index <= self.capacity:
@@ -61,12 +83,15 @@ def index_with_offset(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     index : Union[int, slice, BArrayType, None],
     len_transitions : int,
-    capacity : int,
+    capacity : Optional[int],
     offset : int
 ) -> Union[int, BArrayType]:
     """
     Helpful function to convert replay buffer indices to data indices in the TensorStorage
     """
+    if capacity is None:
+        assert offset == 0, "Offset must be 0 for unbounded storage"
+        capacity = len_transitions
     if index is None:
         nonzero_index = backend.array_api_namespace.arange(len_transitions)
         data_index = (nonzero_index + offset) % capacity
@@ -105,6 +130,7 @@ StorageConstructorT = Callable[
         BDtypeType, # DType
         Tuple[int, ...], # Single instance shape
         Optional[int], # Capacity
+        Optional[BArrayType], # Default value
     ],
     TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]
 ]
@@ -147,7 +173,6 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
         self.stepwise_storages : Dict[str, TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]] = {}
         self.stepwise_spaces : Dict[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = {}
         self.stepwise_flat_spaces : Dict[str, Box[BArrayType, BDeviceType, BDtypeType, BRNGType]] = {}
-        self.stepwise_default_values : Dict[str, Any] = {}
         for key, stepwise_cfg in stepwise_storage_configs.items():
             assert backend == stepwise_cfg.space.backend, f"Backend mismatch for {key}"
             space = stepwise_cfg.space if device is None else stepwise_cfg.space.to_device(device)
@@ -158,6 +183,7 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
                 space.dtype,
                 space.shape,
                 capacity,
+                stepwise_cfg.default_value,
                 **stepwise_cfg.storage_constructor_kwargs
             )
             if capacity is not None:
@@ -171,12 +197,10 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
             
             self.stepwise_spaces[key] = space
             self.stepwise_flat_spaces[key] = space_flatten_utils.flatten_space(space)
-            self.stepwise_default_values[key] = stepwise_cfg.default_value
         
         self.episode_wise_storages : Dict[str, TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]] = {}
         self.episode_wise_spaces : Dict[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = {}
         self.episode_wise_flat_spaces : Dict[str, Box[BArrayType, BDeviceType, BDtypeType, BRNGType]] = {}
-        self.episode_wise_default_values : Dict[str, Any] = {}
         for key, episode_cfg in episode_storage_configs.items():
             assert backend == episode_cfg.space.backend, f"Backend mismatch for {key}"
             space = episode_cfg.space if device is None else episode_cfg.space.to_device(device)
@@ -187,11 +211,11 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
                 space.dtype,
                 space.shape,
                 episode_capacity,
+                episode_cfg.default_value,
                 **episode_cfg.storage_constructor_kwargs
             )
             self.episode_wise_spaces[key] = space
             self.episode_wise_flat_spaces[key] = space_flatten_utils.flatten_space(space)
-            self.episode_wise_default_values[key] = episode_cfg.default_value
         
         self.step_count = 0
         if len(episode_storage_configs) > 0 or episode_id_index_map_storage_constructor is not None:
@@ -258,8 +282,11 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
             storage.set(
                 not_present_in_storage_masks,
                 self.backend.array_api_namespace.broadcast_to(
-                    self.episode_wise_default_values[key],
-                    (not_present_b, ) + self.episode_wise_spaces[key].shape
+                    self.backend.array_api_namespace.unsqueeze(
+                        storage.default_value,
+                        axis=0
+                    ),
+                    (not_present_b, ) + storage.single_instance_shape
                 )
             )
         
@@ -287,8 +314,11 @@ class FlexibleReplayBuffer(Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
             for key, storage in self.episode_wise_storages.items():
                 storage.extend(
                     self.backend.array_api_namespace.broadcast_to(
-                        self.episode_wise_default_values[key],
-                        (storage_extend_num, ) + self.episode_wise_spaces[key].shape
+                        self.backend.array_api_namespace.unsqueeze(
+                            storage.default_value,
+                            axis=0
+                        ),
+                        (storage_extend_num, ) + storage.single_instance_shape
                     )
                 )
 
