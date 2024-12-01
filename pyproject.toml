@@ -38,7 +38,7 @@ mjx = [
 maniskill = [
     "mani_skill>=3.0.0b12",
     "torch"
-],
+]
 data = [
     "torchrl >= 0.6.0",
     "tensordict >= 0.6.2",
