@@ -1,2 +1,2 @@
-from .common import TransitionsBase, Transitions, TrajectorySlice, TransitionSampler, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, SamplerContextType, SamplerObsType, SamplerActType
-from .replay_buffer import TensorStorage, FlexibleReplayBuffer
+from .common import BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchBase, BatchSampler
+from .replay_buffer import TensorStorage, ReplayBuffer
