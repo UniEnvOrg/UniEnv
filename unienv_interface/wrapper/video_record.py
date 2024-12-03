@@ -204,7 +204,7 @@ class EpisodeWandbVideoWrapper(
         if len(self.episodic_frames) <= 1:
             return
         
-        assert self.episodic_frames[0].shape[2] == 3
+        assert self.episodic_frames[0].shape[2] == 3, "Only RGB frames are supported for wandb video logging, got shape {}".format(self.episodic_frames[0].shape)
         frames = np.zeros((
             len(self.episodic_frames),
             *self.episodic_frames[0].shape

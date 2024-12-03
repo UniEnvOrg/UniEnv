@@ -199,11 +199,13 @@ class FromManiSkillEnv(
         if render_ret is None:
             return None
         else:
-            return convert_maniskill_to_backend(
+            dat = convert_maniskill_to_backend(
                 render_ret,
                 self.backend,
                 self.device
             )
+            if dat.shape[0] == 1:
+                return dat.squeeze(0)
         
     # =========== Wrapper methods ==========
     def has_wrapper_attr(self, name: str) -> bool:
