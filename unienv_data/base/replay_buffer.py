@@ -38,6 +38,12 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._default_value = None
         else:
             self._default_value = value
+    
+    def extend_length(self, length : int) -> None:
+        """
+        This is used by capacity = None storages to extend the length of the storage
+        """
+        raise NotImplementedError
 
     @abc.abstractmethod
     def get(self, index : Union[int, slice, BArrayType, None]) -> BArrayType:
@@ -161,7 +167,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         start_storage_idx = self.offset + self.count
         if self.capacity is None:
             self.storage.set(slice(start_storage_idx, start_storage_idx + b), value)
-            self.count = self.offset
+            self.count = self.count + b
             return
         
         start_storage_idx = start_storage_idx % self.capacity

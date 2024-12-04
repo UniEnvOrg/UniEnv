@@ -34,7 +34,7 @@ class ListStorage(TensorStorage[
     def __len__(self):
         return len(self.data)
     
-    def _extend_to_length(self, length : int):
+    def extend_length(self, length : int):
         len_storage = len(self)
         if self.capacity is not None and length > self.capacity:
             raise IndexError("Index out of range")
@@ -68,7 +68,7 @@ class ListStorage(TensorStorage[
             else:
                 indices = range(*index.indices(self.capacity))
             return indices
-        elif isinstance(index, BArrayType):
+        elif self.backend.is_backendarray(index):
             if self.backend.dtype_is_boolean(
                 index.dtype
             ):
@@ -117,15 +117,18 @@ class ListStorage(TensorStorage[
             value = [value]
         elif isinstance(index, slice):
             if self.capacity is None:
-                start = 0 if index.start is None else index.start
-                stop = index.stop
+                start = 0 if index.start is None else (
+                    index.start if index.start >= 0 else index.start + len_storage
+                )
+                stop = len_storage if index.stop is None else (
+                    index.stop if index.stop >= 0 else index.stop + len_storage
+                )
                 step = 1 if index.step is None else index.step
 
                 indices = range(start, stop, step)
             else:
                 indices = range(*index.indices(self.capacity))
-            return indices
-        elif isinstance(index, BArrayType):
+        elif self.backend.is_backendarray(index):
             if self.backend.dtype_is_boolean(
                 index.dtype
             ):
@@ -149,7 +152,7 @@ class ListStorage(TensorStorage[
                 ), "Index out of range"
 
         max_idx = max(indices)
-        self._extend_to_length(max_idx + 1)
+        self.extend_length(max_idx + 1)
         for i, list_index in enumerate(indices):
             self.data[list_index] = value[i]
 
