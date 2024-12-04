@@ -4,11 +4,14 @@ version = "0.0.1a1"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
+    "tqdm",
     "gymnasium>=0.29.0",
     "pydlpack",
     "array-api-compat",
     "packaging",
     "pillow",
+    "transforms3d",
+    "h5py"
 ]
 
 [project.optional-dependencies]
@@ -16,11 +19,11 @@ video = [
     "moviepy>=1.0.3"
 ]
 dev = [
-    "pytest",
-    "tqdm",
+    "pytest"
 ]
 torch = [
-    "torch"
+    "torch",
+    "tensordict>=0.6"
 ]
 jax = [
     "jax"
@@ -38,10 +41,6 @@ mjx = [
 maniskill = [
     "mani_skill>=3.0.0b12",
     "torch"
-]
-data = [
-    "torchrl >= 0.6.0",
-    "tensordict >= 0.6.2",
 ]
 
 [tool.setuptools.packages.find]

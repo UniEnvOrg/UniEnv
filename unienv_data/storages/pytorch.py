@@ -6,7 +6,6 @@ from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.backends.base import ComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from tensordict.memmap import MemoryMappedTensor
-from torchrl.data.replay_buffers import LazyMemmapStorage
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List
 
 class PytorchTensorStorage(TensorStorage[
