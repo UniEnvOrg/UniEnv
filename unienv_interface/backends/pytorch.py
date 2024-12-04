@@ -71,7 +71,11 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
 
     @classmethod
     def replace_inplace(cls, data: torch.Tensor, index: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
-        data[index] = value
+        try:
+            data[index] = value
+        except RuntimeError:
+            data[index] = value.clone()
+        
         return data
 
     @classmethod

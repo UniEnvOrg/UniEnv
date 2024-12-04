@@ -210,7 +210,7 @@ class EpisodeWandbVideoWrapper(
             *self.episodic_frames[0].shape
         ))
         for i, frame in enumerate(self.episodic_frames):
-            frame_np = self.env.backend.to_numpy(frame)
+            frame_np = self.env.backend.to_numpy(frame) if not isinstance(frame, np.ndarray) else frame
             frames[i] = frame_np
         clip = self.wandb.Video(
             frames.transpose(0, 3, 1, 2),

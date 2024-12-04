@@ -104,6 +104,14 @@ class FromManiSkillEnv(
     def metadata(self) -> Dict[str, Any]:
         return self.env.metadata
 
+    def get_render_camera_params(
+        self
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        ret = {}
+        for name, camera in getattr(self.env, "_human_render_cameras", {}).items():
+            ret[name] = camera.get_params()
+        return ret
+
     @property
     def render_mode(self) -> Optional[str]:
         return self.env.render_mode
