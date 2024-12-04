@@ -77,7 +77,7 @@ class BatchSampler(abc.ABC, Generic[
     backend : ComputeBackend[SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
     device : Optional[SamplerDeviceType] = None
 
-    data : BatchBase[BArrayType, BDeviceType, BDtypeType, BRNGType, ContextType, ObsType, ActType]
+    data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]
 
     rng : Optional[SamplerRNGType] = None
 

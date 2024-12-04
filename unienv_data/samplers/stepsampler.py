@@ -11,7 +11,7 @@ class StepSampler(
 ):
     def __init__(
         self,
-        data : BatchBase[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
         batch_size : int,
         seed : Optional[int] = None
     ):

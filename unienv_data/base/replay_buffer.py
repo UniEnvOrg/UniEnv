@@ -2,7 +2,7 @@ import abc
 import os
 import dataclasses
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable
-from unienv_interface.space import Space, Box, flatten_utils as space_flatten_utils, batch_utils as space_batch_utils
+from unienv_interface.space import Space, Box, flatten_utils as sfu, batch_utils as sbu
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from .common import BatchBase, BatchT
@@ -44,7 +44,11 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
         raise NotImplementedError
     
     @abc.abstractmethod
-    def set(self, index : Union[int, slice, BArrayType, None], value : BArrayType):
+    def set(self, index : Union[int, slice, BArrayType, None], value : BArrayType) -> None:
+        raise NotImplementedError
+    
+    @abc.abstractmethod
+    def clear(self) -> None:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -110,11 +114,16 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.storage = storage
         self.count = 0
         self.offset = 0
+        assert storage.single_instance_shape == sfu.flatten_space(single_space).shape, "Storage shape must match single instance shape"
         super().__init__(single_space)
 
     def __len__(self) -> int:
         return self.count
     
+    @property
+    def capacity(self) -> Optional[int]:
+        return self.storage.capacity
+
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.storage.backend
@@ -166,14 +175,20 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         if b <= remaining_capacity:
             self.storage.set(slice(start_storage_idx, start_storage_idx + b), value)
             self.count = min(self.count + b, self.capacity)
-            self.offset = (self.offset + b) % self.capacity
+            if self.count >= self.capacity:
+                self.offset = (self.offset + b) % self.capacity
             return
         else:
             self.storage.set(slice(start_storage_idx, self.capacity), value[:remaining_capacity])
             self.count = min(self.count + remaining_capacity, self.capacity)
             self.offset = 0
             self.extend_flattened(value[remaining_capacity:])
-        
+    
+    def clear(self):
+        self.count = 0
+        self.offset = 0
+        self.storage.clear()
+
     def dumps(self, path : Union[str, os.PathLike]):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         for key, storage in self.stepwise_storages.items():

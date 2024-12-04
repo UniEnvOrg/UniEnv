@@ -153,6 +153,9 @@ class ListStorage(TensorStorage[
         for i, list_index in enumerate(indices):
             self.data[list_index] = value[i]
 
+    def clear(self) -> None:
+        self.data = []
+
     def dumps(self, path: Union[str, os.PathLike]) -> None:
         with h5py.File(path, 'w') as f:
             actual_data = [
