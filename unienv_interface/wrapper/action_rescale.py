@@ -6,7 +6,6 @@ from unienv_interface.space import batch_utils, Box
 from unienv_interface.utils import seed_util
 import os
 import numpy as np
-import array_api_compat
 
 """
 This wrapper will rescale the action space to a new range.
@@ -27,8 +26,8 @@ class ActionRescaleWrapper(
         assert isinstance(env.action_space, Box), "ActionRescaleWrapper only supports Box action spaces"
         assert env.backend.dtype_is_real_floating(env.action_space.dtype), "ActionRescaleWrapper only supports real-valued floating action spaces"
         assert env.action_space.is_bounded('both'), "ActionRescaleWrapper only supports bounded action spaces"
-        # new_low = new_low if isinstance(new_low, float) else array_api_compat.to_device(new_low, env.device)
-        # new_high = new_high if isinstance(new_high, float) else array_api_compat.to_device(new_high, env.device)
+        # new_low = new_low if isinstance(new_low, float) else env.backend.to_device(new_low, env.device)
+        # new_high = new_high if isinstance(new_high, float) else env.backend.to_device(new_high, env.device)
         self.action_space = Box(
             backend=env.backend,
             low=new_low,

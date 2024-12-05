@@ -25,11 +25,105 @@ __all__ = [
     "batch_space",
     "batch_differing_spaces",
     "unbatch_spaces",
+    "swap_batch_dims",
+    "swap_batch_dims_in_data",
     "iterate",
     "concatenate",
     "read_batched_data_with_mask",
     "write_batched_data_with_mask"
 ]
+
+def _tensor_transpose(backend : ComputeBackend, tensor : BArrayType, dim1 : int, dim2 : int) -> BArrayType:
+    dims = list(range(tensor.ndim))
+    dims[dim1] = dim2
+    dims[dim2] = dim1
+    return backend.array_api_namespace.permute_dims(tensor, axes=tuple(dims))
+
+def _shape_transpose(shape : tuple[int, ...], dim1 : int, dim2 : int) -> tuple[int, ...]:
+    shape = list(shape)
+    shape[dim1], shape[dim2] = shape[dim2], shape[dim1]
+    return tuple(shape)
+
+@singledispatch
+def swap_batch_dims(space: Space, dim1: int, dim2: int) -> Space:
+    raise TypeError(
+        f"The space provided to `swap_batch_dims` is not a Space instance, type: {type(space)}, {space}"
+    )
+
+@swap_batch_dims.register(Box)
+def _swap_batch_dims_box(space: Box, dim1: int, dim2: int):
+    return Box(
+        backend=space.backend,
+        low=_tensor_transpose(space.backend, space.low, dim1, dim2),
+        high=_tensor_transpose(space.backend, space.high, dim1, dim2),
+        dtype=space.dtype,
+        device=space.device,
+    )
+
+@swap_batch_dims.register(MultiDiscrete)
+def _swap_batch_dims_multi_discrete(space: MultiDiscrete, dim1: int, dim2: int):
+    return MultiDiscrete(
+        backend=space.backend,
+        nvec=_tensor_transpose(space.backend, space.nvec, dim1, dim2),
+        start=_tensor_transpose(space.backend, space.start, dim1, dim2),
+        dtype=space.dtype,
+        device=space.device,
+    )
+
+@swap_batch_dims.register(MultiBinary)
+def _swap_batch_dims_multi_binary(space: MultiBinary, dim1: int, dim2: int):
+    return MultiBinary(
+        backend=space.backend,
+        shape=_shape_transpose(space.shape, dim1, dim2),
+        dtype=space.dtype,
+        device=space.device,
+    )
+
+@swap_batch_dims.register(Dict)
+def _swap_batch_dims_dict(space: Dict, dim1: int, dim2: int):
+    return Dict(
+        backend=space.backend,
+        spaces={key: swap_batch_dims(subspace, dim1, dim2) for key, subspace in space.spaces.items()},
+        device=space.device,
+    )
+
+@swap_batch_dims.register(Tuple)
+def _swap_batch_dims_tuple(space: Tuple, dim1: int, dim2: int):
+    assert all(type(subspace) in swap_batch_dims.registry for subspace in space.spaces), "Expected all subspaces in Tuple to be swappable"
+    return Tuple(
+        backend=space.backend,
+        spaces=[swap_batch_dims(subspace, dim1, dim2) for subspace in space.spaces],
+        device=space.device,
+    )
+
+@singledispatch
+def swap_batch_dims_in_data(
+    space: Space, data: Any, dim1: int, dim2: int
+) -> Any:
+    raise TypeError(
+        f"The space provided to `swap_batch_dims_in_data` is not a Space instance, type: {type(space)}, {space}"
+    )
+
+@swap_batch_dims_in_data.register(Box)
+@swap_batch_dims_in_data.register(MultiDiscrete)
+@swap_batch_dims_in_data.register(MultiBinary)
+def _swap_batch_dims_in_data_common(space: Box, data: BArrayType, dim1: int, dim2: int):
+    return _tensor_transpose(space.backend, data, dim1, dim2)
+
+@swap_batch_dims_in_data.register(Dict)
+def _swap_batch_dims_in_data_dict(space: Dict, data: dict[str, Any], dim1: int, dim2: int):
+    return {
+        key: swap_batch_dims_in_data(subspace, data[key], dim1, dim2)
+        for key, subspace in space.spaces.items()
+    }
+
+@swap_batch_dims_in_data.register(Tuple)
+def _swap_batch_dims_in_data_tuple(space: Tuple, data: tuple[Any, ...], dim1: int, dim2: int):
+    assert all(type(subspace) in swap_batch_dims_in_data.registry for subspace in space.spaces), "Expected all subspaces in Tuple to be swappable"
+    return tuple(
+        swap_batch_dims_in_data(subspace, data[i], dim1, dim2)
+        for i, subspace in enumerate(space.spaces)
+    )
 
 @singledispatch
 def batch_size(space: Space) -> int:
@@ -393,11 +487,10 @@ def concatenate(
 @concatenate.register(MultiDiscrete)
 @concatenate.register(MultiBinary)
 def _concatenate_base(
-    space: Box | Discrete | MultiDiscrete | MultiBinary,
+    space: Box | MultiDiscrete | MultiBinary,
     items: Iterable,
 ) -> Any:
-    return space.backend.stack(items)
-
+    return space.backend.array_api_namespace.stack(items, axis=0)
 
 @concatenate.register(Dict)
 def _concatenate_dict(
@@ -412,17 +505,12 @@ def _concatenate_dict(
 def _concatenate_tuple(
     space: Tuple, items: Iterable
 ) -> tuple[Any, ...]:
-    return tuple(
-        concatenate(subspace, [item[i] for item in items])
-        for (i, subspace) in enumerate(space.spaces)
-    )
-
-@concatenate.register(Graph)
-@concatenate.register(Text)
-@concatenate.register(Sequence)
-@concatenate.register(Space)
-@concatenate.register(Union)
-def _concatenate_custom(space: Space, items: Iterable, out: None) -> tuple[Any, ...]:
+    if all(type(subspace) in concatenate.registry for subspace in space.spaces):
+        return tuple(
+            concatenate(subspace, [item[i] for item in items])
+            for (i, subspace) in enumerate(space.spaces)
+        )
+    
     return tuple(items)
 
 @singledispatch

@@ -7,7 +7,6 @@ from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, Re
 from unienv_interface.env_base.wrapper import Wrapper, WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
-import array_api_compat
 
 def backend_array_transform(
     target_backend : ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT],
@@ -21,7 +20,7 @@ def backend_array_transform(
             source_backend
         )
         if target_device is not None:
-            ret = array_api_compat.to_device(
+            ret = target_backend.to_device(
                 ret,
                 target_device
             )
@@ -35,7 +34,7 @@ def backend_array_device_transform(
     data : Any
 ) -> Any:
     if target_device is not None:
-        ret = array_api_compat.to_device(
+        ret = target_backend.to_device(
             data,
             target_device
         )

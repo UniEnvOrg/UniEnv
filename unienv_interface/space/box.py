@@ -2,7 +2,6 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-import array_api_compat
 import gymnasium as gym
 
 def abbreviate_array(backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], array : BArrayType) -> Union[float, int, BArrayType]:
@@ -61,8 +60,8 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
 
         # Before performing any operation on low and high arrays, move to the device to avoid jax tiling problems
         if device is not None:
-            _low = array_api_compat.to_device(_low, device)
-            _high = array_api_compat.to_device(_high, device)
+            _low = backend.to_device(_low, device)
+            _high = backend.to_device(_high, device)
 
         assert not array_api_workspace.any(array_api_workspace.isnan(_low)), f"low contains NaN values: {_low}"
         assert not array_api_workspace.any(array_api_workspace.isnan(_high)), f"high contains NaN values: {_high}"
@@ -310,7 +309,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         new_tensor = other_data
         
         if self.device is not None:
-            new_tensor = array_api_compat.to_device(new_tensor, self.device)
+            new_tensor = self.backend.to_device(new_tensor, self.device)
             # For some reason jax doesn't have good support for dlpack converted back cpu arrays, so we need to move it to the device first
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)

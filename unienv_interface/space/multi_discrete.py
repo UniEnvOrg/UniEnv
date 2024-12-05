@@ -3,7 +3,6 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-import array_api_compat
 import gymnasium as gym
 from .discrete import Discrete
 
@@ -22,8 +21,8 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
             nvec = backend.array_api_namespace.astype(nvec, dtype)
             start = backend.array_api_namespace.astype(start, dtype) if start is not None else None
         if device is not None:
-            nvec = array_api_compat.to_device(nvec, device)
-            start = array_api_compat.to_device(start, device) if start is not None else None
+            nvec = backend.to_device(nvec, device)
+            start = backend.to_device(start, device) if start is not None else None
         
         self.nvec = nvec
         self.start = start
@@ -111,7 +110,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
         else:
             samp = self.backend.array_api_namespace.astype(floored_sample, self.nvec.dtype)
         if self.device is not None:
-            samp = array_api_compat.to_device(samp, self.device)
+            samp = self.backend.to_device(samp, self.device)
         return samp
 
     def contains(self, x: BArrayType) -> bool:
@@ -188,7 +187,7 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
         new_tensor = other_data
         
         if self.device is not None:
-            new_tensor = array_api_compat.to_device(new_tensor, self.device)
+            new_tensor = self.backend.to_device(new_tensor, self.device)
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         

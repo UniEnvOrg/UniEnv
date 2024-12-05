@@ -7,7 +7,6 @@ from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, Re
 from unienv_interface.env_base.wrapper import ContextObservationWrapper, ActionWrapper, WrapperContextT, WrapperObsT, WrapperActT
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.space import Space, flatten_utils as space_flatten_utils
-import array_api_compat
 
 class FlattenActionWrapper(
     ActionWrapper[

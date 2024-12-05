@@ -4,7 +4,6 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-import array_api_compat
 import gymnasium as gym
 
 class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeType, BRNGType]):

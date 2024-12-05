@@ -3,7 +3,6 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-import array_api_compat
 import gymnasium as gym
 
 class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
@@ -116,7 +115,7 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
         new_tensor = other_data
         
         if self.device is not None:
-            new_tensor = array_api_compat.to_device(new_tensor, self.device)
+            new_tensor = self.backend.to_device(new_tensor, self.device)
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)
         
