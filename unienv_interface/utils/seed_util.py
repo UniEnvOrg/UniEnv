@@ -13,6 +13,7 @@ def next_seed_rng(rng : BRNGType, backend : ComputeBackend) -> Tuple[
         rng,
         shape=(1,),
         from_num=0,
-        to_num=2**32,
+        to_num=int(2**31),
+        dtype=backend.default_integer_dtype
     )
     return rng, int(sample[0])

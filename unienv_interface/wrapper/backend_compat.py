@@ -33,7 +33,7 @@ def backend_array_device_transform(
     target_device : Optional[WrapperBDeviceT],
     data : Any
 ) -> Any:
-    if target_device is not None:
+    if target_backend.is_backendarray(data) and target_device is not None:
         ret = target_backend.to_device(
             data,
             target_device
@@ -103,8 +103,9 @@ class ToBackendWrapper(
         self._backend = backend
         self._device = device
 
+        env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
         self._rng : WrapperBRngT = backend.random_number_generator(
-            seed=seed_util.next_seed_rng(env.rng, env.backend),
+            seed=seed,
             device=device
         )
         self.action_space = env.action_space.to_backend(
@@ -246,8 +247,9 @@ class ToDeviceWrapper(
             device
         )
 
+        env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
         self._rng : BRNGType = env.backend.random_number_generator(
-            seed=seed_util.next_seed_rng(env.rng, env.backend),
+            seed=seed,
             device=device
         )
 
