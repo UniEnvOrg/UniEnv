@@ -105,6 +105,7 @@ def index_with_offset(
             return rotated_mask
         else:
             assert backend.array_api_namespace.min(index) >= -len_transitions and backend.array_api_namespace.max(index) < len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
+            assert backend.dtype_is_real_integer(index.dtype), f"Index dtype {index.dtype} is not an integer"
             nonzero_index = (index + len_transitions) % len_transitions
             data_index = (nonzero_index + offset) % capacity
             return data_index
@@ -121,7 +122,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.count = 0
         self.offset = 0
         assert storage.single_instance_shape == sfu.flatten_space(single_space).shape, "Storage shape must match single instance shape"
-        super().__init__(single_space)
+        super().__init__(single_space.to_device(storage.device))
 
     def __len__(self) -> int:
         return self.count

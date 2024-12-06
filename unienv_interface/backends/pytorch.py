@@ -90,7 +90,7 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
         """
         Sample from a discrete uniform distribution [from_num, to_num) with shape `shape`.
         """
-        t = torch.zeros(shape, dtype=dtype, device=device)
+        t = torch.zeros(shape, dtype=dtype or torch.int, device=device)
         t.random_(from_num, to_num, generator=rng)
         return rng, t
 

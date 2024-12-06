@@ -2,6 +2,7 @@ from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tupl
 from unienv_data import *
 from unienv_data.storages.common import ListStorage
 from unienv_data.storages.pytorch import PytorchTensorStorage
+from unienv_data.samplers import *
 from unienv_interface.space import *
 from unienv_interface.space import flatten_utils as sfu, batch_utils as sbu
 from unienv_interface.backends import NumpyComputeBackend, ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -100,6 +101,8 @@ def perform_torch_replay_buffer_with_space_test(
         rng
     )
 
+    return rb
+
 def perform_list_replay_buffer_with_space_test(
     space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
     capacity: Optional[int],
@@ -125,7 +128,7 @@ def perform_list_replay_buffer_with_space_test(
         perform_rb_fill_test(rb, space, 10, rng)
         rb.clear()
         perform_rb_fill_test(rb, space, 5, rng)
-        return
+        return rb
     
     perform_rb_fill_test(
         rb,
@@ -157,6 +160,7 @@ def perform_list_replay_buffer_with_space_test(
         capacity*2,
         rng
     )
+    return rb
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("use_mmap", [False, True])
@@ -184,6 +188,36 @@ def test_torch_replay_buffer(
         use_mmap,
         seed
     )
+
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024])
+def test_torch_sampler(
+    capacity : int,
+    seed : int
+):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    space = Box(
+        PyTorchComputeBackend,
+        0.0,
+        1.0,
+        torch.float32,
+        shape=(3, 5, 2)
+    )
+    rb = perform_torch_replay_buffer_with_space_test(
+        space,
+        capacity,
+        False,
+        seed
+    )
+    sampler = StepSampler(
+        rb,
+        batch_size=capacity//2,
+        seed=seed
+    )
+    sample_space = sampler.sampled_space
+    for i in range(10):
+        sample = sampler.sample()
+        assert sample_space.contains(sample)
 
 @pytest.mark.parametrize("capacity", [None, 10])
 @pytest.mark.parametrize("seed", [0, 1024])
