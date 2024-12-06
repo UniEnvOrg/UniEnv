@@ -9,7 +9,7 @@ from unienv_interface.backends.pytorch import PyTorchComputeBackend
 import torch
 import numpy as np
 import pytest
-from test_replay_buffer_torch import perform_torch_replay_buffer_with_space_test
+from test_replay_buffer import perform_torch_replay_buffer_with_space_test
 
 
 @pytest.mark.parametrize("capacity", [10, 50])
