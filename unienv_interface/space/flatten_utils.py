@@ -278,7 +278,7 @@ def batch_flat_dim(space: Space) -> Optional[int]:
 @batch_flat_dim.register(MultiBinary)
 @batch_flat_dim.register(MultiDiscrete)
 def _batch_flat_dim_common(space: Box) -> Optional[int]:
-    if len(space.shape) <= 1:
+    if len(space.shape) <= 0:
         return None
     return int(np.prod(space.shape[1:]))
 
