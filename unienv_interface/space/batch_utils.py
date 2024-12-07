@@ -28,6 +28,7 @@ __all__ = [
     "swap_batch_dims",
     "swap_batch_dims_in_data",
     "iterate",
+    "get_at"
     "concatenate",
     "read_batched_data_with_mask",
     "write_batched_data_with_mask"
@@ -417,62 +418,38 @@ def _unbatch_spaces_tuple(space: Tuple):
 
     yield from space.spaces
 
-@singledispatch
 def iterate(space: Space, items: Any) -> Iterator:
-    if isinstance(space, Space):
-        raise NotImplementedError(
-            f"Space of type `{type(space)}` doesn't have an registered `iterate` function. Register `{type(space)}` for `iterate` to support it."
-        )
-    else:
-        raise TypeError(
-            f"The space provided to `iterate` is not a Space instance, type: {type(space)}, {space}"
-        )
+    for i in range(batch_size(space)):
+        yield get_at(space, items, i)
+    
+@singledispatch
+def get_at(space: Space, items: Any, index: int) -> Any:
+    raise TypeError(
+        f"The space provided to `get_at` is not a batched space instance, type: {type(space)}, {space}"
+    )
 
-@iterate.register(Discrete)
-def _iterate_discrete(space: Discrete, items: Iterable):
+@get_at.register(Discrete)
+def _get_at_discrete(space: Discrete, items: Iterable, index: int):
     raise TypeError("Unable to iterate over a space of type `Discrete`.")
 
-@iterate.register(Box)
-@iterate.register(MultiDiscrete)
-@iterate.register(MultiBinary)
-def _iterate_base(space: Box | MultiDiscrete | MultiBinary, items: Any):
-    try:
-        for i in items.shape[0]:
-            yield items[i]
-    except TypeError as e:
-        raise TypeError(
-            f"Unable to iterate over the following elements: {items}"
-        ) from e
+@get_at.register(Box)
+@get_at.register(MultiDiscrete)
+@get_at.register(MultiBinary)
+def _get_at_common(space: Box | MultiDiscrete | MultiBinary, items: Any, index: int):
+    return items[index]
 
-@iterate.register(Dict)
-def _iterate_dict(space: Dict, items: dict[str, Any]):
-    keys, values = zip(
-        *[
-            (key, iterate(subspace, items[key]))
-            for key, subspace in space.spaces.items()
-        ]
-    )
-    for item in zip(*values):
-        yield {key: value for key, value in zip(keys, item)}
+@get_at.register(Dict)
+def _get_at_dict(space: Dict, items: dict[str, Any], index : int):
+    ret = {key: get_at(subspace, items[key], index) for key, subspace in space.spaces.items()}
+    return ret
 
-@iterate.register(Tuple)
-def _iterate_tuple(space: Tuple, items: tuple[Any, ...]):
+@get_at.register(Tuple)
+def _get_at_tuple(space: Tuple, items: tuple[Any, ...], index : int):
     # If this is a tuple of custom subspaces only, then simply iterate over items
     if all(type(subspace) in iterate.registry for subspace in space.spaces):
-        return zip(*[iterate(subspace, items[i]) for i, subspace in enumerate(space.spaces)])
+        return tuple(get_at(subspace, item, index) for (subspace, item) in zip(space.spaces, items))
 
-    try:
-        return iter(items)
-    except Exception as e:
-        unregistered_spaces = [
-            type(subspace)
-            for subspace in space.spaces
-            if type(subspace) not in iterate.registry
-        ]
-        raise TypeError(
-            f"Could not iterate through {space} as no custom iterate function is registered for {unregistered_spaces} and `iter(items)` raised the following error: {e}."
-        ) from e
-
+    return items[index]
 
 @singledispatch
 def concatenate(

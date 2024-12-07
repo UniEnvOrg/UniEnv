@@ -32,11 +32,11 @@ __ALL__ = [
     "batch_unflatten_data"
 ]
 
-def is_flattenable(space: Space) -> bool:
-    return flat_dim(space) is not None
+def is_flattenable(space: Space, start_dim : int = 0) -> bool:
+    return flat_dim(space, start_dim) is not None
 
 @singledispatch
-def flat_dim(space : Space) -> Optional[int]:
+def flat_dim(space : Space, start_dim : int = 0) -> Optional[int]:
     return None
 
 @flat_dim.register(Box)
@@ -44,60 +44,65 @@ def flat_dim(space : Space) -> Optional[int]:
 @flat_dim.register(MultiDiscrete)
 def _flat_dim_common(space: typing.Union[
     Box, MultiBinary, MultiDiscrete
-]) -> int:
-    return int(np.prod(space.shape))
+], start_dim : int = 0) -> int:
+    assert start_dim >= 0 and start_dim <= len(space.shape)
+    return int(np.prod(space.shape[start_dim:]))
 
 @flat_dim.register(Discrete)
-def _flat_dim_discrete(space: Discrete) -> int:
+def _flat_dim_discrete(space: Discrete, start_dim : int = 0) -> int:
+    assert start_dim == 0
     return 1
 
 @flat_dim.register(Dict)
-def _flat_dim_dict(space: Dict) -> Optional[int]:
+def _flat_dim_dict(space: Dict, start_dim : int = 0) -> Optional[int]:
     dims = 0
     for key, subspace in space.spaces.items():
-        dim = flat_dim(subspace)
+        dim = flat_dim(subspace, start_dim)
         if dim is None:
             return None
         dims += dim
     return dims
 
 @flat_dim.register(Text)
-def _flat_dim_text(space: Text) -> int:
+def _flat_dim_text(space: Text, start_dim : int = 0) -> int:
+    assert start_dim == 0
     return space.max_length
 
 @flat_dim.register(Tuple)
-def _flat_dim_tuple(space: Tuple) -> Optional[int]:
+def _flat_dim_tuple(space: Tuple, start_dim : int = 0) -> Optional[int]:
     dims = 0
     for subspace in space.spaces:
-        dim = flat_dim(subspace)
+        dim = flat_dim(subspace, start_dim)
         if dim is None:
             return None
         dims += dim
     return dims
 
 @flat_dim.register(Union)
-def _flat_dim_oneof(space: Union) -> Optional[int]:
+def _flat_dim_oneof(space: Union, start_dim : int = 0) -> Optional[int]:
+    assert start_dim == 0
     max_dim = 0
     for subspace in space.spaces:
-        dim = flat_dim(subspace)
+        dim = flat_dim(subspace, start_dim)
         if dim is None:
             return None
         max_dim = max(max_dim, dim)
     return max_dim + 1
 
 @singledispatch
-def flatten_space(space: Space) -> Box:
+def flatten_space(space: Space, start_dim : int = 0) -> Box:
     raise NotImplementedError(f"Unknown space: `{space}`")
 
 @flatten_space.register(Box)
-def _flatten_space_box(space: Box) -> Box:
+def _flatten_space_box(space: Box, start_dim : int = 0) -> Box:
+    assert start_dim >= 0 and start_dim <= len(space.shape)
     return Box(
         space.backend,
         low=space.backend.array_api_namespace.reshape(
-            space.low, (-1,)
+            space.low, space.low.shape[:start_dim] + (-1,)
         ), 
         high=space.backend.array_api_namespace.reshape(
-            space.high, (-1,)
+            space.high, space.high.shape[:start_dim] + (-1,)
         ), 
         dtype=space.dtype,
         device=space.device
@@ -106,31 +111,32 @@ def _flatten_space_box(space: Box) -> Box:
 @flatten_space.register(Discrete)
 @flatten_space.register(MultiBinary)
 @flatten_space.register(MultiDiscrete)
-def _flatten_space_binary(space: Discrete | MultiBinary | MultiDiscrete) -> Box:
+def _flatten_space_binary(space: Discrete | MultiBinary | MultiDiscrete, start_dim : int = 0) -> Box:
     return Box(
         space.backend,
         low=0, high=1, 
-        shape=(flat_dim(space),), 
+        shape=space.shape[:start_dim] + (flat_dim(space, start_dim),), 
         dtype=space.dtype or space.backend.default_integer_dtype,
         device=space.device
     )
 
 @flatten_space.register(Tuple)
 @flatten_space.register(Dict)
-def _flatten_space_tuple(space: Tuple | Dict) -> Box:
+def _flatten_space_tuple(space: Tuple | Dict, start_dim : int = 0) -> Box:
     assert space.is_flattenable
-    space_list = [flatten_space(s) for s in space.spaces] if isinstance(space, Tuple) else [flatten_space(s) for s in space.spaces.values()]
+    space_list = [flatten_space(s, start_dim) for s in space.spaces] if isinstance(space, Tuple) else [flatten_space(s, start_dim) for s in space.spaces.values()]
 
     return Box(
         space.backend,
-        low=space.backend.array_api_namespace.concat([s.low for s in space_list], axis=0),
-        high=space.backend.array_api_namespace.concat([s.high for s in space_list], axis=0),
+        low=space.backend.array_api_namespace.concat([s.low for s in space_list], axis=start_dim),
+        high=space.backend.array_api_namespace.concat([s.high for s in space_list], axis=start_dim),
         dtype=space.backend.default_floating_dtype,
         device=space.device
     )
 
 @flatten_space.register(Text)
-def _flatten_space_text(space: Text) -> Box:
+def _flatten_space_text(space: Text, start_dim : int = 0) -> Box:
+    assert start_dim == 0
     return Box(
         space.backend,
         low=0, high=len(space.character_set), 
@@ -140,7 +146,8 @@ def _flatten_space_text(space: Text) -> Box:
     )
 
 @flatten_space.register(Union)
-def _flatten_space_oneof(space: Union) -> Box:
+def _flatten_space_oneof(space: Union, start_dim : int = 0) -> Box:
+    assert start_dim == 0
     num_subspaces = len(space.spaces)
     max_flatdim = max(flat_dim(s) for s in space.spaces) + 1
 
@@ -151,7 +158,7 @@ def _flatten_space_oneof(space: Union) -> Box:
     overall_high = space.backend.array_api_namespace.max(highs)
 
     low = space.backend.array_api_namespace.concat([
-        space.backend.array_api_namespace.asarray([0]), 
+        space.backend.array_api_namespace.zeros(1), 
         space.backend.array_api_namespace.full(max_flatdim - 1, overall_low)
     ])
     high = space.backend.array_api_namespace.concat([
@@ -162,18 +169,17 @@ def _flatten_space_oneof(space: Union) -> Box:
     return Box(
         backend=space.backend,
         low=low, high=high, 
-        shape=(max_flatdim,), 
         dtype=space.backend.default_floating_dtype,
         device=space.device
     )
 
 @singledispatch
-def flatten_data(space : Space, data : Any) -> Any:
-    return space.flatten(data)
+def flatten_data(space : Space, data : Any, start_dim : int = 0) -> Any:
+    raise NotImplementedError(f"Flattening not supported for space {space}")
 
 @singledispatch
-def unflatten_data(space : Space, data : Any) -> Any:
-    return space.unflatten(data)
+def unflatten_data(space : Space, data : Any, start_dim : int = 0) -> Any:
+    raise NotImplementedError(f"Unflattening not supported for space {space}")
 
 @flatten_data.register(Box)
 @flatten_data.register(Discrete)
@@ -181,8 +187,10 @@ def unflatten_data(space : Space, data : Any) -> Any:
 @flatten_data.register(MultiDiscrete)
 def _flatten_data_common(space: typing.Union[
     Box, Discrete, MultiBinary, MultiDiscrete
-], data: Any) -> Any:
-    return space.backend.array_api_namespace.reshape(data, (-1,))
+], data: Any, start_dim : int = 0) -> Any:
+    assert start_dim >= 0 and start_dim <= len(space.shape)
+    
+    return space.backend.array_api_namespace.reshape(data, data.shape[:start_dim] + (-1,))
 
 @unflatten_data.register(Box)
 @unflatten_data.register(Discrete)
@@ -190,27 +198,33 @@ def _flatten_data_common(space: typing.Union[
 @unflatten_data.register(MultiDiscrete)
 def _unflatten_data_common(space: typing.Union[
     Box, Discrete, MultiBinary, MultiDiscrete
-], data: Any) -> Any:
-    return space.backend.array_api_namespace.reshape(data, space.shape)
+], data: Any, start_dim : int = 0) -> Any:
+    assert start_dim >= 0 and start_dim <= len(space.shape)
+    unflat_dat = space.backend.array_api_namespace.reshape(data, data.shape[:start_dim] + space.shape[start_dim:])
+    unflat_dat = space.backend.array_api_namespace.astype(unflat_dat, space.dtype)
+    return unflat_dat
 
 @flatten_data.register(Dict)
-def _flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any]) -> Any:
+def _flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> Any:
     return space.backend.array_api_namespace.concat([
-        flatten_data(subspace, data[key]) for key, subspace in space.spaces.items()
+        flatten_data(subspace, data[key], start_dim) for key, subspace in space.spaces.items()
     ], axis=0)
 
 @unflatten_data.register(Dict)
-def _unflatten_data_dict(space: Dict, data: Any) -> Any:
+def _unflatten_data_dict(space: Dict, data: Any, start_dim : int = 0) -> Any:
     result = {}
     start = 0
     for key, subspace in space.spaces.items():
-        end = start + subspace.flat_dim
-        result[key] = unflatten_data(subspace, data[start:end])
+        end = start + flat_dim(subspace, start_dim)
+        part_idx = space.backend.array_api_namespace.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.get_device(data))
+        part_data = space.backend.array_api_namespace.take(data, part_idx, axis=start_dim)
+        result[key] = unflatten_data(subspace, part_data, start_dim)
         start = end
     return result
 
 @flatten_data.register(Text)
-def _flatten_data_text(space: Text, data: str) -> Any:
+def _flatten_data_text(space: Text, data: str, start_dim : int = 0) -> Any:
+    assert start_dim == 0
     pad_size = space.max_length - len(data)
     data = space.backend.array_api_namespace.asarray(
         [space.character_index(c) for c in data], 
@@ -228,29 +242,34 @@ def _flatten_data_text(space: Text, data: str) -> Any:
     return data
 
 @unflatten_data.register(Text)
-def _unflatten_data_text(space: Text, data: Any) -> str:
+def _unflatten_data_text(space: Text, data: Any, start_dim : int = 0) -> str:
+    assert start_dim == 0
     return "".join([
         space.character_set[int(i)] for i in data if i < len(space.character_set)
     ])
 
 @flatten_data.register(Tuple)
-def _flatten_data_tuple(space: Tuple, data: typing.Tuple) -> Any:
+def _flatten_data_tuple(space: Tuple, data: typing.Tuple, start_dim : int = 0) -> Any:
     return space.backend.array_api_namespace.concat([
-        flatten_data(subspace, data[i]) for i, subspace in enumerate(space.spaces)
-    ], axis=0)
+        flatten_data(subspace, data[i], start_dim) for i, subspace in enumerate(space.spaces)
+    ], axis=start_dim)
 
 @unflatten_data.register(Tuple)
-def _unflatten_data_tuple(space: Tuple, data: Any) -> Any:
+def _unflatten_data_tuple(space: Tuple, data: Any, start_dim : int = 0) -> Any:
     result = []
     start = 0
     for subspace in space.spaces:
-        end = start + subspace.flat_dim
-        result.append(unflatten_data(subspace, data[start:end]))
+        end = start + flat_dim(subspace, start_dim)
+        part_idx = space.backend.array_api_namespace.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.get_device(data))
+        part_data = space.backend.array_api_namespace.take(data, part_idx, axis=start_dim)
+        print(part_data)
+        result.append(unflatten_data(subspace, part_data, start_dim))
         start = end
     return tuple(result)
 
 @flatten_data.register(Union)
-def _flatten_data_oneof(space: Union, data: typing.Tuple[int, Any]) -> Any:
+def _flatten_data_oneof(space: Union, data: typing.Tuple[int, Any], start_dim : int = 0) -> Any:
+    assert start_dim == 0
     space_idx, space_data = data
     flat_sample = flatten_data(space.spaces[space_idx], space_data)
     padding_size = space.flat_dim - len(flat_sample)
@@ -261,7 +280,8 @@ def _flatten_data_oneof(space: Union, data: typing.Tuple[int, Any]) -> Any:
     return space.backend.array_api_namespace.concat((index_array, flat_sample))
 
 @unflatten_data.register(Union)
-def _unflatten_data_oneof(space: Union, data: Any) -> Any:
+def _unflatten_data_oneof(space: Union, data: Any, start_dim : int = 0) -> Any:
+    assert start_dim == 0
     space_idx = data[0]
     subspace = space.spaces[space_idx]
     subspace_data = data[1:flat_dim(subspace)+1]

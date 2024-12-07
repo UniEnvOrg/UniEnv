@@ -23,7 +23,8 @@ def test_step_sampler(
         PyTorchComputeBackend,
         0.0,
         1.0,
-        torch.float32,
+        dtype=torch.float32,
+        device=device,
         shape=(3, 5, 2)
     )
     rb = perform_torch_replay_buffer_with_space_test(
@@ -43,3 +44,60 @@ def test_step_sampler(
         assert sample_space.contains(sample)
 
 
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024])
+@pytest.mark.parametrize("prefetch_horizon", [0, 1, 2])
+@pytest.mark.parametrize("postfetch_horizon", [0, 1, 2])
+def test_slice_sampler(
+    capacity : int,
+    seed : int,
+    prefetch_horizon : int,
+    postfetch_horizon : int
+):
+    if prefetch_horizon == 0 and postfetch_horizon == 0:
+        return
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dat_space = Box(
+        PyTorchComputeBackend,
+        0.0,
+        1.0,
+        dtype=torch.float32,
+        device=device,
+        shape=(3, 5, 2)
+    )
+    space = Dict(
+        PyTorchComputeBackend,
+        spaces={
+            "dat": dat_space,
+            "episode_id": Box(
+                PyTorchComputeBackend,
+                0,
+                10000,
+                dtype=torch.int64,
+                device=device,
+                shape=()
+            )
+        },
+        device=device
+    )
+    rb = perform_torch_replay_buffer_with_space_test(
+        space,
+        capacity,
+        False,
+        seed
+    )
+    sampler = SliceSampler(
+        rb,
+        batch_size=capacity//2,
+        prefetch_horizon=prefetch_horizon,
+        postfetch_horizon=postfetch_horizon,
+        get_episode_id_fn=lambda x: x["episode_id"],
+        seed=seed
+    )
+    sample_space = sampler.sampled_space
+    for i in range(100):
+        sample = sampler.sample()
+        # print("Sampled")
+        # for key, value in sample.items():
+        #     assert sample_space.spaces[key].contains(value)
+        assert sample_space.contains(sample)

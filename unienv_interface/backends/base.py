@@ -65,6 +65,10 @@ class ComputeBackend(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGT
     def to_device(cls, data : BArrayType, device : BDeviceType) -> BArrayType:
         raise NotImplementedError
     
+    @classmethod
+    def get_device(cls, data : BArrayType) -> BDeviceType:
+        return array_api_compat.device(data)
+
     # @classmethod
     # def from_dict(cls, data : Dict[str,Any]) -> _BDictType:
     #     new_data = {}

@@ -29,17 +29,20 @@ def perform_rb_fill_test(
     assert len(replay_buffer) == fill_length + prev_len if replay_buffer.capacity is None else min(replay_buffer.capacity, fill_length + prev_len)
 
     check_size = fill_length if replay_buffer.capacity is None else min(fill_length, replay_buffer.capacity)
+    index_check_mask = space.backend.array_api_namespace.zeros((fill_length,), dtype=space.backend.default_boolean_dtype, device=space.device)
+    index_check_mask[-check_size:] = True
+    ref_slice = sbu.read_batched_data_with_mask(batched_space, datas, index_check_mask)
     for i in range(check_size):
         sampled = replay_buffer.get_at(-(check_size - i))
         sampled_p = replay_buffer.get_at(len(replay_buffer) - check_size + i)
-        ref_data = datas[-check_size:][i]
+        ref_data = sbu.get_at(batched_space, ref_slice, i)
         flat_sampled = sfu.flatten_data(space, sampled)
         flat_sampled_p = sfu.flatten_data(space, sampled_p)
         flat_data = sfu.flatten_data(space, ref_data)
         assert space.backend.array_api_namespace.all(flat_sampled == flat_data)
         assert space.backend.array_api_namespace.all(flat_sampled_p == flat_data)
+    
     sampled_slice = replay_buffer.get_at(slice(-check_size, None))
-    ref_slice = datas[-check_size:]
     flat_sampled_slice = sfu.flatten_data(batched_space, sampled_slice)
     flat_ref_slice = sfu.flatten_data(batched_space, ref_slice)
     assert space.backend.array_api_namespace.all(flat_sampled_slice == flat_ref_slice)
@@ -63,7 +66,7 @@ def perform_torch_replay_buffer_with_space_test(
     )
     rb = ReplayBuffer(
         storage,
-        flattened_space,
+        space,
     )
     
     rng = torch.Generator(space.device)

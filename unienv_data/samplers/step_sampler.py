@@ -35,7 +35,7 @@ class StepSampler(
     def device(self) -> Optional[BDeviceType]:
         return self.data.device
     
-    def sample(self) -> BatchT:
+    def sample_indices(self) -> BArrayType:
         self.rng, indices = self.backend.random_discrete_uniform(
             self.rng,
             (self.batch_size,),
@@ -43,5 +43,13 @@ class StepSampler(
             len(self.data),
             device=self.device,
         )
+        return indices
+
+    def sample_flat(self) -> BArrayType:
+        indices = self.sample_indices()
+        return self.data.get_flattened_at(indices)
+
+    def sample(self) -> BatchT:
+        indices = self.sample_indices()
         return self.data.get_at(indices)
 
