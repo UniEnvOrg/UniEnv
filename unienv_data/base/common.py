@@ -61,6 +61,11 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         flattened_data = space_flatten_utils.batch_flatten_data(self._batched_space, value)
         self.extend_flattened(flattened_data)
 
+    def close(self) -> None:
+        pass
+
+    def __del__(self) -> None:
+        self.close()
 
 SamplerBatchT = TypeVar('SamplerBatchT')
 SamplerArrayType = TypeVar('SamplerArrayType')

@@ -14,6 +14,7 @@ class PytorchTensorStorage(TensorStorage[
     PyTorchComputeBackend.DTYPE_TYPE, 
     PyTorchComputeBackend.RNG_TYPE,
 ]):
+    backend = PyTorchComputeBackend
     save_ext : str = ".memmap"
 
     def __init__(
@@ -32,8 +33,7 @@ class PytorchTensorStorage(TensorStorage[
             default_value=default_value
         )
 
-        assert capacity is not None and capacity > 0, "Capacity must be a positive integer"
-        self.backend = PyTorchComputeBackend
+        device = None if device is None else torch.device(device)
         self.device = device
         self.dtype = dtype
         self.capacity = capacity
@@ -58,8 +58,6 @@ class PytorchTensorStorage(TensorStorage[
                     filename=mmap_location,
                     existsok=True
                 )
-            if self._default_value is not None:
-                self._default_value = self._default_value.to(device) if device is not None else self._default_value.cpu()
         else:
             assert capacity is not None, "Capacity must be specified when creating a new tensor"
             self.data = torch.zeros(
@@ -67,8 +65,13 @@ class PytorchTensorStorage(TensorStorage[
                 dtype=dtype,
                 device=device
             )
-            if device is not None and self._default_value is not None:
+        
+        if self._default_value is not None:
+            if device is not None:
                 self._default_value = self._default_value.to(device)
+            self._default_value = PyTorchComputeBackend.array_api_namespace.astype(self._default_value, dtype)
+        
+        self.capacity = capacity
         # Fill storage with default value
         if self.default_value is not None:
             self.data.copy_(self.default_value.expand((self.capacity, *self.single_instance_shape)))
@@ -86,12 +89,15 @@ class PytorchTensorStorage(TensorStorage[
             self.data[index] = value
 
     def clear(self) -> None:
-        self.data.fill_(0)
+        if self._default_value is None:
+            self.data.fill_(0)
+        else:
+            self.data[:] = self._default_value.unsqueeze(0)
     
     def dumps(self, path: Union[str, os.PathLike]) -> None:
         if self.memap:
             data : MemoryMappedTensor = self.data
-            if os.path.samefile(data.filename, path):
+            if os.path.exists(path) and os.path.samefile(data.filename, path):
                 return
         if os.path.exists(path):
             MemoryMappedTensor.from_filename(
@@ -110,8 +116,12 @@ class PytorchTensorStorage(TensorStorage[
             )
     
     def loads(self, path: Union[str, os.PathLike]) -> None:
-        self.data = MemoryMappedTensor.from_filename(
+        if os.path.exists(path) and self.memap and os.path.samefile(self.data.filename, path):
+            return
+        
+        data_memap = MemoryMappedTensor.from_filename(
             shape=self.data.shape,
             filename=path,
             dtype=self.data.dtype,
         )
+        self.data.copy_(data_memap)

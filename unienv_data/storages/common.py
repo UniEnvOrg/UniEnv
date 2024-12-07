@@ -3,6 +3,7 @@ from unienv_data.base import *
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.numpy import NumpyComputeBackend
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable
 import h5py
 import numpy as np
@@ -184,3 +185,91 @@ class ListStorage(TensorStorage[
             self.data = [None] * indices.attrs['length']
             for i, dat in zip(indices, data):
                 self.data[i] = self.backend.from_numpy(dat)
+
+class HDF5Storage(TensorStorage[
+    NumpyComputeBackend.ARRAY_TYPE, 
+    NumpyComputeBackend.DEVICE_TYPE, 
+    NumpyComputeBackend.DTYPE_TYPE, 
+    NumpyComputeBackend.RNG_TYPE,
+]):
+    backend = NumpyComputeBackend
+    device = None
+    save_ext : str = ".hdf5"
+
+    def __init__(
+        self,
+        dtype : NumpyComputeBackend.DTYPE_TYPE,
+        single_instance_shape : Tuple[int, ...],
+        capacity : Optional[int], # None can only be used when mmap_load is True
+        file_location : str,
+        load : bool = False,
+        default_value : Optional[NumpyComputeBackend.ARRAY_TYPE] = None,
+    ):
+        super().__init__(
+            single_instance_shape=single_instance_shape,
+            default_value=default_value
+        )
+
+        assert capacity is not None and capacity > 0, "Capacity must be a positive integer"
+        
+        self.dtype = dtype
+        self.capacity = capacity
+
+        if os.path.exists(file_location) and load:    
+            self.file = h5py.File(file_location, 'r+')
+            assert 'data' in self.file, "No data found in file"
+            self.data = self.file['data']
+            assert self.data.shape[1:] == single_instance_shape, "Mismatched shape"
+            assert capacity is None or self.data.shape[0] == capacity, "Capacity mismatch"
+            capacity = capacity or self.data.shape[0]
+        else:
+            if os.path.exists(file_location):
+                os.remove(file_location)
+            self.file = h5py.File(file_location, 'w')
+            self.data = self.file.create_dataset(
+                'data',
+                shape=(capacity, *single_instance_shape),
+                dtype=self.dtype,
+            )
+
+        if self._default_value is not None:
+            self._default_value = self._default_value.astype(self.dtype)
+
+    def get(self, index : Union[int, slice, np.ndarray, None]) -> np.ndarray:
+        if index is None:
+            return self.data
+        return self.data[index]
+
+    def set(self, index : Union[int, slice, np.ndarray, None], value : np.ndarray) -> None:
+        if index is None:
+            self.data[:] = value
+        else:
+            self.data[index] = value
+
+    def clear(self) -> None:
+        if self._default_value is None:
+            self.data[:] = 0
+        else:
+            self.data[:] = self._default_value[np.newaxis]
+    
+    def dumps(self, path: Union[str, os.PathLike]) -> None:
+        if os.path.exists(path) and os.path.samefile(self.file.filename, path):
+            self.file.flush()     
+        else:
+            target_file = h5py.File(path, 'w')
+            for key in self.file:
+                self.file.copy(key, target_file)
+    
+    def loads(self, path: Union[str, os.PathLike]) -> None:
+        assert os.path.exists(path), "File does not exist"
+        if os.path.samefile(self.file.filename, path):
+            return
+        
+        source_file = h5py.File(path, 'r')
+        assert 'data' in source_file, "No data found in file"
+        source_file.copy('data', self.file)
+        self.data = self.file['data']
+        source_file.close()
+    
+    def close(self):
+        self.file.close()

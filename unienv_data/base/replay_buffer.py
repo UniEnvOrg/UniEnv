@@ -65,6 +65,12 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
     def loads(self, path : Union[str, os.PathLike]) -> None:
         raise NotImplementedError
 
+    def close(self) -> None:
+        pass
+
+    def __del__(self) -> None:
+        self.close()
+
 def index_with_offset(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     index : Union[int, slice, BArrayType, None],
@@ -198,28 +204,24 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def dumps(self, path : Union[str, os.PathLike]):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        for key, storage in self.stepwise_storages.items():
-            storage.dumps(os.path.join(path, f"stepwise_{key}{storage.save_ext}"))
-        for key, storage in self.episode_wise_storages.items():
-            storage.dumps(os.path.join(path, f"episode_wise_{key}{storage.save_ext}"))
-        self.episode_id_index_map_storage.dumps(os.path.join(path, f"episode_id_index_map{self.episode_id_index_map_storage.save_ext}"))
+        self.storage.dumps(os.path.join(path, f"storage{self.storage.save_ext}"))
         metadata = {
-            "step_count": self.step_count,
-            "capacity": self.capacity,
-            "episode_capacity": self.episode_capacity
+            "count": self.count,
+            "offset": self.offset
         }
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
     
     def loads(self, path : Union[str, os.PathLike]):
-        for key, storage in self.stepwise_storages.items():
-            storage.loads(os.path.join(path, f"stepwise_{key}{storage.save_ext}"))
-        for key, storage in self.episode_wise_storages.items():
-            storage.loads(os.path.join(path, f"episode_wise_{key}{storage.save_ext}"))
-        self.episode_id_index_map_storage.loads(os.path.join(path, f"episode_id_index_map{self.episode_id_index_map_storage.save_ext}"))
+        self.storage.loads(os.path.join(path, f"storage{self.storage.save_ext}"))
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
-            self.step_count = metadata["step_count"]
-            self.capacity = metadata["capacity"]
-            self.episode_capacity = metadata["episode_capacity"]
+            self.count = metadata["count"]
+            self.offset = metadata["offset"]
 
+
+    def close(self) -> None:
+        self.storage.close()
+
+    def __del__(self) -> None:
+        self.close()
