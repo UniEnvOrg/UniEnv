@@ -39,7 +39,8 @@ class PytorchTensorStorage(TensorStorage[
         self.capacity = capacity
         if use_mmap:
             assert device is None or device.type == 'cpu', "Memory mapping is only supported for CPU tensors"
-            if os.path.exists(mmap_location) and mmap_load:
+            if mmap_load:
+                assert os.path.exists(mmap_location), "Memory-mapped file does not exist"
                 self.data = MemoryMappedTensor.from_filename(
                     mmap_location,
                     dtype=dtype,
@@ -73,7 +74,7 @@ class PytorchTensorStorage(TensorStorage[
         
         self.capacity = capacity
         # Fill storage with default value
-        if self.default_value is not None:
+        if self.default_value is not None and not mmap_load:
             self.data.copy_(self.default_value.expand((self.capacity, *self.single_instance_shape)))
         self.memap = use_mmap
 
@@ -95,11 +96,9 @@ class PytorchTensorStorage(TensorStorage[
             self.data[:] = self._default_value.unsqueeze(0)
     
     def dumps(self, path: Union[str, os.PathLike]) -> None:
-        if self.memap:
-            data : MemoryMappedTensor = self.data
-            if os.path.exists(path) and os.path.samefile(data.filename, path):
-                return
         if os.path.exists(path):
+            if self.memap and os.path.samefile(self.data.filename, path):
+                return
             MemoryMappedTensor.from_filename(
                 shape=self.data.shape,
                 filename=path,

@@ -221,7 +221,6 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self.count = metadata["count"]
             self.offset = metadata["offset"]
 
-
     def close(self) -> None:
         self.storage.close()
 

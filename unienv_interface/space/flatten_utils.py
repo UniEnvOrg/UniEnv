@@ -208,7 +208,7 @@ def _unflatten_data_common(space: typing.Union[
 def _flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> Any:
     return space.backend.array_api_namespace.concat([
         flatten_data(subspace, data[key], start_dim) for key, subspace in space.spaces.items()
-    ], axis=0)
+    ], axis=start_dim)
 
 @unflatten_data.register(Dict)
 def _unflatten_data_dict(space: Dict, data: Any, start_dim : int = 0) -> Any:

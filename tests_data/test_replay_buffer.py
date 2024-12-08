@@ -10,6 +10,7 @@ from unienv_interface.backends.pytorch import PyTorchComputeBackend
 import torch
 import numpy as np
 import tempfile
+import os
 import pytest
 
 def perform_rb_fill_test(
@@ -46,6 +47,7 @@ def perform_rb_fill_test(
     flat_sampled_slice = sfu.flatten_data(batched_space, sampled_slice)
     flat_ref_slice = sfu.flatten_data(batched_space, ref_slice)
     assert space.backend.array_api_namespace.all(flat_sampled_slice == flat_ref_slice)
+    return slice(-check_size, None), flat_ref_slice
 
 
 def perform_torch_replay_buffer_with_space_test(
@@ -56,13 +58,14 @@ def perform_torch_replay_buffer_with_space_test(
 ):
     flattened_space = sfu.flatten_space(space)
     single_instance_shape = flattened_space.shape
+    tempdumpdir = tempfile.mkdtemp()
     storage = PytorchTensorStorage(
         space.device,
         flattened_space.dtype,
         single_instance_shape,
         capacity,
         use_mmap=use_mmap,
-        mmap_location=None if not use_mmap else tempfile.mktemp(),
+        mmap_location=None if not use_mmap else os.path.join(tempdumpdir, "storage.memmap"),
     )
     rb = ReplayBuffer(
         storage,
@@ -88,6 +91,31 @@ def perform_torch_replay_buffer_with_space_test(
     assert rb.offset == 0
     rb.clear()
 
+    ref_idx, flat_ref_slice = perform_rb_fill_test(
+        rb,
+        space,
+        capacity,
+        rng
+    )
+    rb.dumps(tempdumpdir)
+    new_rb = ReplayBuffer(
+        PytorchTensorStorage(
+            space.device,
+            flattened_space.dtype,
+            single_instance_shape,
+            capacity,
+            use_mmap=use_mmap,
+            mmap_location=None if not use_mmap else os.path.join(tempdumpdir, "storage.memmap"),
+            mmap_load=True
+        ),
+        space
+    )
+    new_rb.loads(tempdumpdir)
+    slice_space = sbu.batch_space(space, capacity)
+    new_slice = new_rb.get_at(ref_idx)
+    new_flat_slice = sfu.flatten_data(slice_space, new_slice)
+    assert torch.allclose(rb.storage.data, new_rb.storage.data)
+    assert torch.allclose(flat_ref_slice, new_flat_slice)
 
     perform_rb_fill_test(
         rb,
@@ -181,7 +209,7 @@ def perform_list_replay_buffer_with_space_test(
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("use_mmap", [False, True])
-@pytest.mark.parametrize("seed", [0, 1024])
+@pytest.mark.parametrize("seed", [0, 1024, 2048])
 def test_torch_replay_buffer(
     capacity : int,
     use_mmap : bool,
@@ -194,7 +222,7 @@ def test_torch_replay_buffer(
     space = Box(
         PyTorchComputeBackend,
         0.0,
-        1.0,
+        100.0,
         torch.float32,
         device=device,
         shape=(3, 5, 2)
@@ -215,7 +243,7 @@ def test_list_replay_buffer(
     space = Box(
         NumpyComputeBackend,
         0.0,
-        1.0,
+        100.0,
         np.float32,
         shape=(3, 5, 2)
     )
