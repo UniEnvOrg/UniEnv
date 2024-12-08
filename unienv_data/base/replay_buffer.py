@@ -187,15 +187,17 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         remaining_capacity = self.capacity - start_storage_idx
         if b <= remaining_capacity:
             self.storage.set(slice(start_storage_idx, start_storage_idx + b), value)
+            outflow = max(0, self.count + b - self.capacity)
+            if outflow > 0:
+                self.offset = (self.offset + outflow) % self.capacity
             self.count = min(self.count + b, self.capacity)
-            if self.count >= self.capacity:
-                self.offset = (self.offset + b) % self.capacity
             return
         else:
             self.storage.set(slice(start_storage_idx, self.capacity), value[:remaining_capacity])
             self.count = min(self.count + remaining_capacity, self.capacity)
             self.offset = 0
             self.extend_flattened(value[remaining_capacity:])
+            return
     
     def clear(self):
         self.count = 0

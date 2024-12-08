@@ -76,16 +76,23 @@ def perform_torch_replay_buffer_with_space_test(
     perform_rb_fill_test(
         rb,
         space,
-        capacity // 2,
+        capacity - 1,
         rng
     )
+    perform_rb_fill_test(
+        rb,
+        space,
+        1,
+        rng
+    )
+    assert rb.offset == 0
     rb.clear()
 
 
     perform_rb_fill_test(
         rb,
         space,
-        capacity,
+        capacity * 3,
         rng
     )
     perform_rb_fill_test(
@@ -136,16 +143,23 @@ def perform_list_replay_buffer_with_space_test(
     perform_rb_fill_test(
         rb,
         space,
-        capacity // 2,
+        capacity - 1,
         rng
     )
+    perform_rb_fill_test(
+        rb,
+        space,
+        1,
+        rng
+    )
+    assert rb.offset == 0
     rb.clear()
 
 
     perform_rb_fill_test(
         rb,
         space,
-        capacity,
+        capacity * 3,
         rng
     )
     perform_rb_fill_test(
