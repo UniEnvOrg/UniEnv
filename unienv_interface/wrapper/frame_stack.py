@@ -162,3 +162,49 @@ class FrameStackWrapper(
             obs_last_stacked
         )
         return next(obs_iter)
+
+    def reset(
+        self,
+        *args,
+        mask: Optional[BArrayType] = None,
+        seed: Optional[int] = None,
+        **kwargs
+    ) -> Tuple[ContextType, Union[DictT[str, Any], Any], DictT[str, Any]]:
+        # TODO: If a mask is provided, we should only reset the stack for the masked indices
+        context, obs, info = self.env.reset(
+            *args,
+            mask=mask,
+            seed=seed,
+            **kwargs
+        )
+        if self.action_deque is not None:
+            self.action_deque.clear()
+        if self.obs_deque is not None:
+            self.obs_deque.clear()
+            n_obs = self.map_observation(obs)
+            self.obs_deque.append(obs)
+        else:
+            n_obs = self.map_observation(obs)
+
+        return context, n_obs, info
+    
+    def step(
+        self,
+        action: ActType
+    ) -> Tuple[
+        Union[DictT[str, Any], Any],
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
+        DictT[str, Any]
+    ]:
+        obs, rew, terminated, truncated, info = self.env.step(action)
+        if self.action_deque is not None:
+            self.action_deque.append(action)
+        if self.obs_deque is not None:
+            n_obs = self.map_observation(obs)
+            self.obs_deque.append(obs)
+        else:
+            n_obs = self.map_observation(obs)
+        
+        return n_obs, rew, terminated, truncated, info
