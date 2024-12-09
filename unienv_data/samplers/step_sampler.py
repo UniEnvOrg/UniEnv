@@ -13,19 +13,24 @@ class StepSampler(
         self,
         data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
         batch_size : int,
-        seed : Optional[int] = None
+        seed : Optional[int] = None,
+        device : Optional[BDeviceType] = None
     ):
         assert batch_size > 0, "Batch size must be a positive integer"
         self.data = data
         self.batch_size = batch_size
+        self._device = device
         self.sampled_space = sbu.batch_space(
             self.data.single_space,
             batch_size
         )
-        self.rng = self.backend.random_number_generator(
+        self.data_rng = self.backend.random_number_generator(
             seed,
-            device=self.device
+            device=data.device
         )
+        if device is not None:
+            self.sampled_space = self.sampled_space.to_device(device)
+
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -33,23 +38,28 @@ class StepSampler(
     
     @property
     def device(self) -> Optional[BDeviceType]:
-        return self.data.device
+        return self._device or self.data.device
     
     def sample_indices(self) -> BArrayType:
-        self.rng, indices = self.backend.random_discrete_uniform(
-            self.rng,
+        self.data_rng, indices = self.backend.random_discrete_uniform(
+            self.data_rng,
             (self.batch_size,),
             0,
             len(self.data),
-            device=self.device,
+            device=self.data.device,
         )
         return indices
 
     def sample_flat(self) -> BArrayType:
         indices = self.sample_indices()
-        return self.data.get_flattened_at(indices)
-
+        dat = self.data.get_flattened_at(indices)
+        if self._device is not None:
+            dat = self.backend.to_device(dat, self._device)
+        return dat
+    
     def sample(self) -> BatchT:
         indices = self.sample_indices()
-        return self.data.get_at(indices)
-
+        dat = self.data.get_at(indices)
+        if self._device is not None:
+            dat = self.sampled_space.from_same_backend(dat)
+        return dat

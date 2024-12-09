@@ -17,6 +17,7 @@ class SliceSampler(
         postfetch_horizon : int = 0,
         get_episode_id_fn: Optional[Callable[[BatchT], BArrayType]] = None,
         seed : Optional[int] = None,
+        device : Optional[BDeviceType] = None
     ):
         assert batch_size > 0, "Batch size must be a positive integer"
         assert prefetch_horizon >= 0, "Prefetch horizon must be a non-negative integer"
@@ -27,6 +28,7 @@ class SliceSampler(
         self.prefetch_horizon = prefetch_horizon
         self.postfetch_horizon = postfetch_horizon
         self.get_episode_id_fn = get_episode_id_fn
+        self._device = device
 
         self.single_slice_space = sbu.batch_space(
             self.data.single_space,
@@ -36,9 +38,13 @@ class SliceSampler(
             self.single_slice_space,
             batch_size
         )
-        self.rng = self.backend.random_number_generator(
+        if device is not None:
+            self.single_slice_space = self.single_slice_space.to_device(device)
+            self.sampled_space = self.sampled_space.to_device(device)
+
+        self.data_rng = self.backend.random_number_generator(
             seed,
-            device=self.device
+            device=data.device
         )
 
     @property
@@ -47,18 +53,21 @@ class SliceSampler(
     
     @property
     def device(self) -> Optional[BDeviceType]:
-        return self.data.device
+        return self._device or self.data.device
     
     def sample_indices(self) -> BArrayType:
-        self.rng, indices = self.backend.random_discrete_uniform( # (B, )
-            self.rng,
+        """
+        Sample indexes to slice the data, returns a tensor of shape (B, T) that resides on the same device as the data
+        """
+        self.data_rng, indices = self.backend.random_discrete_uniform( # (B, )
+            self.data_rng,
             (self.batch_size,),
             0,
             len(self.data),
-            device=self.device,
+            device=self.data.device,
         )
         indices_shifts = self.backend.array_api_namespace.arange( # (T, )
-            -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=indices.dtype, device=self.device
+            -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=indices.dtype, device=self.data.device
         )
         indices = self.backend.array_api_namespace.expand_dims(indices, axis=1) + indices_shifts # (B, T)
         indices = self.backend.array_api_namespace.clip(indices, 0, len(self.data) - 1)
@@ -69,6 +78,8 @@ class SliceSampler(
         flat_idx = self.backend.array_api_namespace.reshape(indices, (-1,)) # (B * T, )
         dat_flat = self.data.get_flattened_at(flat_idx) # (B * T, D)
         assert dat_flat.shape[0] == (self.prefetch_horizon + self.postfetch_horizon + 1) * self.batch_size
+        if self._device is not None:
+            dat_flat = self.backend.to_device(dat_flat, self._device)
         dat = self.backend.array_api_namespace.reshape(dat_flat, (*indices.shape, -1)) # (B, T, D)
         return dat
 
@@ -77,9 +88,7 @@ class SliceSampler(
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
         return dat
     
-    def sample_flat(self) -> BArrayType:
-        flat_dat = self.sample_unfiltered_flat()
-        
+    def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> BArrayType:
         if self.get_episode_id_fn is not None:
             dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
 
@@ -91,11 +100,14 @@ class SliceSampler(
             if self.prefetch_horizon > 0:
                 num_eq_prefetch = self.backend.array_api_namespace.sum(episode_id_eq[:, :self.prefetch_horizon], axis=1)
                 fill_idx_prefetch = self.prefetch_horizon - num_eq_prefetch
-                fill_value_prefetch = flat_dat[self.backend.array_api_namespace.arange(self.batch_size), fill_idx_prefetch] # (B, D)
-                fill_value_prefetch = self.backend.array_api_namespace.broadcast_to(
-                    self.backend.array_api_namespace.expand_dims(fill_value_prefetch, axis=1), # (B, 1, D)
-                    (self.batch_size, self.prefetch_horizon, flat_dat.shape[-1]) # (B, T, D)
-                )
+                fill_value_prefetch = flat_dat[
+                    self.backend.array_api_namespace.arange(
+                        self.batch_size,
+                        device=fill_idx_prefetch.device
+                    ), 
+                    fill_idx_prefetch
+                ] # (B, D)
+                fill_value_prefetch = fill_value_prefetch[:, None, :] # (B, 1, D)
                 flat_dat_prefetch = self.backend.array_api_namespace.where(
                     episode_id_eq[:, :self.prefetch_horizon, None],
                     flat_dat[:, :self.prefetch_horizon],
@@ -108,10 +120,7 @@ class SliceSampler(
                 num_eq_postfetch = self.backend.array_api_namespace.sum(episode_id_eq[:, -self.postfetch_horizon:], axis=1)            
                 fill_idx_postfetch = self.prefetch_horizon + num_eq_postfetch
                 fill_value_postfetch = flat_dat[self.backend.array_api_namespace.arange(self.batch_size), fill_idx_postfetch]
-                fill_value_postfetch = self.backend.array_api_namespace.broadcast_to(
-                    self.backend.array_api_namespace.expand_dims(fill_value_postfetch, axis=1),
-                    (self.batch_size, self.postfetch_horizon + 1, flat_dat.shape[-1])
-                )
+                fill_value_postfetch = fill_value_postfetch[:, None, :] # (B, 1, D)
                 flat_dat_postfetch = self.backend.array_api_namespace.where(
                     episode_id_eq[:, self.prefetch_horizon:, None],
                     flat_dat[:, self.prefetch_horizon:],
@@ -123,7 +132,12 @@ class SliceSampler(
             flat_dat = self.backend.array_api_namespace.concatenate((flat_dat_prefetch, flat_dat_postfetch), axis=1)
         return flat_dat
 
+    def sample_flat(self) -> BArrayType:
+        flat_dat = self.sample_unfiltered_flat()
+        return self.unfiltered_to_filtered_flat(flat_dat)
+
     def sample(self):
         flat_dat = self.sample_flat()
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
         return dat
+    

@@ -85,6 +85,10 @@ class BatchSampler(abc.ABC, Generic[
     data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]
 
     rng : Optional[SamplerRNGType] = None
+    data_rng : Optional[BRNGType] = None
+
+    def sample_flat(self) -> SamplerArrayType:
+        return space_flatten_utils.flatten_data(self.sampled_space, self.sample(), start_dim=1)
 
     @abc.abstractmethod
     def sample(self) -> SamplerBatchT:
@@ -93,3 +97,8 @@ class BatchSampler(abc.ABC, Generic[
         """
         raise NotImplementedError
     
+    def close(self) -> None:
+        pass
+
+    def __del__(self) -> None:
+        self.close()

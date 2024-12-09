@@ -43,6 +43,43 @@ def test_step_sampler(
         sample = sampler.sample()
         assert sample_space.contains(sample)
 
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024])
+def test_multiprocessing_sampler(
+    capacity : int,
+    seed : int
+):
+    device = torch.device("cpu")
+    space = Box(
+        PyTorchComputeBackend,
+        0.0,
+        1.0,
+        dtype=torch.float32,
+        device=device,
+        shape=(3, 5, 2)
+    )
+    rb = perform_torch_replay_buffer_with_space_test(
+        space,
+        capacity,
+        False,
+        seed
+    )
+    sampler = StepSampler(
+        rb,
+        batch_size=capacity//2,
+        seed=seed,
+    )
+    sampler = MultiprocessingSampler(
+        sampler,
+        n_workers=4,
+        n_buffers=8,
+        ctx=torch.multiprocessing.get_context("spawn")
+    )
+    sample_space = sampler.sampled_space
+    for i in range(10):
+        sample = sampler.sample()
+        assert sample_space.contains(sample)
+    
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024])
@@ -72,7 +109,7 @@ def test_slice_sampler(
             "episode_id": Box(
                 PyTorchComputeBackend,
                 0,
-                10000,
+                2,
                 dtype=torch.int64,
                 device=device,
                 shape=()
@@ -86,6 +123,7 @@ def test_slice_sampler(
         False,
         seed
     )
+    
     sampler = SliceSampler(
         rb,
         batch_size=capacity//2,
@@ -96,8 +134,17 @@ def test_slice_sampler(
     )
     sample_space = sampler.sampled_space
     for i in range(100):
+        unfiltered_flat = sampler.sample_unfiltered_flat()
+        unfiltered = sfu.unflatten_data(sample_space, unfiltered_flat, start_dim=2)
+        filtered_flat = sampler.unfiltered_to_filtered_flat(unfiltered_flat)
+        filtered = sfu.unflatten_data(sample_space, filtered_flat, start_dim=2)
+        
+        ok_mask = unfiltered['episode_id'] == unfiltered['episode_id'][:, prefetch_horizon:prefetch_horizon+1]
+        assert torch.allclose(unfiltered_flat[ok_mask], filtered_flat[ok_mask])
+
         sample = sampler.sample()
         # print("Sampled")
         # for key, value in sample.items():
         #     assert sample_space.spaces[key].contains(value)
         assert sample_space.contains(sample)
+

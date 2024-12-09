@@ -14,6 +14,7 @@ def next_seed_rng(rng : BRNGType, backend : ComputeBackend) -> Tuple[
         shape=(1,),
         from_num=0,
         to_num=int(2**31),
-        dtype=backend.default_integer_dtype
+        dtype=backend.default_integer_dtype,
+        device=None if not hasattr(rng, 'device') else rng.device
     )
     return rng, int(sample[0])

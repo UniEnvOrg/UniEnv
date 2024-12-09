@@ -212,8 +212,10 @@ class FromManiSkillEnv(
                 self.backend,
                 self.device
             )
-            if dat.shape[0] == 1:
+            if PyTorchComputeBackend.is_backendarray(dat) and dat.shape[0] == 1:
                 return dat.squeeze(0)
+            else:
+                return None
         
     # =========== Wrapper methods ==========
     def has_wrapper_attr(self, name: str) -> bool:
