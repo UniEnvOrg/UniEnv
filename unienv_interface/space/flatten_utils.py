@@ -45,12 +45,14 @@ def flat_dim(space : Space, start_dim : int = 0) -> Optional[int]:
 def _flat_dim_common(space: typing.Union[
     Box, MultiBinary, MultiDiscrete
 ], start_dim : int = 0) -> int:
-    assert start_dim >= 0 and start_dim <= len(space.shape)
+    if start_dim < 0 or start_dim > len(space.shape):
+        return None
     return int(np.prod(space.shape[start_dim:]))
 
 @flat_dim.register(Discrete)
 def _flat_dim_discrete(space: Discrete, start_dim : int = 0) -> int:
-    assert start_dim == 0
+    if start_dim != 0:
+        return None
     return 1
 
 @flat_dim.register(Dict)
@@ -80,7 +82,8 @@ def _flat_dim_tuple(space: Tuple, start_dim : int = 0) -> Optional[int]:
 
 @flat_dim.register(Union)
 def _flat_dim_oneof(space: Union, start_dim : int = 0) -> Optional[int]:
-    assert start_dim == 0
+    if start_dim != 0:
+        return None
     max_dim = 0
     for subspace in space.spaces:
         dim = flat_dim(subspace, start_dim)
@@ -290,177 +293,14 @@ def _unflatten_data_oneof(space: Union, data: Any, start_dim : int = 0) -> Any:
 def is_batch_flattenable(space: Space) -> bool:
     return batch_flat_dim(space) is not None
 
-@singledispatch
 def batch_flat_dim(space: Space) -> Optional[int]:
-    return None
+    return flat_dim(space, 1)
 
-@batch_flat_dim.register(Box)
-@batch_flat_dim.register(MultiBinary)
-@batch_flat_dim.register(MultiDiscrete)
-def _batch_flat_dim_common(space: Box) -> Optional[int]:
-    if len(space.shape) <= 0:
-        return None
-    return int(np.prod(space.shape[1:]))
-
-@batch_flat_dim.register(Dict)
-def _batch_flat_dim_dict(space: Dict) -> Optional[int]:
-    dims = 0
-    for key, subspace in space.spaces.items():
-        dim = batch_flat_dim(subspace)
-        if dim is None:
-            return None
-        dims += dim
-    return dims
-
-@batch_flat_dim.register(Tuple)
-def _batch_flat_dim_tuple(space: Tuple) -> Optional[int]:
-    if len(space.spaces) == 0:
-        return 0
-
-    if all(type(subspace) in batch_flat_dim.registry for subspace in space.spaces):
-        dims = 0
-        for subspace in space.spaces:
-            dim = batch_flat_dim(subspace)
-            if dim is None:
-                return None
-            dims += dim
-        return dims
-    else:
-        flat_dims = [flat_dim(subspace) for subspace in space.spaces]
-        if any((dim is None or dim != flat_dims[0]) for dim in flat_dims):
-            return None
-        return flat_dims[0]
-
-@singledispatch
 def batch_flatten_space(space: Space) -> Box:
-    raise NotImplementedError(f"Space {space} is not batch-flattenable")
-
-@batch_flatten_space.register(Box)
-def _batch_flatten_space_box(space: Box) -> Box:
-    return Box(
-        space.backend,
-        low=space.backend.array_api_namespace.reshape(
-            space.low, (space.shape[0], -1)
-        ), 
-        high=space.backend.array_api_namespace.reshape(
-            space.high, (space.shape[0], -1)
-        ), 
-        dtype=space.dtype,
-        device=space.device
-    )
-
-@batch_flatten_space.register(MultiBinary)
-@batch_flatten_space.register(MultiDiscrete)
-def _batch_flatten_space_multi_binary_discrete(space: typing.Union[MultiBinary, MultiDiscrete]) -> Box:
-    return Box(
-        space.backend,
-        low=0, high=1, 
-        shape=(space.shape[0], batch_flat_dim(space)), 
-        dtype=space.dtype or space.backend.default_integer_dtype,
-        device=space.device
-    )
-
-@batch_flatten_space.register(Dict)
-def _batch_flatten_space_dict(space: Dict) -> Box:
-    space_list = [batch_flatten_space(s) for s in space.spaces.values()]
-    return Box(
-        space.backend,
-        low=space.backend.array_api_namespace.concat([s.low for s in space_list], axis=1),
-        high=space.backend.array_api_namespace.concat([s.high for s in space_list], axis=1),
-        dtype=space.backend.default_floating_dtype,
-        device=space.device
-    )
-
-@batch_flatten_space.register(Tuple)
-def _batch_flatten_space_tuple(space: Tuple) -> Box:
-    if all(type(subspace) in batch_flat_dim.registry for subspace in space.spaces):
-        space_list = [batch_flatten_space(s) for s in space.spaces]
-        return Box(
-            space.backend,
-            low=space.backend.array_api_namespace.concat([s.low for s in space_list], axis=1),
-            high=space.backend.array_api_namespace.concat([s.high for s in space_list], axis=1),
-            dtype=space.backend.default_floating_dtype,
-            device=space.device
-        )
-    else:
-        space_list = [flatten_space(s) for s in space.spaces]
-        return Box(
-            space.backend,
-            low=space.backend.array_api_namespace.concat([s.low for s in space_list], axis=0),
-            high=space.backend.array_api_namespace.concat([s.high for s in space_list], axis=0),
-            dtype=space.backend.default_floating_dtype,
-            device=space.device
-        )
+    return flatten_space(space, 1)
     
-@singledispatch
 def batch_flatten_data(space: Space, data: Any) -> Any:
-    raise NotImplementedError(f"Space {space} is not batch-flattenable")
+    return flatten_data(space, data, 1)
 
-@singledispatch
 def batch_unflatten_data(space: Space, data: Any) -> Any:
-    raise NotImplementedError(f"Space {space} is not batch-flattenable")
-
-@batch_flatten_data.register(Box)
-@batch_flatten_data.register(MultiBinary)
-@batch_flatten_data.register(MultiDiscrete)
-def _batch_flatten_data_common(space: typing.Union[
-    Box, MultiBinary, MultiDiscrete
-], data: Any) -> Any:
-    return space.backend.array_api_namespace.reshape(
-        data, 
-        (data.shape[0], -1)
-    )
-
-@batch_unflatten_data.register(Box)
-@batch_unflatten_data.register(MultiBinary)
-@batch_unflatten_data.register(MultiDiscrete)
-def _batch_unflatten_data_common(space: typing.Union[
-    Box, MultiBinary, MultiDiscrete
-], data: Any) -> Any:
-    return space.backend.array_api_namespace.reshape(
-        data, 
-        (data.shape[0], *space.shape[1:])
-    )
-
-@batch_flatten_data.register(Dict)
-def _batch_flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any]) -> Any:
-    return space.backend.array_api_namespace.concat([
-        batch_flatten_data(subspace, data[key]) for key, subspace in space.spaces.items()
-    ], axis=1)
-
-@batch_unflatten_data.register(Dict)
-def _batch_unflatten_data_dict(space: Dict, data: Any) -> Any:
-    result = {}
-    start = 0
-    for key, subspace in space.spaces.items():
-        end = start + batch_flat_dim(subspace)
-        result[key] = batch_unflatten_data(subspace, data[:, start:end])
-        start = end
-    return result
-
-@batch_flatten_data.register(Tuple)
-def _batch_flatten_data_tuple(space: Tuple, data: typing.Tuple) -> Any:
-    if all(type(subspace) in batch_flat_dim.registry for subspace in space.spaces):
-        return space.backend.array_api_namespace.concat([
-            batch_flatten_data(subspace, data[i]) for i, subspace in enumerate(space.spaces)
-        ], axis=1)
-    else:
-        return space.backend.array_api_namespace.stack([
-            flatten_data(subspace, data[i]) for i, subspace in enumerate(space.spaces)
-        ], axis=0)
-    
-@batch_unflatten_data.register(Tuple)
-def _batch_unflatten_data_tuple(space: Tuple, data: Any) -> Any:
-    if all(type(subspace) in batch_flat_dim.registry for subspace in space.spaces):
-        result = []
-        start = 0
-        for subspace in space.spaces:
-            end = start + batch_flat_dim(subspace)
-            result.append(batch_unflatten_data(subspace, data[:, start:end]))
-            start = end
-        return tuple(result)
-    else:
-        result = []
-        for i, subspace in enumerate(space.spaces):
-            result.append(unflatten_data(subspace, data[i]))
-        return tuple(result)
+    return unflatten_data(space, data, 1)
