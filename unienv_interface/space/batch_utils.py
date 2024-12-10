@@ -28,7 +28,7 @@ __all__ = [
     "swap_batch_dims",
     "swap_batch_dims_in_data",
     "iterate",
-    "get_at"
+    "get_at",
     "concatenate",
     "read_batched_data_with_mask",
     "write_batched_data_with_mask"
