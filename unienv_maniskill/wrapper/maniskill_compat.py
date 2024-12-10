@@ -78,14 +78,15 @@ class FromManiSkillEnv(
     ) -> None:
         self.env = env
         self.backend = PyTorchComputeBackend
-        self.device = env.device
+        self.device = env.get_wrapper_attr("device")
+        self.batch_size = env.get_wrapper_attr("num_envs")
 
         self.action_space = space_gym_utils.from_gym_space(
             env.action_space,
             self.backend,
             device=self.device
         )
-        if env.num_envs <= 1:
+        if env.get_wrapper_attr("num_envs") <= 1:
             # Weirdly Maniskill doesn't batch the action space when num_envs is 1 but will batch the observation space
             self.action_space = space_batch_utils.batch_space(
                 self.action_space,
@@ -118,11 +119,7 @@ class FromManiSkillEnv(
     
     @property
     def render_fps(self) -> Optional[int]:
-        return self.env.control_freq
-
-    @property
-    def batch_size(self) -> int:
-        return self.env.num_envs
+        return self.env.get_wrapper_attr("control_freq")
 
     def reset(
         self,
