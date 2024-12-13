@@ -78,6 +78,7 @@ class BatchSampler(abc.ABC, Generic[
 ]):
     batch_size : int
     sampled_space : Space[SamplerBatchT, Any, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
+    sampled_space_flat : Space[SamplerArrayType, Any, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
 
     backend : ComputeBackend[SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
     device : Optional[SamplerDeviceType] = None

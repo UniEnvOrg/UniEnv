@@ -17,7 +17,7 @@ class SliceSampler(
         postfetch_horizon : int = 0,
         get_episode_id_fn: Optional[Callable[[BatchT], BArrayType]] = None,
         seed : Optional[int] = None,
-        device : Optional[BDeviceType] = None
+        device : Optional[BDeviceType] = None,
     ):
         assert batch_size > 0, "Batch size must be a positive integer"
         assert prefetch_horizon >= 0, "Prefetch horizon must be a non-negative integer"
@@ -27,7 +27,6 @@ class SliceSampler(
         self.batch_size = batch_size
         self.prefetch_horizon = prefetch_horizon
         self.postfetch_horizon = postfetch_horizon
-        self.get_episode_id_fn = get_episode_id_fn
         self._device = device
 
         self.single_slice_space = sbu.batch_space(
@@ -38,6 +37,8 @@ class SliceSampler(
             self.single_slice_space,
             batch_size
         )
+        self.sampled_space_flat = sfu.flatten_space(self.sampled_space, start_dim=2)
+        
         if device is not None:
             self.single_slice_space = self.single_slice_space.to_device(device)
             self.sampled_space = self.sampled_space.to_device(device)
@@ -46,6 +47,36 @@ class SliceSampler(
             seed,
             device=data.device
         )
+        
+        self.get_episode_id_fn = get_episode_id_fn
+        self._build_epid_cache()
+
+    def _build_epid_cache(self):
+        """
+        Build a cache that helps speed up the filtering process
+        """
+        if self.get_episode_id_fn is None:
+            self._epid_flatidx = None
+        
+        # First make a fake batch to get the episode ids
+        flat_data = self.backend.array_api_namespace.zeros(
+            self.sampled_space_flat.shape,
+            dtype=self.sampled_space_flat.dtype,
+            device=self.sampled_space_flat.device
+        )
+        flat_data[:] = self.backend.array_api_namespace.arange(
+            flat_data.shape[-1], device=self.sampled_space_flat.device
+        )[None, None, :] # (1, 1, D)
+
+        dat = sfu.unflatten_data(self.sampled_space, flat_data, start_dim=2)
+        episode_ids = self.get_episode_id_fn(dat)
+        del dat
+
+        epid_flatidx = int(episode_ids[0, 0])
+        if self.backend.array_api_namespace.all(episode_ids == epid_flatidx):
+            self._epid_flatidx = epid_flatidx
+        else:
+            self._epid_flatidx = None
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -90,9 +121,14 @@ class SliceSampler(
     
     def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> BArrayType:
         if self.get_episode_id_fn is not None:
-            dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
+            # fetch episode ids
+            if self._epid_flatidx is None:
+                dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
+                episode_ids = self.get_episode_id_fn(dat)
+                del dat
+            else:
+                episode_ids = flat_dat[:, :, self._epid_flatidx]
 
-            episode_ids = self.get_episode_id_fn(dat)
             assert self.backend.is_backendarray(episode_ids)
             assert episode_ids.shape == (self.batch_size, self.prefetch_horizon + self.postfetch_horizon + 1)
             episode_id_at_step = episode_ids[:, self.prefetch_horizon]

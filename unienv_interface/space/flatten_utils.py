@@ -265,7 +265,6 @@ def _unflatten_data_tuple(space: Tuple, data: Any, start_dim : int = 0) -> Any:
         end = start + flat_dim(subspace, start_dim)
         part_idx = space.backend.array_api_namespace.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.get_device(data))
         part_data = space.backend.array_api_namespace.take(data, part_idx, axis=start_dim)
-        print(part_data)
         result.append(unflatten_data(subspace, part_data, start_dim))
         start = end
     return tuple(result)

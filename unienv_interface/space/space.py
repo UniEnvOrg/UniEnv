@@ -23,7 +23,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         self._device = device
 
     @property
-    def device(self) -> _SpaceBDeviceT:
+    def device(self) -> Optional[_SpaceBDeviceT]:
         return self._device
     
     @abc.abstractmethod

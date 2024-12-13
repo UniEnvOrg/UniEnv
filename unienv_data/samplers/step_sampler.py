@@ -24,6 +24,7 @@ class StepSampler(
             self.data.single_space,
             batch_size
         )
+        self.sampled_space_flat = sfu.flatten_space(self.sampled_space, start_dim=1)
         self.data_rng = self.backend.random_number_generator(
             seed,
             device=data.device

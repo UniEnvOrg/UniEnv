@@ -128,6 +128,10 @@ class MultiprocessingSampler(
         return self.sampler.sampled_space
     
     @property
+    def sampled_space_flat(self):
+        return self.sampler.sampled_space_flat
+
+    @property
     def backend(self):
         return self.sampler.backend
     
