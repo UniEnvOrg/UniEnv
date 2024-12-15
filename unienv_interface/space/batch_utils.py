@@ -157,6 +157,18 @@ def _batch_size_tuple(space: Tuple):
 
     return len(space.spaces)
 
+def batch_size_data(data: Any) -> int:
+    if hasattr(data, "shape"):
+        return data.shape[0]
+    elif isinstance(data, dict):
+        for value in data.values():
+            return batch_size_data(value)
+    elif isinstance(data, tuple):
+        for value in data:
+            return batch_size_data(value)
+    else:
+        raise TypeError(f"Unable to determine batch size of data, type: {type(data)}")
+
 @singledispatch
 def batch_space(space: Space, n: int = 1) -> Space:
     raise TypeError(
@@ -419,7 +431,7 @@ def _unbatch_spaces_tuple(space: Tuple):
     yield from space.spaces
 
 def iterate(space: Space, items: Any) -> Iterator:
-    for i in range(batch_size(space)):
+    for i in range(batch_size_data(items)):
         yield get_at(space, items, i)
     
 @singledispatch

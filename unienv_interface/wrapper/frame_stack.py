@@ -1,5 +1,4 @@
 from typing import Dict as DictT, Any, Optional, Tuple, Union, Generic, SupportsFloat, Type, Sequence, TypeVar
-import gymnasium as gym
 import numpy as np
 import copy
 from unienv_interface.utils import seed_util

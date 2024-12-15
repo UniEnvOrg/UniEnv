@@ -9,6 +9,11 @@ class SliceSampler(
         BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
     ]
 ):
+    """
+    It is recommended to use SliceSampler as the final layer sampler
+    Because it has to reshape the data, and we add an additional dimension T apart from the Batch dimension
+    Which makes a lot of the wrappers incompatible with it
+    """
     def __init__(
         self,
         data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],

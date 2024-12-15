@@ -1,1 +1,3 @@
 from .transformation import DataTransformation, DirectionInverseTransformation
+from .rescale import RescaleTransformation
+from .filter_dict import FilterDictTransformation
