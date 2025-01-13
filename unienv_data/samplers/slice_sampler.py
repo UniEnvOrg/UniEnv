@@ -125,8 +125,9 @@ class SliceSampler(
         return dat
 
     def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> Tuple[
-        BArrayType,
-        BArrayType # validity mask
+        BArrayType, # Data (B, T, D)
+        BArrayType, # validity mask (B, T)
+        Optional[BArrayType] # episode id (B)
     ]:
         
         if self.get_episode_id_fn is not None:
@@ -181,15 +182,17 @@ class SliceSampler(
                 dtype=self.backend.default_boolean_dtype,
                 device=self.backend.get_device(flat_dat)
             )
-        return flat_dat, episode_id_eq
+            episode_id_at_step = None
+        return flat_dat, episode_id_eq, episode_id_at_step
 
     def sample_flat(self) -> BArrayType:
         flat_dat = self.sample_unfiltered_flat()
         return self.unfiltered_to_filtered_flat(flat_dat)[0]
 
-    def sample_flat_with_validity_mask(self) -> Tuple[
+    def sample_flat_with_metadata(self) -> Tuple[
         BArrayType,
-        BArrayType # validity mask
+        BArrayType, # validity mask
+        Optional[BArrayType]
     ]:
         flat_dat = self.sample_unfiltered_flat()
         return self.unfiltered_to_filtered_flat(flat_dat)
@@ -199,10 +202,11 @@ class SliceSampler(
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
         return dat
     
-    def sample_with_validity_mask(self) -> Tuple[
+    def sample_with_metadata(self) -> Tuple[
         BatchT,
-        BArrayType # validity mask
+        BArrayType,
+        Optional[BArrayType]
     ]:
-        flat_dat, validity_mask = self.sample_flat_with_validity_mask()
+        flat_dat, validity_mask, episode_id = self.sample_flat_with_validity_mask()
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
-        return dat, validity_mask
+        return dat, validity_mask, episode_id
