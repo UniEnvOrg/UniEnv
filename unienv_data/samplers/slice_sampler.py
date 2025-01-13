@@ -123,8 +123,12 @@ class SliceSampler(
         flat_dat = self.sample_unfiltered_flat() # (B, T, D)
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
         return dat
-    
-    def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> BArrayType:
+
+    def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> Tuple[
+        BArrayType,
+        BArrayType # validity mask
+    ]:
+        
         if self.get_episode_id_fn is not None:
             # fetch episode ids
             if self._epid_flatidx is None:
@@ -171,9 +175,22 @@ class SliceSampler(
                 flat_dat_postfetch = flat_dat[:, self.prefetch_horizon:]
             
             flat_dat = self.backend.array_api_namespace.concatenate((flat_dat_prefetch, flat_dat_postfetch), axis=1)
-        return flat_dat
+        else:
+            episode_id_eq = self.backend.array_api_namespace.ones(
+                (flat_dat.shape[:2]),
+                dtype=self.backend.default_boolean_dtype,
+                device=self.backend.get_device(flat_dat)
+            )
+        return flat_dat, episode_id_eq
 
     def sample_flat(self) -> BArrayType:
+        flat_dat = self.sample_unfiltered_flat()
+        return self.unfiltered_to_filtered_flat(flat_dat)[0]
+
+    def sample_flat_with_validity_mask(self) -> Tuple[
+        BArrayType,
+        BArrayType # validity mask
+    ]:
         flat_dat = self.sample_unfiltered_flat()
         return self.unfiltered_to_filtered_flat(flat_dat)
 
@@ -182,3 +199,10 @@ class SliceSampler(
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
         return dat
     
+    def sample_with_validity_mask(self) -> Tuple[
+        BatchT,
+        BArrayType # validity mask
+    ]:
+        flat_dat, validity_mask = self.sample_flat_with_validity_mask()
+        dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
+        return dat, validity_mask
