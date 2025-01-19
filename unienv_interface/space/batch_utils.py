@@ -179,10 +179,11 @@ def batch_space(space: Space, n: int = 1) -> Space:
 def _batch_space_box(space: Box, n: int = 1):
     return Box(
         backend=space.backend,
-        low=space.backend.array_api_namespace.stack([space.low] * n),
-        high=space.backend.array_api_namespace.stack([space.high] * n),
+        low=space.low[None],
+        high=space.high[None],
         dtype=space.dtype,
         device=space.device,
+        shape=tuple([n,] + list(space.shape)),
     )
 
 @batch_space.register(Dict)
@@ -367,11 +368,13 @@ def unbatch_spaces(space: Space) -> Iterable[Space]:
 
 @unbatch_spaces.register(Box)
 def _unbatch_spaces_box(space: Box):
+    low = space.low
+    high = space.high
     for i in range(space.shape[0]):
         yield Box(
             backend=space.backend,
-            low=space.low[i],
-            high=space.high[i],
+            low=low[i],
+            high=high[i],
             dtype=space.dtype,
             device=space.device,
         )
