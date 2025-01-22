@@ -32,6 +32,72 @@ class ListStorage(TensorStorage[
         self.capacity = capacity
         self.data : List[Optional[BArrayType]] = []
 
+    @classmethod
+    def create(
+        cls,
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        device : Optional[BDeviceType],
+        dtype : BDtypeType,
+        single_instance_shape : Tuple[int, ...],
+        *,
+        capacity : Optional[int],
+        default_value : Optional[BArrayType] = None,
+    ) -> "ListStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        storage = ListStorage(
+            backend,
+            device,
+            dtype,
+            single_instance_shape,
+            default_value=default_value,
+            capacity=capacity,
+        )
+        return storage
+
+    @classmethod
+    def load_from(
+        cls,
+        path: Union[str, os.PathLike],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        device : Optional[BDeviceType],
+        dtype : BDtypeType,
+        single_instance_shape : Tuple[int, ...],
+        *,
+        capacity : Optional[int],
+        default_value : Optional[BArrayType] = None,
+    ) -> "ListStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        storage = cls.create(
+            backend,
+            device,
+            dtype,
+            single_instance_shape,
+            capacity=capacity,
+            default_value=default_value
+        )
+        with h5py.File(path, 'r') as f:
+            data = f['data']
+            indices = f['indices']
+            storage.data = [None] * indices.attrs['length']
+            for i, dat in zip(indices, data):
+                storage.data[i] = backend.from_numpy(dat, dtype=dtype, device=device)
+
+    def dumps(self, path: Union[str, os.PathLike]) -> None:
+        with h5py.File(path, 'w') as f:
+            actual_data = [
+                (i, dat) for i, dat in enumerate(self.data) if dat is not None
+            ]
+            dtype = self.backend.to_numpy(self.default_value).dtype
+            datset = f.create_dataset(
+                'data',
+                data=np.stack([self.backend.to_numpy(
+                    dat
+                ) for _, dat in actual_data], axis=0),
+            )
+            dataset_idx = f.create_dataset(
+                'indices',
+                data=np.array([i for i, _ in actual_data], dtype=np.int64)
+            )
+            dataset_idx.attrs['length'] = len(self)
+
     def __len__(self):
         return len(self.data)
     
@@ -160,31 +226,6 @@ class ListStorage(TensorStorage[
     def clear(self) -> None:
         self.data = []
 
-    def dumps(self, path: Union[str, os.PathLike]) -> None:
-        with h5py.File(path, 'w') as f:
-            actual_data = [
-                (i, dat) for i, dat in enumerate(self.data) if dat is not None
-            ]
-            dtype = self.backend.to_numpy(self.default_value).dtype
-            datset = f.create_dataset(
-                'data',
-                data=np.stack([self.backend.to_numpy(
-                    dat
-                ) for _, dat in actual_data], axis=0),
-            )
-            dataset_idx = f.create_dataset(
-                'indices',
-                data=np.array([i for i, _ in actual_data], dtype=np.int64)
-            )
-            dataset_idx.attrs['length'] = len(self)
-    
-    def loads(self, path: Union[str, os.PathLike]) -> None:
-        with h5py.File(path, 'r') as f:
-            data = f['data']
-            indices = f['indices']
-            self.data = [None] * indices.attrs['length']
-            for i, dat in zip(indices, data):
-                self.data[i] = self.backend.from_numpy(dat)
 
 class HDF5Storage(TensorStorage[
     NumpyComputeBackend.ARRAY_TYPE, 
@@ -234,6 +275,52 @@ class HDF5Storage(TensorStorage[
 
         if self._default_value is not None:
             self._default_value = self._default_value.astype(self.dtype)
+
+    @classmethod
+    def create(
+        cls,
+        backend : NumpyComputeBackend,
+        device : Optional[NumpyComputeBackend.DEVICE_TYPE],
+        dtype : NumpyComputeBackend.DTYPE_TYPE,
+        single_instance_shape : Tuple[int, ...],
+        path : Union[str, os.PathLike],
+        *,
+        capacity : int,
+        default_value : Optional[NumpyComputeBackend.ARRAY_TYPE] = None,
+    ) -> "HDF5Storage":
+        assert backend is NumpyComputeBackend, "Only NumpyComputeBackend is supported"
+        storage = HDF5Storage(
+            dtype,
+            single_instance_shape,
+            capacity,
+            path,
+            load=False,
+            default_value=default_value
+        )
+        return storage
+
+    @classmethod
+    def load_from(
+        cls,
+        path : Union[str, os.PathLike],
+        backend : NumpyComputeBackend,
+        device : Optional[NumpyComputeBackend.DEVICE_TYPE],
+        dtype : NumpyComputeBackend.DTYPE_TYPE,
+        single_instance_shape : Tuple[int, ...],
+        *,
+        capacity : int,
+        default_value : Optional[NumpyComputeBackend.ARRAY_TYPE] = None,
+    ) -> "HDF5Storage":
+        assert backend is NumpyComputeBackend, "Only NumpyComputeBackend is supported"
+        storage = HDF5Storage(
+            dtype,
+            single_instance_shape,
+            capacity,
+            path,
+            load=True,
+            default_value=default_value
+        )
+        return storage
 
     def get(self, index : Union[int, slice, np.ndarray, None]) -> np.ndarray:
         if index is None:

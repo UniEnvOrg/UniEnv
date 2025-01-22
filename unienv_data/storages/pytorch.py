@@ -19,64 +19,113 @@ class PytorchTensorStorage(TensorStorage[
 
     def __init__(
         self,
+        data : Union[torch.Tensor, MemoryMappedTensor],
+        default_value : Optional[PyTorchComputeBackend.ARRAY_TYPE] = None,
+    ):
+        super().__init__(
+            single_instance_shape=data.shape[1:],
+            default_value=default_value
+        )
+        self.data = data
+
+    @property
+    def device(self) -> PyTorchComputeBackend.DEVICE_TYPE:
+        return self.data.device
+
+    @property
+    def dtype(self) -> PyTorchComputeBackend.DTYPE_TYPE:
+        return self.data.dtype
+    
+    @property
+    def capacity(self) -> int:
+        return self.data.shape[0]
+
+    @property
+    def is_memmap(self) -> bool:
+        return isinstance(self.data, MemoryMappedTensor)
+
+    @classmethod
+    def create(
+        cls,
+        backend : PyTorchComputeBackend,
         device : Optional[PyTorchComputeBackend.DEVICE_TYPE],
         dtype : PyTorchComputeBackend.DTYPE_TYPE,
         single_instance_shape : Tuple[int, ...],
-        capacity : Optional[int], # None can only be used when mmap_load is True
+        *,
+        memmap : bool = False,
+        memmap_path : Optional[str] = None,
+        memmap_existok : bool = True,
+        capacity : Optional[int],
         default_value : Optional[PyTorchComputeBackend.ARRAY_TYPE] = None,
-        use_mmap : bool = False,
-        mmap_location : Optional[str] = None,
-        mmap_load : bool = False,
-    ):
-        super().__init__(
-            single_instance_shape=single_instance_shape,
-            default_value=default_value
-        )
-
-        device = None if device is None else torch.device(device)
-        self.device = device
-        self.dtype = dtype
-        self.capacity = capacity
-        if use_mmap:
-            assert device is None or device.type == 'cpu', "Memory mapping is only supported for CPU tensors"
-            if mmap_load:
-                assert os.path.exists(mmap_location), "Memory-mapped file does not exist"
-                self.data = MemoryMappedTensor.from_filename(
-                    mmap_location,
-                    dtype=dtype,
-                    shape=(capacity, *single_instance_shape),
-                )
-                assert self.data.shape[1:] == single_instance_shape, "Mismatched shape"
-                if self.data.shape[0] != capacity:
-                    assert capacity is None, "Capacity mismatch"
-                    capacity = self.data.shape[0]
-            else:
-                assert capacity is not None, "Capacity must be specified when creating a new memory-mapped tensor"
-                self.data = MemoryMappedTensor.zeros(
-                    (capacity, *single_instance_shape),
-                    dtype=dtype,
-                    device=device,
-                    filename=mmap_location,
-                    existsok=True
-                )
+    ) -> "PytorchTensorStorage":
+        assert backend is PyTorchComputeBackend, "PytorchTensorStorage only supports PyTorch backend"
+        assert capacity is not None, "Capacity must be specified when creating a new tensor"
+        
+        target_shape = (capacity, *single_instance_shape)
+        if memmap:
+            real_device = None if device is None else torch.device(device)
+            assert real_device is None or real_device.type == 'cpu', "Memory mapping is only supported for CPU tensors"
+            assert memmap_path is not None, "Memory-mapped file path must be specified (and should be the dumps path)"
+            
+            data = MemoryMappedTensor.zeros(
+                target_shape,
+                dtype=dtype,
+                device=device,
+                filename=memmap_path,
+                existsok=memmap_existok
+            )
         else:
-            assert capacity is not None, "Capacity must be specified when creating a new tensor"
-            self.data = torch.zeros(
-                (capacity, *single_instance_shape),
+            data = torch.zeros(
+                target_shape,
                 dtype=dtype,
                 device=device
             )
         
-        if self._default_value is not None:
+        if default_value is not None:
             if device is not None:
-                self._default_value = self._default_value.to(device)
-            self._default_value = PyTorchComputeBackend.array_api_namespace.astype(self._default_value, dtype)
+                default_value = default_value.to(device)
+            
+            data.copy_(default_value.unsqueeze(0).expand(target_shape))
         
-        self.capacity = capacity
-        # Fill storage with default value
-        if self.default_value is not None and not mmap_load:
-            self.data.copy_(self.default_value.expand((self.capacity, *self.single_instance_shape)))
-        self.memap = use_mmap
+        return PytorchTensorStorage(data, default_value=default_value)
+
+    @classmethod
+    def load_from(
+        cls,
+        path: Union[str, os.PathLike],
+        backend : PyTorchComputeBackend,
+        device : Optional[PyTorchComputeBackend.DEVICE_TYPE],
+        dtype : PyTorchComputeBackend.DTYPE_TYPE,
+        single_instance_shape : Tuple[int, ...],
+        *,
+        memmap : bool = False,
+        capacity : Optional[int],
+        default_value : Optional[PyTorchComputeBackend.ARRAY_TYPE] = None,
+    ) -> "PytorchTensorStorage":
+        assert backend is PyTorchComputeBackend, "PytorchTensorStorage only supports PyTorch backend"
+        assert capacity is not None, "Capacity must be specified when creating a new tensor"
+        assert os.path.exists(path), "File does not exist"
+        
+        target_shape = (capacity, *single_instance_shape)
+        target_data = MemoryMappedTensor.from_filename(
+            path,
+            dtype=dtype,
+            shape=target_shape
+        )
+        
+        if memmap:
+            real_device = None if device is None else torch.device(device)
+            assert real_device is None or real_device.type == 'cpu', "Memory mapping is only supported for CPU tensors"
+            data = target_data
+        else:
+            data = torch.zeros(
+                (capacity, *single_instance_shape),
+                dtype=dtype,
+                device=device
+            )
+            data.copy_(target_data)
+        
+        return PytorchTensorStorage(data, default_value=default_value)
 
     def get(self, index : Union[int, slice, torch.Tensor, None]) -> torch.Tensor:
         if index is None:
@@ -97,7 +146,7 @@ class PytorchTensorStorage(TensorStorage[
     
     def dumps(self, path: Union[str, os.PathLike]) -> None:
         if os.path.exists(path):
-            if self.memap and os.path.samefile(self.data.filename, path):
+            if self.is_memmap and os.path.samefile(self.data.filename, path):
                 return
             MemoryMappedTensor.from_filename(
                 shape=self.data.shape,
@@ -113,15 +162,3 @@ class PytorchTensorStorage(TensorStorage[
                 copy_existing=True,
                 copy_data=True,
             )
-    
-    def loads(self, path: Union[str, os.PathLike]) -> None:
-        if os.path.exists(path) and self.memap and os.path.samefile(self.data.filename, path):
-            return
-        
-        data_memap = MemoryMappedTensor.from_filename(
-            shape=self.data.shape,
-            filename=path,
-            dtype=self.data.dtype,
-        )
-        self.data.copy_(data_memap)
-    

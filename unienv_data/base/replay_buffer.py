@@ -1,12 +1,20 @@
 import abc
 import os
 import dataclasses
-from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable
+from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
 from unienv_interface.space import Space, Box, flatten_utils as sfu, batch_utils as sbu
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from .common import BatchBase, BatchT
 import json
+import pickle
+
+def get_full_class_name(cls : type) -> str:
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+def get_class_from_full_name(full_name : str) -> type:
+    module_name, class_name = full_name.rsplit(".", 1)
+    return getattr(__import__(module_name, fromlist=[class_name]), class_name)
 
 class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     save_ext : str = ".storage"
@@ -24,6 +32,38 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.single_instance_shape = single_instance_shape
         self._default_value = default_value
 
+    def load_params(self) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    @classmethod
+    def create(
+        cls,
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        device : Optional[BDeviceType],
+        dtype : BDtypeType,
+        single_instance_shape : Tuple[int, ...],
+        *args,
+        capacity : Optional[int],
+        default_value : Optional[BArrayType] = None,
+        **kwargs
+    ) -> "TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        raise NotImplementedError
+
+    @classmethod
+    def load_from(
+        cls,
+        path: Union[str, os.PathLike],
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        device : Optional[BDeviceType],
+        dtype : BDtypeType,
+        single_instance_shape : Tuple[int, ...],
+        *args,
+        capacity : Optional[int],
+        default_value : Optional[BArrayType] = None,
+        **kwargs
+    ) -> "TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        raise NotImplementedError
+    
     @property
     def default_value(self) -> BArrayType:
         return self._default_value or self.backend.array_api_namespace.zeros(
@@ -59,10 +99,6 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     @abc.abstractmethod
     def dumps(self, path : Union[str, os.PathLike]) -> None:
-        raise NotImplementedError
-    
-    @abc.abstractmethod
-    def loads(self, path : Union[str, os.PathLike]) -> None:
         raise NotImplementedError
 
     def close(self) -> None:
@@ -122,13 +158,74 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def __init__(
         self,
         storage : TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType],
-        single_space : Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
+        single_space : Space[BatchT, Any, BDeviceType, BDtypeType, BRNGType],
+        count : int = 0,
+        offset : int = 0
     ):
         self.storage = storage
-        self.count = 0
-        self.offset = 0
+        self.count = count
+        self.offset = offset
         assert storage.single_instance_shape == sfu.flatten_space(single_space).shape, "Storage shape must match single instance shape"
         super().__init__(single_space.to_device(storage.device))
+
+    @staticmethod
+    def create(
+        single_space : Space[BatchT, Any, BDeviceType, BDtypeType, BRNGType],
+        storage_cls : Type[TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        *storage_args,
+        capacity : Optional[int],
+        default_value : Optional[BArrayType] = None,
+        **storage_kwargs
+    ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        flattened_space = sfu.flatten_space(single_space)
+
+        storage = storage_cls.create(
+            flattened_space.backend,
+            flattened_space.device,
+            flattened_space.dtype,
+            flattened_space.shape,
+            *storage_args,
+            capacity=capacity,
+            default_value=default_value,
+            **storage_kwargs
+        )
+        return ReplayBuffer(storage, single_space)
+    
+    @staticmethod
+    def load_from(
+        path : Union[str, os.PathLike],
+        *storage_args,
+        default_value : Optional[BArrayType] = None,
+        **storage_kwargs
+    ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        with open(os.path.join(path, "metadata.json"), "r") as f:
+            metadata = json.load(f)
+            capacity = metadata["capacity"]
+            if capacity is not None:
+                capacity = int(capacity)
+            
+            offset = int(metadata["offset"])
+            count = int(metadata["count"])
+        
+        with open(os.path.join(path, "space.pkl"), "rb") as f:
+            single_space = pickle.load(f)
+        
+        storage_cls : Type[TensorStorage] = get_class_from_full_name(metadata["storage_cls"])
+        storage_path = os.path.join(path, f"storage.data")
+
+        flattened_space = sfu.flatten_space(single_space)
+        storage = storage_cls.load_from(
+            storage_path,
+            flattened_space.backend,
+            flattened_space.device,
+            flattened_space.dtype,
+            flattened_space.shape,
+            *storage_args,
+            capacity=capacity,
+            default_value=default_value,
+            **storage_kwargs
+        )
+        return ReplayBuffer(storage, single_space, count, offset)
 
     def __len__(self) -> int:
         return self.count
@@ -206,20 +303,17 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def dumps(self, path : Union[str, os.PathLike]):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.storage.dumps(os.path.join(path, f"storage{self.storage.save_ext}"))
+        self.storage.dumps(os.path.join(path, f"storage.data"))
         metadata = {
+            "capacity": self.capacity,
             "count": self.count,
-            "offset": self.offset
+            "offset": self.offset,
+            "storage_cls": get_full_class_name(type(self.storage))
         }
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
-    
-    def loads(self, path : Union[str, os.PathLike]):
-        self.storage.loads(os.path.join(path, f"storage{self.storage.save_ext}"))
-        with open(os.path.join(path, "metadata.json"), "r") as f:
-            metadata = json.load(f)
-            self.count = metadata["count"]
-            self.offset = metadata["offset"]
+        with open(os.path.join(path, "space.pkl"), "wb") as f:
+            pickle.dump(self.single_space, f)
 
     def close(self) -> None:
         self.storage.close()

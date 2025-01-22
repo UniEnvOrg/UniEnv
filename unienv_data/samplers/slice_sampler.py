@@ -64,14 +64,20 @@ class SliceSampler(
             self._epid_flatidx = None
         
         # First make a fake batch to get the episode ids
-        flat_data = self.backend.array_api_namespace.zeros(
-            self.sampled_space_flat.shape,
-            dtype=self.sampled_space_flat.dtype,
-            device=self.sampled_space_flat.device
+        # flat_data = self.backend.array_api_namespace.zeros(
+        #     self.sampled_space_flat.shape,
+        #     dtype=self.sampled_space_flat.dtype,
+        #     device=self.sampled_space_flat.device
+        # )
+        # flat_data[:] = self.backend.array_api_namespace.arange(
+        #     flat_data.shape[-1], device=self.sampled_space_flat.device
+        # )[None, None, :] # (1, 1, D)
+        flat_data = self.backend.array_api_namespace.broadcast_to(
+            self.backend.array_api_namespace.arange(
+                self.sampled_space_flat.shape[-1], device=self.sampled_space_flat.device
+            )[None, None, :], # (1, 1, D)
+            self.sampled_space_flat.shape
         )
-        flat_data[:] = self.backend.array_api_namespace.arange(
-            flat_data.shape[-1], device=self.sampled_space_flat.device
-        )[None, None, :] # (1, 1, D)
 
         dat = sfu.unflatten_data(self.sampled_space, flat_data, start_dim=2)
         episode_ids = self.get_episode_id_fn(dat)
@@ -105,7 +111,7 @@ class SliceSampler(
         indices_shifts = self.backend.array_api_namespace.arange( # (T, )
             -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=indices.dtype, device=self.data.device
         )
-        indices = self.backend.array_api_namespace.expand_dims(indices, axis=1) + indices_shifts # (B, T)
+        indices = self.backend.array_api_namespace.expand_dims(indices, axis=1) + indices_shifts[None, :] # (B, T)
         indices = self.backend.array_api_namespace.clip(indices, 0, len(self.data) - 1)
         return indices
 
@@ -129,7 +135,7 @@ class SliceSampler(
         BArrayType, # validity mask (B, T)
         Optional[BArrayType] # episode id (B)
     ]:
-        
+        device = self.backend.get_device(flat_dat)
         if self.get_episode_id_fn is not None:
             # fetch episode ids
             if self._epid_flatidx is None:
@@ -143,14 +149,16 @@ class SliceSampler(
             assert episode_ids.shape == (self.batch_size, self.prefetch_horizon + self.postfetch_horizon + 1)
             episode_id_at_step = episode_ids[:, self.prefetch_horizon]
             episode_id_eq = episode_ids == episode_id_at_step[:, None]
+            
+            zero_to_B = self.backend.array_api_namespace.arange(
+                self.batch_size,
+                device=device
+            )
             if self.prefetch_horizon > 0:
                 num_eq_prefetch = self.backend.array_api_namespace.sum(episode_id_eq[:, :self.prefetch_horizon], axis=1)
                 fill_idx_prefetch = self.prefetch_horizon - num_eq_prefetch
                 fill_value_prefetch = flat_dat[
-                    self.backend.array_api_namespace.arange(
-                        self.batch_size,
-                        device=fill_idx_prefetch.device
-                    ), 
+                    zero_to_B, 
                     fill_idx_prefetch
                 ] # (B, D)
                 fill_value_prefetch = fill_value_prefetch[:, None, :] # (B, 1, D)
@@ -160,12 +168,15 @@ class SliceSampler(
                     fill_value_prefetch
                 )
             else:
-                flat_dat_prefetch = flat_dat[:, :self.prefetch_horizon]
+                flat_dat_prefetch = None
             
             if self.postfetch_horizon > 0:
                 num_eq_postfetch = self.backend.array_api_namespace.sum(episode_id_eq[:, -self.postfetch_horizon:], axis=1)            
                 fill_idx_postfetch = self.prefetch_horizon + num_eq_postfetch
-                fill_value_postfetch = flat_dat[self.backend.array_api_namespace.arange(self.batch_size), fill_idx_postfetch]
+                fill_value_postfetch = flat_dat[
+                    zero_to_B, 
+                    fill_idx_postfetch
+                ]
                 fill_value_postfetch = fill_value_postfetch[:, None, :] # (B, 1, D)
                 flat_dat_postfetch = self.backend.array_api_namespace.where(
                     episode_id_eq[:, self.prefetch_horizon:, None],
@@ -175,12 +186,18 @@ class SliceSampler(
             else:
                 flat_dat_postfetch = flat_dat[:, self.prefetch_horizon:]
             
-            flat_dat = self.backend.array_api_namespace.concatenate((flat_dat_prefetch, flat_dat_postfetch), axis=1)
+            if flat_dat_prefetch is None:
+                flat_dat = flat_dat_postfetch
+            else:
+                flat_dat = self.backend.array_api_namespace.concatenate([
+                    flat_dat_prefetch, 
+                    flat_dat_postfetch
+                ], axis=1) # (B, T, D)
         else:
             episode_id_eq = self.backend.array_api_namespace.ones(
                 (flat_dat.shape[:2]),
                 dtype=self.backend.default_boolean_dtype,
-                device=self.backend.get_device(flat_dat)
+                device=device
             )
             episode_id_at_step = None
         return flat_dat, episode_id_eq, episode_id_at_step

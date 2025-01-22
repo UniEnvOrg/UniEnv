@@ -59,17 +59,12 @@ def perform_torch_replay_buffer_with_space_test(
     flattened_space = sfu.flatten_space(space)
     single_instance_shape = flattened_space.shape
     tempdumpdir = tempfile.mkdtemp()
-    storage = PytorchTensorStorage(
-        space.device,
-        flattened_space.dtype,
-        single_instance_shape,
-        capacity,
-        use_mmap=use_mmap,
-        mmap_location=None if not use_mmap else os.path.join(tempdumpdir, "storage.memmap"),
-    )
-    rb = ReplayBuffer(
-        storage,
+    rb = ReplayBuffer.create(
         space,
+        PytorchTensorStorage,
+        memmap=use_mmap,
+        memmap_path=None if not use_mmap else os.path.join(tempdumpdir, "storage.data"),
+        capacity=capacity
     )
     
     rng = torch.Generator(space.device)
@@ -98,19 +93,7 @@ def perform_torch_replay_buffer_with_space_test(
         rng
     )
     rb.dumps(tempdumpdir)
-    new_rb = ReplayBuffer(
-        PytorchTensorStorage(
-            space.device,
-            flattened_space.dtype,
-            single_instance_shape,
-            capacity,
-            use_mmap=use_mmap,
-            mmap_location=None if not use_mmap else os.path.join(tempdumpdir, "storage.memmap"),
-            mmap_load=True
-        ),
-        space
-    )
-    new_rb.loads(tempdumpdir)
+    new_rb = ReplayBuffer.load_from(tempdumpdir, memmap=use_mmap)
     slice_space = sbu.batch_space(space, capacity)
     new_slice = new_rb.get_at(ref_idx)
     new_flat_slice = sfu.flatten_data(slice_space, new_slice)
@@ -146,18 +129,10 @@ def perform_list_replay_buffer_with_space_test(
     capacity: Optional[int],
     seed : Optional[int] = None
 ):
-    flattened_space = sfu.flatten_space(space)
-    single_instance_shape = flattened_space.shape
-    storage = ListStorage(
-        space.backend,
-        space.device,
-        flattened_space.dtype,
-        single_instance_shape,
+    rb = ReplayBuffer.create(
+        space,
+        ListStorage,
         capacity=capacity,
-    )
-    rb = ReplayBuffer(
-        storage,
-        flattened_space,
     )
     
     rng = np.random.default_rng(seed)
