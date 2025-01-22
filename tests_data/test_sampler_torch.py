@@ -136,7 +136,7 @@ def test_slice_sampler(
     for i in range(100):
         unfiltered_flat = sampler.sample_unfiltered_flat()
         unfiltered = sfu.unflatten_data(sample_space, unfiltered_flat, start_dim=2)
-        filtered_flat = sampler.unfiltered_to_filtered_flat(unfiltered_flat)
+        filtered_flat, _, _ = sampler.unfiltered_to_filtered_flat(unfiltered_flat)
         filtered = sfu.unflatten_data(sample_space, filtered_flat, start_dim=2)
         
         ok_mask = unfiltered['episode_id'] == unfiltered['episode_id'][:, prefetch_horizon:prefetch_horizon+1]
