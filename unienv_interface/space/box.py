@@ -292,7 +292,7 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         include_device : bool = True,
         include_dtype : bool = True,
     ) -> str:
-        ret = f"Box({self._low}, {self._high}, {self.shape}"
+        ret = f"Box({self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}, {self.shape}"
         if include_backend:
             ret += f", backend={self.backend}"
         if include_device:
