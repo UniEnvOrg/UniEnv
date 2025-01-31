@@ -19,7 +19,7 @@ else:
 JaxDevice = Union[jax.Device, jax.sharding.Sharding]
 JaxRNG = jax.Array
 
-class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
+class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG], metaclass=ComputeBackend):
     ARRAY_TYPE = jax.Array
     DEVICE_TYPE = JaxDevice
     DTYPE_TYPE = np.dtype
@@ -30,11 +30,9 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG]):
     default_floating_dtype = float
     default_boolean_dtype = bool
 
-    @classmethod
     def is_backendarray(cls, data : Any) -> bool:
         return isinstance(data, jax.Array)
 
-    @classmethod
     def is_device_tpu(cls, device: JaxDevice) -> bool:
         return device.platform == "tpu"
 

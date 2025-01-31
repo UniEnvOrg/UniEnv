@@ -14,7 +14,7 @@ PYTORCH_DTYPE_CAST_MAP = {
 }
 TorchDevice = Union[torch.device, str]
 
-class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtype, torch.Generator]):
+class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtype, torch.Generator], metaclass=ComputeBackend):
     ARRAY_TYPE = torch.Tensor
     DEVICE_TYPE = TorchDevice
     DTYPE_TYPE = torch.dtype

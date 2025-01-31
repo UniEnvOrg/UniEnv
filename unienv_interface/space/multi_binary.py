@@ -87,9 +87,21 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
             and self.backend.array_api_namespace.all(self.backend.array_api_namespace.logical_or(x == 0, x == 1))
         )
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return f"MultiBinary({self.backend}, {self.shape}, {self.dtype}, {self.device})"
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        ret = f"MultiBinary({self.shape}"
+        if include_backend:
+            ret += f", {self.backend}"
+        if include_device:
+            ret += f", {self.device}"
+        if include_dtype:
+            ret += f", {self.dtype}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""

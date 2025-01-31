@@ -86,6 +86,22 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         """Return boolean specifying if x is a valid member of this space."""
         return self.contains(x)
     
+    def __repr__(self) -> str:
+        return self.get_repr(
+            include_backend=True,
+            include_device=True,
+            include_dtype=True
+        )
+
+    def get_repr(
+        self,
+        include_backend : bool = True,
+        include_device : bool = True,
+        include_dtype : bool = True,
+    ) -> str:
+        """Return a string representation of the space."""
+        raise NotImplementedError
+
     def to_jsonable(self, sample_n: Sequence[SpaceDataT]) -> Any:
         """Convert a batch of samples from this space to a JSONable data type."""
         # By default, assume identity is JSONable
@@ -118,3 +134,18 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
     def to_gym_space(self) -> gym.Space:
         """Convert this space to a gym space."""
         raise NotImplementedError
+
+    @staticmethod
+    def abbr_device(spaces : "Iterable[Space[Any, Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]]") -> Optional[_SpaceBDeviceT]:
+        """Get the abbreviated device of the spaces."""
+        
+        iter_spaces = iter(spaces)
+        try:
+            first_space = next(iter_spaces)
+        except StopIteration:
+            return None
+        device = first_space.device
+        for space in spaces:
+            if space.device != device:
+                return None
+        return device

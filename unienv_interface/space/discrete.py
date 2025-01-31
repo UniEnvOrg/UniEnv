@@ -109,11 +109,24 @@ class Discrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType])
 
         return bool(self.start <= as_int < self.start + self.n)
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        ret = f"Discrete({self.n}"
         if self.start != 0:
-            return f"Discrete({self.backend.__name__}, {self.n}, start={self.start}, {self.dtype}, {self.device})"
-        return f"Discrete({self.backend.__name__}, {self.n}, {self.dtype}, {self.device})"
+            ret += f", start={self.start}"
+        
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device:
+            ret += f", device={self.device}"
+        if include_dtype:
+            ret += f", dtype={self.dtype}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether ``other`` is equivalent to this instance."""

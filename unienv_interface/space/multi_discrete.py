@@ -122,11 +122,23 @@ class MultiDiscrete(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGT
             and self.backend.array_api_namespace.all(x - self.start < self.nvec)
         )
 
-    def __repr__(self):
-        """Gives a string representation of this space."""
-        if np.any(self.start != 0):
-            return f"MultiDiscrete({self.nvec}, start={self.start})"
-        return f"MultiDiscrete({self.nvec})"
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        ret = f"MultiDiscrete({self.nvec}"
+        if self.backend.array_api_namespace.any(self.start != 0):
+            ret += f", start={self.start}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device:
+            ret += f", device={self.device}"
+        if include_dtype:
+            ret += f", dtype={self.dtype}"
+        ret += ")"
+        return ret
 
     def __getitem__(self, index: int | tuple[int, ...]):
         """Extract a subspace from this ``MultiDiscrete`` space."""

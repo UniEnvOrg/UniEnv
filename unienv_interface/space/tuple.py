@@ -23,6 +23,10 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
                 new_spaces.append(space.to_device(device))
             else:
                 new_spaces.append(space)
+        
+        if device is None:
+            device = Space.abbr_device(new_spaces)
+
         self.spaces : TupleType[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], ...] = tuple(new_spaces)
         super().__init__(
             backend=backend,
@@ -86,9 +90,20 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
             and all(space.contains(part) for (space, part) in zip(self.spaces, x))
         )
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return "Tuple(" + ", ".join([str(s) for s in self.spaces]) + ")"
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        next_include_device = include_device and self.device is None
+        ret = f"Tuple({', '.join([space.get_repr(False, next_include_device, include_dtype) for space in self.spaces])}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device and self.device is not None:
+            ret += f", device={self.device}"
+        ret += ")"
+        return ret
 
     def __getitem__(self, index: int) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the subspace at specific `index`."""

@@ -79,9 +79,17 @@ class Sequence(
             self.feature_space.contains(item) for item in x
         )
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return f"Sequence({self.feature_space})"
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ) -> str:
+        ret = f"Sequence({self.feature_space.get_repr(False, include_device, include_dtype)}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether ``other`` is equivalent to this instance."""

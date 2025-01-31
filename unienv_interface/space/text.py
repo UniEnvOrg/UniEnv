@@ -113,8 +113,13 @@ class Text(Space[str, str, BDeviceType, BDtypeType, BRNGType]):
         """Return boolean specifying if x is a valid member of this space."""
         return self._gym_space.contains(x)
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        """Get a string representation of this space."""
         return f"Text({self._gym_space.min_length}, {self._gym_space.max_length}, charset={self.characters})"
 
     def __eq__(self, other: Any) -> bool:

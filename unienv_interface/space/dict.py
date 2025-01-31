@@ -28,8 +28,9 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             raise TypeError(
                 f"Unexpected Dict space input, expecting dict, OrderedDict or Sequence, actual type: {type(spaces)}"
             )
-
+        
         new_spaces: DictType[str, Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = {}
+
         for key, space in spaces.items():
             assert isinstance(
                 space, Space
@@ -40,6 +41,9 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             else:
                 new_spaces[key] = space
         self.spaces = new_spaces
+        
+        if device is None:
+            device = Space.abbr_device(new_spaces.values())
 
         # None for shape and dtype, since it'll require special handling
         super().__init__(
@@ -144,7 +148,8 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         assert isinstance(
             value, Space
         ), f"Trying to set {key} to Dict space with value that is not a Space, actual type: {type(value)}"
-        self.spaces[key] = value.to_device(self.device) if self.device is not None else value
+        new_space = value.to_device(self.device) if self.device is not None else value
+        self.spaces[key] = new_space
 
     def __iter__(self):
         """Iterator through the keys of the subspaces."""
@@ -154,11 +159,24 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         """Gives the number of simpler spaces that make up the `Dict` space."""
         return len(self.spaces)
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return (
-            "Dict(" + ", ".join([f"{k!r}: {s}" for k, s in self.spaces.items()]) + ")"
-        )
+    def get_repr(
+        self,
+        include_backend : bool = True,
+        include_device : bool = True,
+        include_dtype : bool = True,
+    ) -> str:
+        ret = f"Box({self._low}, {self._high}, {self.shape}"
+        next_include_device = include_device and self.device is None
+        ret = "Dict(" + ", ".join([
+            f"{k!r}: {s.get_repr(False, next_include_device, include_dtype)}" 
+            for k, s in self.spaces.items()
+        ])
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device and self.device is not None:
+            ret += f", device={self.device}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""

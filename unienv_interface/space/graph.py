@@ -166,8 +166,16 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
                         return x.edges is None and x.edge_links is None
         return False
 
-    def __repr__(self) -> str:
-        return f"Graph({self.node_space}, {self.edge_space})"
+    def get_repr(self, include_backend = True, include_device = True, include_dtype = True):
+        ret = f"Graph({self.node_space.get_repr(False, False, include_dtype)}"
+        if self.edge_space is not None:
+            ret += f", {self.edge_space.get_repr(False, False, include_dtype)}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device and self.device is not None:
+            ret += f", device={self.device}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""

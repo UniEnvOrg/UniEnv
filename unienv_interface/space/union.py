@@ -21,6 +21,9 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRN
             ), f"{space} does not inherit from `Space`. Actual Type: {type(space)}"
             assert space.backend == backend, f"Backend mismatch: {space.backend} != {backend}"
 
+        if device is None:
+            device = Space.abbr_device(self.spaces)
+
         super().__init__(
             backend=backend,
             shape=None,
@@ -94,9 +97,20 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRN
             and self.spaces[x[0]].contains(x[1])
         )
 
-    def __repr__(self) -> str:
-        """Gives a string representation of this space."""
-        return "Union(" + ", ".join([str(s) for s in self.spaces]) + ")"
+    def get_repr(
+        self, 
+        include_backend = True, 
+        include_device = True, 
+        include_dtype = True
+    ):
+        next_include_device = include_device and self.device is None
+        ret = f"Union({', '.join([space.get_repr(False, next_include_device, include_dtype) for space in self.spaces])}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device and self.device is not None:
+            ret += f", device={self.device}"
+        ret += ")"
+        return ret
 
     def __getitem__(self, index: int) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the subspace at specific `index`."""

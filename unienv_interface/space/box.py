@@ -4,26 +4,6 @@ from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import gymnasium as gym
 
-def abbreviate_array(backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], array : BArrayType) -> Union[float, int, BArrayType]:
-    abbr_array = array
-    idx = backend.array_api_namespace.zeros(1, dtype=backend.default_integer_dtype, device=backend.get_device(abbr_array))
-    for dim_i in range(len(array.shape)):
-        first_elem = backend.array_api_namespace.take(abbr_array, idx, axis=dim_i)
-        if backend.array_api_namespace.all(abbr_array == first_elem):
-            abbr_array = first_elem
-        else:
-            continue
-    if all(i == 1 for i in abbr_array.shape):
-        elem = abbr_array[tuple([0] * len(abbr_array.shape))]
-        if backend.dtype_is_real_floating(elem.dtype):
-            return float(elem)
-        elif backend.dtype_is_real_integer(elem.dtype):
-            return int(elem)
-        else:
-            raise ValueError(f"Abbreviated array element dtype must be a real floating or integer type, actual dtype: {elem.dtype}")
-    else:
-        return array
-
 class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
@@ -68,13 +48,21 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             dtype=dtype,
         )
 
-        low = abbreviate_array(backend, low) if not isinstance(low, (int, float)) else low
-        high = abbreviate_array(backend, high) if not isinstance(high, (int, float)) else high
+        if isinstance(low, (int, float)):
+            _low = array_api_workspace.full([1] * len(shape), low, dtype=dtype, device=device)
+            _high = array_api_workspace.full([1] * len(shape), high, dtype=dtype, device=device)
+        else:
+            _low = backend.abbreviate_array(
+                array_api_workspace.astype(low, self.dtype),
+                try_cast_scalar=False
+            )
+            _high = backend.abbreviate_array(
+                array_api_workspace.astype(high, self.dtype),
+                try_cast_scalar=False
+            )
+        
+        assert array_api_workspace.all(_low <= _high), f"low is greater than high: low={_low}, high={_high}"
 
-        _low = array_api_workspace.full([1] * len(shape), low, dtype=float, device=device) if isinstance(low, (int, float)) else low
-        _high = array_api_workspace.full([1] * len(shape), high, dtype=float, device=device) if isinstance(high, (int, float)) else high
-
-        # Before performing any operation on low and high arrays, move to the device to avoid jax tiling problems
         if device is not None:
             _low = backend.to_device(_low, device)
             _high = backend.to_device(_high, device)
@@ -90,18 +78,17 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         ), f"_low.shape doesn't match provided shape and is not broadcastable, high.shape: {_low.shape}, shape: {shape}"
 
         self._shape: tuple[int, ...] = shape
-
-        self._low = array_api_workspace.astype(_low, self.dtype)
-        self._high = array_api_workspace.astype(_high, self.dtype)
-
-        bounded_below = -self.backend.array_api_namespace.inf < self._low
-        bounded_above = self.backend.array_api_namespace.inf > self._high
+        
+        # Check bounded below and above for integer dtype
         if not self._dtype_is_float:
+            bounded_below = -self.backend.array_api_namespace.inf < _low
+            bounded_above = self.backend.array_api_namespace.inf > _high
             below = bool(self.backend.array_api_namespace.all(bounded_below))
             above = bool(self.backend.array_api_namespace.all(bounded_above))
             assert below and above, f"Box bounds must be finite for integer dtype, actual low: {self.low}, high: {self.high}"
 
-        assert array_api_workspace.all(self._low <= self._high), f"low is greater than high: low={self.low}, high={self.high}"
+        self._low = _low
+        self._high = _high
 
     @property
     def low(self) -> BArrayType:
@@ -299,16 +286,21 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         """Clip the values of x to be within the bounds of this space."""
         return self.backend.array_api_namespace.clip(x, self._low, self._high)
 
-    def __repr__(self) -> str:
-        """A string representation of this space.
-
-        The representation will include bounds, shape and dtype.
-        If a bound is uniform, only the corresponding scalar will be given to avoid redundant and ugly strings.
-
-        Returns:
-            A representation of the space
-        """
-        return f"Box({self.backend.__name__}, {abbreviate_array(self.backend, self.low)}, {abbreviate_array(self.backend, self.high)}, {self.shape}, {self.dtype}, {self.device})"
+    def get_repr(
+        self,
+        include_backend : bool = True,
+        include_device : bool = True,
+        include_dtype : bool = True,
+    ) -> str:
+        ret = f"Box({self._low}, {self._high}, {self.shape}"
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device:
+            ret += f", device={self.device}"
+        if include_dtype:
+            ret += f", dtype={self.dtype}"
+        ret += ")"
+        return ret
 
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""

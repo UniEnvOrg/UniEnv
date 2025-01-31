@@ -4,7 +4,8 @@ from .base import ComputeBackend
 import numpy as np
 import dlpack
 
-class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator]):
+class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator], metaclass=ComputeBackend):
+
     ARRAY_TYPE = np.ndarray
     DEVICE_TYPE = Any
     DTYPE_TYPE = np.dtype
