@@ -5,16 +5,10 @@ from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence
 from unienv_interface.space import Space, Box, flatten_utils as sfu, batch_utils as sbu
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
+from unienv_interface.utils.symbol_util import get_class_from_full_name, get_full_class_name
 from .common import BatchBase, BatchT
 import json
 import pickle
-
-def get_full_class_name(cls : type) -> str:
-    return f"{cls.__module__}.{cls.__qualname__}"
-
-def get_class_from_full_name(full_name : str) -> type:
-    module_name, class_name = full_name.rsplit(".", 1)
-    return getattr(__import__(module_name, fromlist=[class_name]), class_name)
 
 class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     save_ext : str = ".storage"
