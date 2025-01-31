@@ -165,7 +165,6 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         include_device : bool = True,
         include_dtype : bool = True,
     ) -> str:
-        ret = f"Box({self._low}, {self._high}, {self.shape}"
         next_include_device = include_device and self.device is None
         ret = "Dict(" + ", ".join([
             f"{k!r}: {s.get_repr(False, next_include_device, include_dtype)}" 
