@@ -1,4 +1,5 @@
 from typing import List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar
+from types import EllipsisType
 import os
 import abc
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -6,12 +7,14 @@ from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.space import Space, batch_utils as space_batch_utils, Dict as DictSpace, flatten_utils as space_flatten_utils
 import dataclasses
 
+IndexableType = Union[int, slice, EllipsisType]
+
 BatchT = TypeVar('BatchT')
 class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device: Optional[BDeviceType] = None
 
-    # If the batch is mutable, then the data can be changed (extend_*, set_*, etc.)
+    # If the batch is mutable, then the data can be changed (extend_*, set_*, remove_*, etc.)
     is_mutable: bool = True
 
     def __init__(
@@ -28,34 +31,40 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         raise NotImplementedError
     
     @abc.abstractmethod
-    def get_flattened_at(self, idx : Optional[Union[int, slice, BArrayType]] = None) -> BArrayType:
+    def get_flattened_at(self, idx : Union[IndexableType, BArrayType]) -> BArrayType:
         raise NotImplementedError
 
-    def set_flattened_at(self, idx : Optional[Union[int, slice, BArrayType]], value : BArrayType) -> None:
+    def set_flattened_at(self, idx : Union[IndexableType, BArrayType], value : BArrayType) -> None:
         raise NotImplementedError
-    
+
     def extend_flattened(self, value : BArrayType) -> None:
         raise NotImplementedError
     
-    def get_at(self, idx : Optional[Union[int, slice, BArrayType]] = None) -> BatchT:
+    def get_at(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
         flattened_data = self.get_flattened_at(idx)
         if isinstance(idx, int):
             return space_flatten_utils.unflatten_data(self.single_space, flattened_data)
         else:
             return space_flatten_utils.batch_unflatten_data(self._batched_space, flattened_data)
     
-    def __getitem__(self, idx : Union[int, slice, BArrayType]) -> BatchT:
+    def __getitem__(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
         return self.get_at(idx)
 
-    def set_at(self, idx : Optional[Union[int, slice, BArrayType]], value : BatchT) -> None:
+    def set_at(self, idx : Union[IndexableType, BArrayType], value : BatchT) -> None:
         if isinstance(idx, int):
             flattened_data = space_flatten_utils.flatten_data(self.single_space, value)
         else:
             flattened_data = space_flatten_utils.batch_flatten_data(self._batched_space, value)
         self.set_flattened_at(idx, flattened_data)
     
-    def __setitem__(self, idx : Union[int, slice, BArrayType], value : BatchT) -> None:
+    def __setitem__(self, idx : Union[IndexableType, BArrayType], value : BatchT) -> None:
         self.set_at(idx, value)
+    
+    def remove_at(self, idx : Union[IndexableType, BArrayType]) -> None:
+        raise NotImplementedError
+
+    def __delitem__(self, idx : Union[IndexableType, BArrayType]) -> None:
+        self.remove_at(idx)
 
     def extend(self, value : BatchT) -> None:
         flattened_data = space_flatten_utils.batch_flatten_data(self._batched_space, value)

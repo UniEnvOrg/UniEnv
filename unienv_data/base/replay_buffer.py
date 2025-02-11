@@ -6,7 +6,7 @@ from unienv_interface.space import Space, Box, flatten_utils as sfu, batch_utils
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.utils.symbol_util import get_class_from_full_name, get_full_class_name
-from .common import BatchBase, BatchT
+from .common import BatchBase, BatchT, IndexableType
 import json
 import pickle
 
@@ -80,11 +80,11 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get(self, index : Union[int, slice, BArrayType, None]) -> BArrayType:
+    def get(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
         raise NotImplementedError
     
     @abc.abstractmethod
-    def set(self, index : Union[int, slice, BArrayType, None], value : BArrayType) -> None:
+    def set(self, index : Union[IndexableType, BArrayType], value : BArrayType) -> None:
         raise NotImplementedError
     
     @abc.abstractmethod
@@ -114,7 +114,7 @@ def index_with_offset(
     if capacity is None:
         assert offset == 0, "Offset must be 0 for unbounded storage"
         capacity = len_transitions
-    if index is None:
+    if index is Ellipsis or index is None:
         nonzero_index = backend.array_api_namespace.arange(len_transitions)
         data_index = (nonzero_index + offset) % capacity
         return data_index
@@ -236,7 +236,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def device(self) -> Optional[BDeviceType]:
         return self.storage.device
 
-    def get_flattened_at(self, idx: Optional[Union[int, slice, BArrayType]] = None) -> BArrayType:
+    def get_flattened_at(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         return self.storage.get(index_with_offset(
             self.backend,
             idx,
@@ -245,7 +245,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self.offset
         ))
     
-    def set_flattened_at(self, idx: Optional[Union[int, slice, BArrayType]], value: BArrayType) -> None:
+    def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
         self.storage.set(index_with_offset(
             self.backend,
             idx,

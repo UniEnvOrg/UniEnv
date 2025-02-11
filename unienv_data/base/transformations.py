@@ -40,7 +40,7 @@ class TransformedBatch(
     def __len__(self) -> int:
         return len(self.batch)
     
-    def get_flattened_at(self, idx : Optional[Union[int, slice, BArrayType]] = None) -> BArrayType:
+    def get_flattened_at(self, idx : Union[IndexableType, BArrayType]) -> BArrayType:
         dat = self.get_at(idx)
         if isinstance(idx, int):
             return sfu.flatten_data(
@@ -54,7 +54,7 @@ class TransformedBatch(
                 start_dim=1
             )
     
-    def set_flattened_at(self, idx : Optional[Union[int, slice, BArrayType]], value : BArrayType) -> None:
+    def set_flattened_at(self, idx : Union[IndexableType, BArrayType], value : BArrayType) -> None:
         if isinstance(idx, int):
             value = sfu.unflatten_data(
                 self.single_space,
@@ -76,7 +76,7 @@ class TransformedBatch(
         )
         self.extend(value)
 
-    def get_at(self, idx : Optional[Union[int, slice, BArrayType]] = None) -> BatchT:
+    def get_at(self, idx : Union[IndexableType, BArrayType] = None) -> BatchT:
         source_dat = self.batch.get_at(idx)
         
         if not isinstance(idx, int):
@@ -89,7 +89,7 @@ class TransformedBatch(
             )
         return target_dat
 
-    def set_at(self, idx : Optional[Union[int, slice, BArrayType]], value : BatchT) -> None:
+    def set_at(self, idx : Union[IndexableType, BArrayType], value : BatchT) -> None:
         assert self.transformation.has_inverse, "Cannot set values on a transformed batch without an inverse transformation"
         assert self.batch.is_mutable, "Cannot set values on an immutable batch"
         if not isinstance(idx, int):
@@ -101,6 +101,9 @@ class TransformedBatch(
                 value
             )
         self.batch.set_at(idx, source_dat)
+
+    def remove_at(self, idx : Union[IndexableType, BArrayType]) -> None:
+        return self.batch.remove_at(idx)
 
     def extend(self, value : BatchT) -> None:
         assert self.transformation.has_inverse, "Cannot extend values on a transformed batch without an inverse transformation"
