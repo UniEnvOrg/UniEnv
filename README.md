@@ -15,7 +15,7 @@ Also supports on-the-fly conversion between backend data.
 
 Current environments:
 - Mujoco
-- MJX (Only single-instance environments)
+- MJX (Env Wrapper Only, based on [Mujoco-Playground](https://github.com/google-deepmind/mujoco_playground))
 - ManiSkill 3 (Env Wrapper Only)
 
 ## Support for gymnasium environments

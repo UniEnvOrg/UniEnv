@@ -34,9 +34,7 @@ mujoco = [
     "mink>=0.0.5"
 ]
 mjx = [
-    "mujoco-mjx>=3.0",
-    "flax",
-    "jax"
+    "playground",
 ]
 maniskill = [
     "mani_skill>=3.0.0b12",

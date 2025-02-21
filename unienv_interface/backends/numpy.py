@@ -5,7 +5,6 @@ import numpy as np
 import dlpack
 
 class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Generator], metaclass=ComputeBackend):
-
     ARRAY_TYPE = np.ndarray
     DEVICE_TYPE = Any
     DTYPE_TYPE = np.dtype
@@ -18,7 +17,7 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
 
     @classmethod
     def is_backendarray(cls, data : Any) -> bool:
-        return array_api_compat.is_numpy_array(data)
+        return isinstance(data, np.ndarray)
 
     @classmethod
     def is_device_tpu(cls, device: Any) -> bool:

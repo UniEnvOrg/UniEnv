@@ -2,7 +2,6 @@ from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, Suppo
 import abc
 import numpy as np
 import dlpack
-import gymnasium as gym
 import array_api_compat
 
 BArrayType = TypeVar("BArrayType", covariant=True)
@@ -11,11 +10,6 @@ BDeviceType = TypeVar("BDeviceType", covariant=True)
 BDtypeType = TypeVar("BDtypeType", covariant=True)
 BRNGType = TypeVar("BRNGType", covariant=True)
 class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    ARRAY_TYPE : Type[BArrayType]
-    DEVICE_TYPE : Type[BDeviceType]
-    DTYPE_TYPE : Type[BDtypeType]
-    RNG_TYPE : Type[BRNGType]
-    
     array_api_namespace : Any
     default_integer_dtype : BDtypeType
     default_floating_dtype : BDtypeType
@@ -75,9 +69,6 @@ class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
     @abc.abstractmethod
     def random_uniform(cls, rng : BRNGType, shape : Sequence[int], lower_bound : float = 0.0, upper_bound : float = 1.0, dtype : Optional[BDtypeType] = None, device : Optional[BDeviceType] = None) -> Tuple[BRNGType, BArrayType]:
         raise NotImplementedError
-
-    def __repr__(cls):
-        return cls.__name__
 
     @abc.abstractmethod
     def random_exponential(cls, rng : BRNGType, shape : Sequence[int], lambd : float = 1.0, dtype : Optional[BDtypeType] = None, device : Optional[BDeviceType] = None) -> Tuple[BRNGType, BArrayType]:

@@ -84,7 +84,6 @@ class FuncEnv(
         """Close the environment."""
         return
 
-    @abc.abstractmethod
     def render_image(
         self, 
         state : StateType,
@@ -101,7 +100,6 @@ class FuncEnv(
         """Show the state."""
         raise NotImplementedError
 
-    @abc.abstractmethod
     def render_init(
         self, 
         state : StateType, 
@@ -117,7 +115,6 @@ class FuncEnv(
         """Initialize the render state."""
         raise NotImplementedError
 
-    @abc.abstractmethod
     def render_close(
         self, 
         state : StateType,

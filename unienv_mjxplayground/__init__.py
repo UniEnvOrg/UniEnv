@@ -1,0 +1,1 @@
+from .wrapper.playground_compat import FromMJXPlaygroundEnv
