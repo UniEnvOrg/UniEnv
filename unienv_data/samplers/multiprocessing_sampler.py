@@ -179,6 +179,15 @@ class MultiprocessingSampler(
                 worker.terminate()
         self.closed = True
     
+    def get_flat_at(self, idx):
+        return self.sampler.get_flat_at(idx)
+
+    def get_at(self, idx):
+        return self.sampler.get_at(idx)
+
+    def sample_flat(self):
+        return self.sampler.sample_flat()
+
     def sample(self):
         samp = self.sampler_result_queue.get()
         self.sampler_work_queue.put(1)

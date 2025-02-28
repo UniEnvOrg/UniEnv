@@ -119,6 +119,17 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
         return rng, t
 
     @classmethod
+    def random_permutation(
+        cls,
+        rng: torch.Generator,
+        n: int,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[TorchDevice] = None
+    ) -> Tuple[torch.Generator, torch.Tensor]:
+        t = torch.randperm(n, generator=rng, dtype=dtype, device=device)
+        return rng, t
+
+    @classmethod
     def dtype_is_real_integer(cls, dtype : torch.dtype) -> bool:
         return dtype in cls.list_real_integer_dtypes()
     

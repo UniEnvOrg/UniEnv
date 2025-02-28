@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar
+from typing import List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar, Iterable, Iterator
 from types import EllipsisType
 import os
 import abc
@@ -97,16 +97,47 @@ class BatchSampler(abc.ABC, Generic[
     rng : Optional[SamplerRNGType] = None
     data_rng : Optional[BRNGType] = None
 
-    def sample_flat(self) -> SamplerArrayType:
-        return space_flatten_utils.flatten_data(self.sampled_space, self.sample(), start_dim=1)
-
     @abc.abstractmethod
-    def sample(self) -> SamplerBatchT:
-        """
-        Should sample a batch of transitions from the data.
-        """
+    def get_flat_at(self, idx : SamplerArrayType) -> SamplerArrayType:
         raise NotImplementedError
     
+    def get_at(self, idx : SamplerArrayType) -> SamplerBatchT:
+        return space_flatten_utils.unflatten_data(self.sampled_space, self.get_flat_at(idx), start_dim=1)
+
+    def sample_index(self) -> SamplerArrayType:
+        new_rng, indices = self.backend.random_discrete_uniform( # (B, )
+            self.data_rng if self.data_rng is not None else self.rng,
+            (self.batch_size,),
+            0,
+            len(self.data),
+            device=self.data.device,
+        )
+        if self.data_rng is not None:
+            self.data_rng = new_rng
+        else:
+            self.rng = new_rng
+        return indices
+
+    def sample_flat(self) -> SamplerArrayType:
+        idx = self.sample_index()
+        return self.get_flat_at(idx)
+
+    def sample(self) -> SamplerBatchT:
+        idx = self.sample_index()
+        return self.get_at(idx)
+    
+    def __iter__(self) -> Iterator[SamplerBatchT]:
+        if self.data_rng is not None:
+            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+        else:
+            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+        n_batches = len(self.data) // self.batch_size
+        num_left = len(self.data) % self.batch_size
+        for i in range(n_batches):
+            yield self.get_at(idx[i*self.batch_size:(i+1)*self.batch_size])
+        if num_left > 0:
+            yield self.get_at(idx[-num_left:])
+
     def close(self) -> None:
         pass
 

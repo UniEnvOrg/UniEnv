@@ -436,30 +436,31 @@ def _unbatch_spaces_tuple(space: Tuple):
 def iterate(space: Space, items: Any) -> Iterator:
     for i in range(batch_size_data(items)):
         yield get_at(space, items, i)
-    
+
+IndexableT = Union[int, slice, Tuple[slice], BArrayType, Tuple[BArrayType]]
 @singledispatch
-def get_at(space: Space, items: Any, index: int) -> Any:
+def get_at(space: Space, items: Any, index: IndexableT) -> Any:
     raise TypeError(
         f"The space provided to `get_at` is not a batched space instance, type: {type(space)}, {space}"
     )
 
 @get_at.register(Discrete)
-def _get_at_discrete(space: Discrete, items: Iterable, index: int):
+def _get_at_discrete(space: Discrete, items: Iterable, index: IndexableT):
     raise TypeError("Unable to iterate over a space of type `Discrete`.")
 
 @get_at.register(Box)
 @get_at.register(MultiDiscrete)
 @get_at.register(MultiBinary)
-def _get_at_common(space: Box | MultiDiscrete | MultiBinary, items: Any, index: int):
+def _get_at_common(space: Box | MultiDiscrete | MultiBinary, items: Any, index: IndexableT):
     return items[index]
 
 @get_at.register(Dict)
-def _get_at_dict(space: Dict, items: dict[str, Any], index : int):
+def _get_at_dict(space: Dict, items: dict[str, Any], index : IndexableT):
     ret = {key: get_at(subspace, items[key], index) for key, subspace in space.spaces.items()}
     return ret
 
 @get_at.register(Tuple)
-def _get_at_tuple(space: Tuple, items: tuple[Any, ...], index : int):
+def _get_at_tuple(space: Tuple, items: tuple[Any, ...], index : IndexableT):
     # If this is a tuple of custom subspaces only, then simply iterate over items
     if all(type(subspace) in iterate.registry for subspace in space.spaces):
         return tuple(get_at(subspace, item, index) for (subspace, item) in zip(space.spaces, items))

@@ -32,7 +32,6 @@ class StepSampler(
         if device is not None:
             self.sampled_space = self.sampled_space.to_device(device)
 
-
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.data.backend
@@ -41,26 +40,14 @@ class StepSampler(
     def device(self) -> Optional[BDeviceType]:
         return self._device or self.data.device
     
-    def sample_indices(self) -> BArrayType:
-        self.data_rng, indices = self.backend.random_discrete_uniform(
-            self.data_rng,
-            (self.batch_size,),
-            0,
-            len(self.data),
-            device=self.data.device,
-        )
-        return indices
-
-    def sample_flat(self) -> BArrayType:
-        indices = self.sample_indices()
-        dat = self.data.get_flattened_at(indices)
+    def get_flat_at(self, idx : BArrayType) -> BArrayType:
+        dat = self.data.get_flattened_at(idx)
         if self._device is not None:
             dat = self.backend.to_device(dat, self._device)
         return dat
-    
-    def sample(self) -> BatchT:
-        indices = self.sample_indices()
-        dat = self.data.get_at(indices)
+
+    def get_at(self, idx : BArrayType) -> BatchT:
+        dat = self.data.get_at(idx)
         if self._device is not None:
             dat = self.sampled_space.from_same_backend(dat)
         return dat

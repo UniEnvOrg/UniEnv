@@ -133,6 +133,19 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return rng, t
 
     @classmethod
+    def random_permutation(
+        cls,
+        rng: np.random.Generator,
+        n : int,
+        dtype: Optional[np.dtype] = None,
+        device: Optional[Any] = None
+    ) -> Tuple[np.random.Generator, np.ndarray]:
+        t = rng.permutation(n)
+        if dtype is not None:
+            t = t.astype(dtype)
+        return rng, t
+
+    @classmethod
     def dtype_is_real_integer(cls, dtype : np.dtype) -> bool:
         return dtype in cls.list_real_integer_dtypes()
     

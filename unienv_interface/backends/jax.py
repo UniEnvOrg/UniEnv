@@ -165,6 +165,20 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG], 
         return new_rng, data
 
     @classmethod
+    def random_permutation(
+        cls,
+        rng : JaxRNG,
+        n : int,
+        dtype : Optional[np.dtype] = None,
+        device : Optional[JaxDevice] = None
+    ) -> Tuple[JaxRNG, jax.Array]:
+        new_rng, rng = jax.random.split(rng)
+        data = jax.random.permutation(rng, n, dtype=dtype or int)
+        if device is not None:
+            data = jax.device_put(data, device)
+        return new_rng, data
+
+    @classmethod
     def dtype_is_real_integer(cls, dtype : np.dtype) -> bool:
         return dtype in cls.list_real_integer_dtypes()
     

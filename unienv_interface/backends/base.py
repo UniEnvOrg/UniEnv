@@ -83,6 +83,10 @@ class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
         raise NotImplementedError
 
     @abc.abstractmethod
+    def random_permutation(cls, rng : BRNGType, n : int, dtype : Optional[BDtypeType] = None, device : Optional[BDeviceType] = None) -> Tuple[BRNGType, BArrayType]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def dtype_is_real_integer(cls, dtype : BDtypeType) -> bool:
         raise NotImplementedError
     

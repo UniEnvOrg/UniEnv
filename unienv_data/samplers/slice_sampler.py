@@ -97,37 +97,25 @@ class SliceSampler(
     def device(self) -> Optional[BDeviceType]:
         return self._device or self.data.device
     
-    def sample_indices(self) -> BArrayType:
+    def expand_index(self, index : BArrayType) -> BArrayType:
         """
         Sample indexes to slice the data, returns a tensor of shape (B, T) that resides on the same device as the data
         """
-        self.data_rng, indices = self.backend.random_discrete_uniform( # (B, )
-            self.data_rng,
-            (self.batch_size,),
-            0,
-            len(self.data),
-            device=self.data.device,
+        index_shifts = self.backend.array_api_namespace.arange( # (T, )
+            -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=index.dtype, device=self.data.device
         )
-        indices_shifts = self.backend.array_api_namespace.arange( # (T, )
-            -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=indices.dtype, device=self.data.device
-        )
-        indices = self.backend.array_api_namespace.expand_dims(indices, axis=1) + indices_shifts[None, :] # (B, T)
-        indices = self.backend.array_api_namespace.clip(indices, 0, len(self.data) - 1)
-        return indices
+        index = index[:, None] + index_shifts[None, :] # (B, T)
+        index = self.backend.array_api_namespace.clip(index, 0, len(self.data) - 1)
+        return index
 
-    def sample_unfiltered_flat(self) -> BArrayType:
-        indices = self.sample_indices()
+    def get_unfiltered_flat(self, idx : BArrayType) -> BArrayType:
+        indices = self.expand_index(idx) # (B, T)
         flat_idx = self.backend.array_api_namespace.reshape(indices, (-1,)) # (B * T, )
         dat_flat = self.data.get_flattened_at(flat_idx) # (B * T, D)
         assert dat_flat.shape[0] == (self.prefetch_horizon + self.postfetch_horizon + 1) * self.batch_size
         if self._device is not None:
             dat_flat = self.backend.to_device(dat_flat, self._device)
         dat = self.backend.array_api_namespace.reshape(dat_flat, (*indices.shape, -1)) # (B, T, D)
-        return dat
-
-    def sample_unfiltered(self) -> BatchT:
-        flat_dat = self.sample_unfiltered_flat() # (B, T, D)
-        dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
         return dat
 
     def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> Tuple[
@@ -202,28 +190,41 @@ class SliceSampler(
             episode_id_at_step = None
         return flat_dat, episode_id_eq, episode_id_at_step
 
-    def sample_flat(self) -> BArrayType:
-        flat_dat = self.sample_unfiltered_flat()
-        return self.unfiltered_to_filtered_flat(flat_dat)[0]
+    def get_flat_at(self, idx : BArrayType):
+        return self.get_flat_with_metadata(idx)[0]
 
-    def sample_flat_with_metadata(self) -> Tuple[
+    def get_flat_with_metadata(self, idx : BArrayType) -> Tuple[
         BArrayType,
         BArrayType, # validity mask
         Optional[BArrayType]
     ]:
-        flat_dat = self.sample_unfiltered_flat()
-        return self.unfiltered_to_filtered_flat(flat_dat)
-
-    def sample(self):
-        flat_dat = self.sample_flat()
-        dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
-        return dat
+        unfilt_flat_dat = self.get_unfiltered_flat(idx)
+        return self.unfiltered_to_filtered_flat(unfilt_flat_dat)
     
+    def get_at(self, idx : BArrayType) -> BatchT:
+        return self.get_at_with_metadata(idx)[0]
+
+    def get_at_with_metadata(self, idx : BArrayType) -> Tuple[
+        BatchT,
+        BArrayType,
+        Optional[BArrayType]
+    ]:
+        flat_dat, validity_mask, episode_id = self.get_flat_with_metadata(idx)
+        dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
+        return dat, validity_mask, episode_id
+    
+    def sample_flat_with_metadata(self) -> Tuple[
+        BArrayType,
+        BArrayType,
+        Optional[BArrayType]
+    ]:
+        idx = self.sample_index()
+        return self.get_flat_with_metadata(idx)
+
     def sample_with_metadata(self) -> Tuple[
         BatchT,
         BArrayType,
         Optional[BArrayType]
     ]:
-        flat_dat, validity_mask, episode_id = self.sample_flat_with_validity_mask()
-        dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
-        return dat, validity_mask, episode_id
+        idx = self.sample_index()
+        return self.get_at_with_metadata(idx)
