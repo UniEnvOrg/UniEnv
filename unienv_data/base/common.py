@@ -127,6 +127,9 @@ class BatchSampler(abc.ABC, Generic[
         return self.get_at(idx)
     
     def __iter__(self) -> Iterator[SamplerBatchT]:
+        return self.epoch_iter()
+    
+    def epoch_iter(self) -> Iterator[SamplerBatchT]:
         if self.data_rng is not None:
             self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
         else:
@@ -137,6 +140,18 @@ class BatchSampler(abc.ABC, Generic[
             yield self.get_at(idx[i*self.batch_size:(i+1)*self.batch_size])
         if num_left > 0:
             yield self.get_at(idx[-num_left:])
+    
+    def epoch_flat_iter(self) -> Iterator[SamplerArrayType]:
+        if self.data_rng is not None:
+            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+        else:
+            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+        n_batches = len(self.data) // self.batch_size
+        num_left = len(self.data) % self.batch_size
+        for i in range(n_batches):
+            yield self.get_flat_at(idx[i*self.batch_size:(i+1)*self.batch_size])
+        if num_left > 0:
+            yield self.get_flat_at(idx[-num_left:])
 
     def close(self) -> None:
         pass

@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable
+from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable, Iterator
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, flatten_utils as sfu, batch_utils as sbu
@@ -228,3 +228,27 @@ class SliceSampler(
     ]:
         idx = self.sample_index()
         return self.get_at_with_metadata(idx)
+    
+    def epoch_iter_with_metadata(self) -> Iterator[Tuple[SamplerBatchT, BArrayType, Optional[BArrayType]]]:
+        if self.data_rng is not None:
+            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+        else:
+            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+        n_batches = len(self.data) // self.batch_size
+        num_left = len(self.data) % self.batch_size
+        for i in range(n_batches):
+            yield self.get_at_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
+        if num_left > 0:
+            yield self.get_at_with_metadata(idx[-num_left:])
+
+    def epoch_flat_iter_with_metadata(self) -> Iterator[Tuple[BArrayType, BArrayType, Optional[BArrayType]]]:
+        if self.data_rng is not None:
+            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+        else:
+            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+        n_batches = len(self.data) // self.batch_size
+        num_left = len(self.data) % self.batch_size
+        for i in range(n_batches):
+            yield self.get_flat_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
+        if num_left > 0:
+            yield self.get_flat_with_metadata(idx[-num_left:])
