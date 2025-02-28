@@ -437,7 +437,7 @@ def iterate(space: Space, items: Any) -> Iterator:
     for i in range(batch_size_data(items)):
         yield get_at(space, items, i)
 
-IndexableT = Union[int, slice, Tuple[slice], BArrayType, Tuple[BArrayType]]
+IndexableT = typing.Union[int, slice, typing.Tuple[slice], BArrayType, typing.Tuple[BArrayType]]
 @singledispatch
 def get_at(space: Space, items: Any, index: IndexableT) -> Any:
     raise TypeError(
