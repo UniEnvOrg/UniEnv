@@ -35,9 +35,11 @@ class DataTransformation(
     def device(self) -> Optional[BDeviceType]:
         return self.target_space.device
     
-    @abc.abstractmethod
     def transform(self, data : SourceDataT) -> TargetDataT:
-        raise NotImplementedError
+        batched_source_space = self.get_source_space_batched(1)
+        stacked_data = sbu.concatenate(batched_source_space, [data])
+        transformed_data = self.transform_batched(stacked_data)
+        return sbu.get_at(batched_source_space, transformed_data, 0)
 
     def transform_batched(self, data : SourceDataT) -> TargetDataT:
         batched_source_space = self.get_source_space_batched(1)
@@ -51,18 +53,13 @@ class DataTransformation(
         return sbu.concatenate(batched_target_space, transformed_data)
 
     def inverse_transform(self, data : TargetDataT) -> SourceDataT:
-        raise NotImplementedError
+        batched_target_space = self.get_target_space_batched(1)
+        stacked_data = sbu.concatenate(batched_target_space, [data])
+        transformed_data = self.inverse_transform_batched(stacked_data)
+        return sbu.get_at(batched_target_space, transformed_data, 0)
     
     def inverse_transform_batched(self, data : TargetDataT) -> SourceDataT:
-        batched_target_space = self.get_target_space_batched(1)
-        data_iter = sbu.iterate(batched_target_space, data)
-        
-        transformed_data = []
-        for dat in data_iter:
-            transformed_data.append(self.inverse_transform(dat))
-        
-        batched_source_space = self.get_source_space_batched(1)
-        return sbu.concatenate(batched_source_space, transformed_data)
+        raise NotImplementedError
     
     def direction_inverse(self) -> """DirectionInverseTransformation[
         SourceDataT, SourceBArrT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT,
