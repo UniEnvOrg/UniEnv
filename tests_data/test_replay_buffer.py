@@ -3,6 +3,7 @@ from unienv_data import *
 from unienv_data.storages.common import ListStorage
 from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *
+from unienv_data.batches import *
 from unienv_interface.space import *
 from unienv_interface.space import flatten_utils as sfu, batch_utils as sbu
 from unienv_interface.backends import NumpyComputeBackend, ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
