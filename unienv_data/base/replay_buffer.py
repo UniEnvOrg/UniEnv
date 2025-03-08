@@ -186,6 +186,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return ReplayBuffer(storage, single_space)
     
     @staticmethod
+    def is_loadable_from(
+        path : Union[str, os.PathLike]
+    ) -> bool:
+        return os.path.exists(os.path.join(path, "metadata.json"))
+
+    @staticmethod
     def load_from(
         path : Union[str, os.PathLike],
         *storage_args,
