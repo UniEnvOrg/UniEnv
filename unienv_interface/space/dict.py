@@ -134,6 +134,24 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         if isinstance(x, dict) and x.keys() == self.spaces.keys():
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
+    
+    def get_repr(
+        self,
+        include_backend : bool = True,
+        include_device : bool = True,
+        include_dtype : bool = True,
+    ) -> str:
+        next_include_device = include_device and self.device is None
+        ret = "Dict(" + ", ".join([
+            f"{k!r}: {s.get_repr(False, next_include_device, include_dtype)}" 
+            for k, s in self.spaces.items()
+        ])
+        if include_backend:
+            ret += f", backend={self.backend}"
+        if include_device and self.device is not None:
+            ret += f", device={self.device}"
+        ret += ")"
+        return ret
 
     def __getitem__(self, key: str) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
         """Get the space that is associated to `key`."""
@@ -159,30 +177,20 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         """Gives the number of simpler spaces that make up the `Dict` space."""
         return len(self.spaces)
 
-    def get_repr(
-        self,
-        include_backend : bool = True,
-        include_device : bool = True,
-        include_dtype : bool = True,
-    ) -> str:
-        next_include_device = include_device and self.device is None
-        ret = "Dict(" + ", ".join([
-            f"{k!r}: {s.get_repr(False, next_include_device, include_dtype)}" 
-            for k, s in self.spaces.items()
-        ])
-        if include_backend:
-            ret += f", backend={self.backend}"
-        if include_device and self.device is not None:
-            ret += f", device={self.device}"
-        ret += ")"
-        return ret
-
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""
         return (
             isinstance(other, Dict)
             # Comparison of `OrderedDict`s is order-sensitive
             and self.spaces == other.spaces  # OrderedDict.__eq__
+        )
+
+    def __copy__(self) -> "Dict[BDeviceType, BDtypeType, BRNGType]":
+        """Create a shallow copy of the Dict space."""
+        return Dict(
+            backend=self.backend,
+            spaces=self.spaces.copy(),
+            device=self.device
         )
 
     def to_jsonable(self, sample_n: Sequence[DictType[str, Any]]) -> DictType[str, List[Any]]:

@@ -5,6 +5,7 @@ import numpy as np
 from .space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import gymnasium as gym
+import copy
 
 class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
@@ -117,6 +118,14 @@ class Tuple(Space[TupleType[Any, ...], TupleType[Any, ...], BDeviceType, BDtypeT
         """Check whether ``other`` is equivalent to this instance."""
         return isinstance(other, Tuple) and self.spaces == other.spaces
     
+    def __copy__(self) -> "Tuple[BDeviceType, BDtypeType, BRNGType]":
+        """Create a shallow copy of the Dict space."""
+        return Tuple(
+            backend=self.backend,
+            spaces=copy.copy(self.spaces),
+            device=self.device
+        )
+
     def to_jsonable(
         self, sample_n: Sequence[TupleType[Any, ...]]
     ) -> List[Any]:
