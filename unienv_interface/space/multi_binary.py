@@ -13,7 +13,7 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
         dtype: Optional[BDtypeType] = None,
         device : Optional[BDeviceType] = None,
     ):
-        assert dtype is None or backend.dtype_is_real_integer(dtype), f"Invalid dtype {dtype}"
+        assert dtype is None or backend.dtype_is_boolean(dtype), f"Invalid dtype {dtype}"
         assert len(shape) > 0, "Shape must be a non-empty sequence"
         super().__init__(
             backend=backend,
@@ -39,7 +39,7 @@ class MultiBinary(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGTyp
             backend=backend,
             shape=self.shape,
             device=device,
-            dtype=self.dtype,
+            dtype=backend.default_boolean_dtype
         )
 
     @property

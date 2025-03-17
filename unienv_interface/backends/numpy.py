@@ -43,6 +43,9 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
 
     @classmethod
     def from_other_backend(cls, data : dlpack.DLPackObject, backend: Optional[ComputeBackend] = None) -> np.ndarray:
+        if backend is not None:
+            return backend.to_numpy(data)
+        
         return np.from_dlpack(data)
 
     @classmethod
