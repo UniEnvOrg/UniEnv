@@ -122,13 +122,16 @@ class Wrapper(
 
     def reset(
         self, 
-        *, 
+        *args, 
         mask : Optional[WrapperBArrayT] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        **kwargs
     ) -> Tuple[WrapperContextT, WrapperObsT, Dict[str, Any]]:
         return self.env.reset(
+            *args,
             mask=mask,
-            seed=seed
+            seed=seed,
+            **kwargs
         )
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
