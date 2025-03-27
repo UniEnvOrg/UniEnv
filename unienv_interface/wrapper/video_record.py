@@ -185,6 +185,7 @@ class EpisodeWandbVideoWrapper(
         wandb_log_key: str,
         format : Literal['mp4', 'gif', 'webm'] = 'webm',
         control_wandb_step: bool = False, # Whether to auto-increment the wandb log step
+        log_wandb_episode_id: bool = True, # Whether to log the episode id
         rendered_env_index : Optional[int] = None
     ):
         super().__init__(env, rendered_env_index=rendered_env_index)
@@ -197,6 +198,7 @@ class EpisodeWandbVideoWrapper(
         
         self.wandb = wandb
         self.wandb_log_key = wandb_log_key
+        self.log_wandb_episode_id = log_wandb_episode_id
         self.control_wandb_step = control_wandb_step
         self.store_format = format
 
@@ -217,9 +219,16 @@ class EpisodeWandbVideoWrapper(
             fps=self.env.render_fps or 30,
             format=self.store_format
         )
+
+        to_log = {
+            self.wandb_log_key: clip
+        }
+        if self.log_wandb_episode_id:
+            to_log[self.wandb_log_key + '_episode_id'] = self.video_episode_num
+        
         if self.control_wandb_step:
-            self.wandb.log({self.wandb_log_key: clip, self.wandb_log_key + 'episode_id': self.video_episode_num}, step=self.video_episode_start_step)
+            self.wandb.log(to_log, step=self.video_episode_start_step)
         else:
-            self.wandb.log({self.wandb_log_key: clip, self.wandb_log_key + '_episode_id': self.video_episode_num}, commit=False)
+            self.wandb.log(to_log, commit=False)
 
 

@@ -49,7 +49,7 @@ class NumpyComputeBackend(ComputeBackend[np.ndarray, Any, np.dtype, np.random.Ge
         return np.from_dlpack(data)
 
     @classmethod
-    def to_device(cls, data: np.ndarray, device: Any) -> np.ndarray:
+    def to_device(cls, data: np.ndarray, device: Any, non_blocking : bool = False) -> np.ndarray:
         return data
 
     @classmethod

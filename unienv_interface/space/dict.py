@@ -230,9 +230,9 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
             key: space.from_other_backend(other_data[key], backend) for key, space in self.spaces.items()
         }
     
-    def from_same_backend(self, other_data : DictType[str, Any]) -> DictType[str, Any]:
+    def from_same_backend(self, other_data : DictType[str, Any], non_blocking : bool = False) -> DictType[str, Any]:
         return {
-            key: space.from_same_backend(other_data[key]) for key, space in self.spaces.items()
+            key: space.from_same_backend(other_data[key], non_blocking=non_blocking) for key, space in self.spaces.items()
         }
 
     def to_gym_space(self) -> gym.Space:

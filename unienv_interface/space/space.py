@@ -126,7 +126,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _GymDataT, _SpaceBDeviceT, _SpaceBDType
         raise NotImplementedError
     
     @abc.abstractmethod
-    def from_same_backend(self, other_data : SpaceDataT) -> SpaceDataT:
+    def from_same_backend(self, other_data : SpaceDataT, non_blocking : bool = False) -> SpaceDataT:
         """Convert data from another device to this device."""
         raise NotImplementedError
 

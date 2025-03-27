@@ -44,7 +44,7 @@ class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
         raise NotImplementedError
 
     @abc.abstractmethod
-    def to_device(cls, data : BArrayType, device : BDeviceType) -> BArrayType:
+    def to_device(cls, data : BArrayType, device : BDeviceType, non_blocking : bool = False) -> BArrayType:
         raise NotImplementedError
     
     @classmethod

@@ -66,8 +66,8 @@ class PyTorchComputeBackend(ComputeBackend[torch.Tensor, TorchDevice, torch.dtyp
         return t
     
     @classmethod
-    def to_device(cls, data : torch.Tensor, device : TorchDevice) -> torch.Tensor:
-        return data.to(device=device)
+    def to_device(cls, data : torch.Tensor, device : TorchDevice, non_blocking : bool = False) -> torch.Tensor:
+        return data.to(device=device, non_blocking=non_blocking)
 
     @classmethod
     def replace_inplace(cls, data: torch.Tensor, index: torch.Tensor, value: torch.Tensor) -> torch.Tensor:

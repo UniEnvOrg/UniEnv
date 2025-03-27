@@ -71,7 +71,7 @@ class JaxComputeBackend(ComputeBackend[jax.Array, JaxDevice, np.dtype, JaxRNG], 
             return cls.from_numpy(np)
 
     @classmethod
-    def to_device(cls, data: jax.Array, device: JaxDevice) -> jax.Array:
+    def to_device(cls, data: jax.Array, device: JaxDevice, non_blocking : bool = False) -> jax.Array:
         return jax.device_put(data, device)
 
     @classmethod

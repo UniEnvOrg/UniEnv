@@ -121,8 +121,8 @@ class Sequence(
     def from_other_backend(self, other_data : Tuple[Any, ...], backend : ComputeBackend) -> Tuple[Any, ...]:
         return tuple(self.feature_space.from_other_backend(part, backend) for part in other_data)
     
-    def from_same_backend(self, other_data : Tuple[Any, ...]) -> Tuple[Any, ...]:
-        return tuple(self.feature_space.from_same_backend(part) for part in other_data)
+    def from_same_backend(self, other_data : Tuple[Any, ...], non_blocking : bool = False) -> Tuple[Any, ...]:
+        return tuple(self.feature_space.from_same_backend(part, non_blocking=non_blocking) for part in other_data)
 
     def to_gym_space(self) -> gym.Space:
         return gym.spaces.Sequence(self.feature_space.to_gym_space(), stack=False)

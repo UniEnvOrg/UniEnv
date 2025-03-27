@@ -327,11 +327,11 @@ class Box(Space[BArrayType, np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         new_tensor = self.backend.from_other_backend(other_data, backend)
         return self.from_same_backend(new_tensor)
 
-    def from_same_backend(self, other_data: BArrayType) -> BArrayType:
+    def from_same_backend(self, other_data: BArrayType, non_blocking : bool = False) -> BArrayType:
         new_tensor = other_data
         
         if self.device is not None:
-            new_tensor = self.backend.to_device(new_tensor, self.device)
+            new_tensor = self.backend.to_device(new_tensor, self.device, non_blocking=non_blocking)
             # For some reason jax doesn't have good support for dlpack converted back cpu arrays, so we need to move it to the device first
         if self.dtype is not None:
             new_tensor = self.backend.array_api_namespace.astype(new_tensor, self.dtype)

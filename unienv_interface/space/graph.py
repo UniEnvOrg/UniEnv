@@ -251,16 +251,16 @@ class Graph(Space[GraphInstance[BArrayType], gym.spaces.GraphInstance, BDeviceTy
             edge_links=new_edge_links,
         )
     
-    def from_same_backend(self, other_data : GraphInstance[BArrayType]) -> GraphInstance[BArrayType]:
+    def from_same_backend(self, other_data : GraphInstance[BArrayType], non_blocking : bool = False) -> GraphInstance[BArrayType]:
         new_node = other_data.nodes
         new_edge = other_data.edges
         new_edge_links = other_data.edge_links
         if self.node_space.device is not None:
-            new_node = self.backend.to_device(new_node, self.node_space.device)
+            new_node = self.backend.to_device(new_node, self.node_space.device, non_blocking=non_blocking)
         if new_edge is not None and self.edge_space is not None and self.edge_space.device is not None:
-            new_edge = self.backend.to_device(new_edge, self.edge_space.device)
+            new_edge = self.backend.to_device(new_edge, self.edge_space.device, non_blocking=non_blocking)
         if new_edge_links is not None and self.device is not None:
-            new_edge_links = self.backend.to_device(new_edge_links, self.device)
+            new_edge_links = self.backend.to_device(new_edge_links, self.device, non_blocking=non_blocking)
         return GraphInstance(
             nodes=new_node,
             edges=new_edge,

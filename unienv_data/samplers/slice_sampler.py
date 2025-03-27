@@ -108,14 +108,13 @@ class SliceSampler(
         index = self.backend.array_api_namespace.clip(index, 0, len(self.data) - 1)
         return index
 
-    def get_unfiltered_flat(self, idx : BArrayType) -> BArrayType:
+    def _get_unfiltered_flat(self, idx : BArrayType) -> BArrayType:
         B = idx.shape[0]
         indices = self.expand_index(idx) # (B, T)
         flat_idx = self.backend.array_api_namespace.reshape(indices, (-1,)) # (B * T, )
         dat_flat = self.data.get_flattened_at(flat_idx) # (B * T, D)
         assert dat_flat.shape[0] == (self.prefetch_horizon + self.postfetch_horizon + 1) * B
-        if self._device is not None:
-            dat_flat = self.backend.to_device(dat_flat, self._device)
+        
         dat = self.backend.array_api_namespace.reshape(dat_flat, (*indices.shape, -1)) # (B, T, D)
         return dat
 
@@ -125,15 +124,23 @@ class SliceSampler(
         Optional[BArrayType] # episode id (B)
     ]:
         B = flat_dat.shape[0]
-        device = self.backend.get_device(flat_dat)
+        device = self._device or self.backend.get_device(flat_dat)
         if self.get_episode_id_fn is not None:
             # fetch episode ids
             if self._epid_flatidx is None:
+                if self._device is not None:
+                    new_flat_dat = self.backend.to_device(flat_dat, device, non_blocking=True)
                 dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
                 episode_ids = self.get_episode_id_fn(dat)
+                if self._device is not None:
+                    episode_ids = self.backend.to_device(episode_ids, device, non_blocking=False)
+                    flat_dat = new_flat_dat
                 del dat
             else:
                 episode_ids = flat_dat[:, :, self._epid_flatidx]
+                if self._device is not None:
+                    flat_dat = self.backend.to_device(flat_dat, device, non_blocking=True)
+                    episode_ids = self.backend.to_device(episode_ids, device, non_blocking=False)
 
             assert self.backend.is_backendarray(episode_ids)
             assert episode_ids.shape == (B, self.prefetch_horizon + self.postfetch_horizon + 1)
@@ -193,14 +200,14 @@ class SliceSampler(
         return flat_dat, episode_id_eq, episode_id_at_step
 
     def get_flat_at(self, idx : BArrayType):
-        return self.get_flat_with_metadata(idx)[0]
+        return self.get_flat_at_with_metadata(idx)[0]
 
-    def get_flat_with_metadata(self, idx : BArrayType) -> Tuple[
+    def get_flat_at_with_metadata(self, idx : BArrayType) -> Tuple[
         BArrayType,
         BArrayType, # validity mask
         Optional[BArrayType]
     ]:
-        unfilt_flat_dat = self.get_unfiltered_flat(idx)
+        unfilt_flat_dat = self._get_unfiltered_flat(idx)
         return self.unfiltered_to_filtered_flat(unfilt_flat_dat)
     
     def get_at(self, idx : BArrayType) -> BatchT:
@@ -211,7 +218,7 @@ class SliceSampler(
         BArrayType,
         Optional[BArrayType]
     ]:
-        flat_dat, validity_mask, episode_id = self.get_flat_with_metadata(idx)
+        flat_dat, validity_mask, episode_id = self.get_flat_at_with_metadata(idx)
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
         return dat, validity_mask, episode_id
     
@@ -221,7 +228,7 @@ class SliceSampler(
         Optional[BArrayType]
     ]:
         idx = self.sample_index()
-        return self.get_flat_with_metadata(idx)
+        return self.get_flat_at_with_metadata(idx)
 
     def sample_with_metadata(self) -> Tuple[
         BatchT,
@@ -251,6 +258,6 @@ class SliceSampler(
         n_batches = len(self.data) // self.batch_size
         num_left = len(self.data) % self.batch_size
         for i in range(n_batches):
-            yield self.get_flat_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
+            yield self.get_flat_at_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
         if num_left > 0:
-            yield self.get_flat_with_metadata(idx[-num_left:])
+            yield self.get_flat_at_with_metadata(idx[-num_left:])

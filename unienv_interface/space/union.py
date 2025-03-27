@@ -154,9 +154,9 @@ class Union(Space[Tuple[int, Any], Tuple[int, Any], BDeviceType, BDtypeType, BRN
         """Convert data from another backend to this backend."""
         return (other_data[0], self.spaces[other_data[0]].from_other_backend(other_data[1], backend))
     
-    def from_same_backend(self, other_data : Tuple[int, Any]) -> Tuple[int, Any]:
+    def from_same_backend(self, other_data : Tuple[int, Any], non_blocking : bool = False) -> Tuple[int, Any]:
         """Convert data from another device to this device."""
-        return (other_data[0], self.spaces[other_data[0]].from_same_backend(other_data[1]))
+        return (other_data[0], self.spaces[other_data[0]].from_same_backend(other_data[1], non_blocking=non_blocking))
 
     def to_gym_space(self) -> "gym.spaces.OneOf":
         if "OneOf" in gym.spaces.__all__:

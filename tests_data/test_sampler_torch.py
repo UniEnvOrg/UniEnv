@@ -73,13 +73,14 @@ def test_multiprocessing_sampler(
         sampler,
         n_workers=4,
         n_buffers=8,
-        ctx=torch.multiprocessing.get_context("spawn")
+        ctx=torch.multiprocessing.get_context("spawn") if device.type == "cuda" else torch.multiprocessing.get_context("fork")
     )
     sample_space = sampler.sampled_space
     for i in range(10):
         sample = sampler.sample()
         assert sample_space.contains(sample)
-    
+    for sample in sampler.epoch_iter():
+        assert sample_space.contains(sample)    
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024])
