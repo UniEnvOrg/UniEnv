@@ -309,6 +309,7 @@ class MultiprocessingSampler(
         doze_time : float = 0.005,
         daemon : Optional[bool] = None,
     ):
+        #TODO: Implement metadata space for this sampler
         super().__init__()
         assert n_workers > 0
         assert n_buffers > 0

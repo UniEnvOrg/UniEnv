@@ -1,4 +1,4 @@
-from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type
+from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type, Callable, Mapping
 import abc
 import numpy as np
 import dlpack
@@ -137,3 +137,19 @@ class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType
                     raise ValueError(f"Abbreviated array element dtype must be a real floating or integer or boolean type, actual dtype: {elem.dtype}")
         else:
             return array
+    
+    @classmethod
+    def map_fn_over_arrays(cls, data : Any, func : Callable[[BArrayType], BArrayType]) -> Any:
+        """
+        Map a function to the data.
+        """
+        if cls.is_backendarray(data):
+            return func(data)
+        elif isinstance(data, Mapping):
+            return {k: cls.map_fn_over_arrays(v, func) for k, v in data.items()}
+        elif isinstance(data, tuple):
+            return tuple(cls.map_fn_over_arrays(i, func) for i in data)
+        elif isinstance(data, Sequence):
+            return [cls.map_fn_over_arrays(i, func) for i in data]
+        else:
+            return data

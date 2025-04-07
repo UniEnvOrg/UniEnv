@@ -242,14 +242,14 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def device(self) -> Optional[BDeviceType]:
         return self.storage.device
 
-    def get_flattened_at(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
+    def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         return self.storage.get(index_with_offset(
             self.backend,
             idx,
             self.count,
             self.capacity,
             self.offset
-        ))
+        )), None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
         self.storage.set(index_with_offset(

@@ -1,7 +1,7 @@
 from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable, Iterator
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, flatten_utils as sfu, batch_utils as sbu
+from unienv_interface.space import Space, Box, MultiBinary, Dict as DictSpace, flatten_utils as sfu, batch_utils as sbu
 
 class SliceSampler(
     BatchSampler[
@@ -17,7 +17,7 @@ class SliceSampler(
     def __init__(
         self,
         data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
-        batch_size : int,        
+        batch_size : int,
         prefetch_horizon : int = 0,
         postfetch_horizon : int = 0,
         get_episode_id_fn: Optional[Callable[[BatchT], BArrayType]] = None,
@@ -43,6 +43,41 @@ class SliceSampler(
             batch_size
         )
         self.sampled_space_flat = sfu.flatten_space(self.sampled_space, start_dim=2)
+
+        if self.data.single_metadata_space is not None:
+            self.sampled_metadata_space = sbu.batch_space(
+                self.data.single_metadata_space,
+                self.prefetch_horizon + self.postfetch_horizon + 1
+            )
+            self.sampled_metadata_space = sbu.batch_space(
+                self.sampled_metadata_space,
+                batch_size
+            )
+        else:
+            self.sampled_metadata_space = None
+        
+        if get_episode_id_fn is not None:
+            if self.sampled_metadata_space is None:
+                self.sampled_metadata_space = DictSpace(
+                    self.backend,
+                    {},
+                    device=self.device
+                )
+            
+            self.sampled_metadata_space['slice_valid_mask'] = MultiBinary(
+                self.backend,
+                shape=(self.batch_size, self.prefetch_horizon + self.postfetch_horizon + 1),
+                dtype=self.backend.default_boolean_dtype,
+                device=self.device
+            )
+            self.sampled_metadata_space['episode_id'] = Box(
+                self.backend,
+                low=-2_147_483_647,
+                high=2_147_483_647,
+                shape=(self.batch_size, ),
+                dtype=self.backend.default_integer_dtype,
+                device=self.device
+            )
         
         if device is not None:
             self.single_slice_space = self.single_slice_space.to_device(device)
@@ -55,6 +90,14 @@ class SliceSampler(
         
         self.get_episode_id_fn = get_episode_id_fn
         self._build_epid_cache()
+
+    @property
+    def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+        return self.data.backend
+    
+    @property
+    def device(self) -> Optional[BDeviceType]:
+        return self._device or self.data.device
 
     def _build_epid_cache(self):
         """
@@ -88,14 +131,6 @@ class SliceSampler(
             self._epid_flatidx = epid_flatidx
         else:
             self._epid_flatidx = None
-
-    @property
-    def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
-        return self.data.backend
-    
-    @property
-    def device(self) -> Optional[BDeviceType]:
-        return self._device or self.data.device
     
     def expand_index(self, index : BArrayType) -> BArrayType:
         """
@@ -108,15 +143,19 @@ class SliceSampler(
         index = self.backend.array_api_namespace.clip(index, 0, len(self.data) - 1)
         return index
 
-    def _get_unfiltered_flat(self, idx : BArrayType) -> BArrayType:
+    def _get_unfiltered_flat_with_metadata(self, idx : BArrayType) -> Tuple[BArrayType, Optional[Dict[str, Any]]]:
         B = idx.shape[0]
         indices = self.expand_index(idx) # (B, T)
         flat_idx = self.backend.array_api_namespace.reshape(indices, (-1,)) # (B * T, )
-        dat_flat = self.data.get_flattened_at(flat_idx) # (B * T, D)
+        dat_flat, metadata = self.data.get_flattened_at_with_metadata(flat_idx) # (B * T, D)
+        metadata_reshaped = self.backend.map_fn_over_arrays(
+            metadata,
+            lambda x: self.backend.array_api_namespace.reshape(x, (*indices.shape, *x.shape[1:]))
+        ) if metadata is not None else None
         assert dat_flat.shape[0] == (self.prefetch_horizon + self.postfetch_horizon + 1) * B
-        
+
         dat = self.backend.array_api_namespace.reshape(dat_flat, (*indices.shape, -1)) # (B, T, D)
-        return dat
+        return dat, metadata_reshaped
 
     def unfiltered_to_filtered_flat(self, flat_dat: BArrayType) -> Tuple[
         BArrayType, # Data (B, T, D)
@@ -191,11 +230,7 @@ class SliceSampler(
                     flat_dat_postfetch
                 ], axis=1) # (B, T, D)
         else:
-            episode_id_eq = self.backend.array_api_namespace.ones(
-                (flat_dat.shape[:2]),
-                dtype=self.backend.default_boolean_dtype,
-                device=device
-            )
+            episode_id_eq = None
             episode_id_at_step = None
         return flat_dat, episode_id_eq, episode_id_at_step
 
@@ -204,60 +239,27 @@ class SliceSampler(
 
     def get_flat_at_with_metadata(self, idx : BArrayType) -> Tuple[
         BArrayType,
-        BArrayType, # validity mask
-        Optional[BArrayType]
+        Optional[Dict[str, Any]]
     ]:
-        unfilt_flat_dat = self._get_unfiltered_flat(idx)
-        return self.unfiltered_to_filtered_flat(unfilt_flat_dat)
+        unfilt_flat_dat, metadata = self._get_unfiltered_flat_with_metadata(idx)
+        dat, episode_id_eq, episode_id_at_step = self.unfiltered_to_filtered_flat(unfilt_flat_dat)
+        if episode_id_at_step is not None:
+            if metadata is None:
+                metadata = {}
+            metadata.update({
+                "slice_valid_mask": episode_id_eq,
+                "episode_id": episode_id_at_step
+            })
+        
+        return dat, metadata
     
     def get_at(self, idx : BArrayType) -> BatchT:
         return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx : BArrayType) -> Tuple[
         BatchT,
-        BArrayType,
-        Optional[BArrayType]
+        Optional[Dict[str, Any]]
     ]:
-        flat_dat, validity_mask, episode_id = self.get_flat_at_with_metadata(idx)
+        flat_dat, metadata = self.get_flat_at_with_metadata(idx)
         dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2)
-        return dat, validity_mask, episode_id
-    
-    def sample_flat_with_metadata(self) -> Tuple[
-        BArrayType,
-        BArrayType,
-        Optional[BArrayType]
-    ]:
-        idx = self.sample_index()
-        return self.get_flat_at_with_metadata(idx)
-
-    def sample_with_metadata(self) -> Tuple[
-        BatchT,
-        BArrayType,
-        Optional[BArrayType]
-    ]:
-        idx = self.sample_index()
-        return self.get_at_with_metadata(idx)
-    
-    def epoch_iter_with_metadata(self) -> Iterator[Tuple[SamplerBatchT, BArrayType, Optional[BArrayType]]]:
-        if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
-        else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
-        n_batches = len(self.data) // self.batch_size
-        num_left = len(self.data) % self.batch_size
-        for i in range(n_batches):
-            yield self.get_at_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
-        if num_left > 0:
-            yield self.get_at_with_metadata(idx[-num_left:])
-
-    def epoch_flat_iter_with_metadata(self) -> Iterator[Tuple[BArrayType, BArrayType, Optional[BArrayType]]]:
-        if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
-        else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
-        n_batches = len(self.data) // self.batch_size
-        num_left = len(self.data) % self.batch_size
-        for i in range(n_batches):
-            yield self.get_flat_at_with_metadata(idx[i*self.batch_size:(i+1)*self.batch_size])
-        if num_left > 0:
-            yield self.get_flat_at_with_metadata(idx[-num_left:])
+        return dat, metadata
