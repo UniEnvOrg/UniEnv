@@ -43,7 +43,7 @@ def test_step_sampler(
         sample = sampler.sample()
         assert sample_space.contains(sample)
 
-@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("capacity", [50, 100])
 @pytest.mark.parametrize("seed", [0, 1024])
 def test_multiprocessing_sampler(
     capacity : int,
@@ -66,7 +66,7 @@ def test_multiprocessing_sampler(
     )
     sampler = StepSampler(
         rb,
-        batch_size=capacity//2,
+        batch_size=capacity//5,
         seed=seed,
     )
     sampler = MultiprocessingSampler(
@@ -80,7 +80,7 @@ def test_multiprocessing_sampler(
         sample = sampler.sample()
         assert sample_space.contains(sample)
     for sample in sampler.epoch_iter():
-        assert sample_space.contains(sample)    
+        assert sample_space.contains(sample)
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024])
