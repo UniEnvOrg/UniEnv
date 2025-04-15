@@ -32,15 +32,13 @@ def worker_loop(
 
     try:
         while True:
+            if done_event.is_set():
+                break
             try:
-                work_info = workid_queue.get(timeout=1.0)
+                work_info = workid_queue.get(timeout=doze_time)
             except queue.Empty:
-                time.sleep(doze_time)
                 continue
             except ValueError:
-                break
-
-            if done_event.is_set():
                 break
 
             result = fetch_fn(sampler, work_info)
@@ -75,7 +73,7 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         n_workers : int = 4,
         ctx : Optional[mp.context.BaseContext] = None,
         done_event = None,
-        doze_time : float = 0.005,
+        doze_time : float = 0.001,
         daemon : Optional[bool] = None,
     ):
         assert n_workers > 0
@@ -141,9 +139,9 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         if self.closed:
             return
         
+        self.done_event.set()
         self.sampler_result_queue.cancel_join_thread()
         self.sampler_result_queue.close()
-        self.done_event.set()
         for worker in self.workers:
             worker.join(timeout=2)
         for worker in self.workers:
@@ -187,7 +185,7 @@ def wrap_sample_function(
     n_buffers : int,
     fn : Callable[[], Any],
     ctx : Optional[mp.context.BaseContext] = None,
-    doze_time : float = 0.005,
+    doze_time : float = 0.001,
     daemon : Optional[bool] = None,
     done_event = None,
 ):
@@ -237,7 +235,8 @@ def wrap_epoch_iter_function(
         SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
         BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
     ], index: Any):
-        return getter_fn(index)
+        ret = getter_fn(index)
+        return ret
 
     def target_fn():
         sample_manager = MultiProcessingSampleManager(
@@ -278,7 +277,7 @@ def wrap_epoch_iter_function(
 
         for i in range(n_batches):
             try_add_batch()
-            yield sample_manager.fetch()    
+            yield sample_manager.fetch()
 
         if num_left > 0:
             try_add_batch()
@@ -392,8 +391,14 @@ class MultiprocessingSampler(
     def get_at(self, idx):
         return self.sampler.get_at(idx)
     
+    def get_at_with_metadata(self, idx):
+        return self.sampler.get_at_with_metadata(idx)
+    
     def get_flat_at(self, idx):
         return self.sampler.get_flat_at(idx)
+    
+    def get_flat_at_with_metadata(self, idx):
+        return self.sampler.get_flat_at_with_metadata(idx)
 
     def close(self):
         if self.closed:

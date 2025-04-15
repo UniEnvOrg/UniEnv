@@ -135,7 +135,7 @@ def test_slice_sampler(
     )
     sample_space = sampler.sampled_space
     for i in range(100):
-        unfiltered_flat = sampler.get_unfiltered_flat(sampler.sample_index())
+        unfiltered_flat, metadata = sampler._get_unfiltered_flat_with_metadata(sampler.sample_index())
         unfiltered = sfu.unflatten_data(sample_space, unfiltered_flat, start_dim=2)
         filtered_flat, _, _ = sampler.unfiltered_to_filtered_flat(unfiltered_flat)
         filtered = sfu.unflatten_data(sample_space, filtered_flat, start_dim=2)
