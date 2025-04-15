@@ -13,10 +13,6 @@ except ImportError:
     torch = None
 
 def worker_loop(
-    sampler : BatchSampler[
-        SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
-        BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
-    ],
     fetch_fn : Callable[[BatchSampler[
         SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
         BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -40,9 +36,12 @@ def worker_loop(
                 continue
             except ValueError:
                 break
-
-            result = fetch_fn(sampler, work_info)
+            
+            print(f"Got work {work_info}! Fetching!")
+            result = fetch_fn(work_info)
+            print("Result!")
             result_queue.put(result)
+            print("Result put!")
             del result
     except KeyboardInterrupt:
         pass
@@ -62,14 +61,7 @@ ResultT = TypeVar('ResultT')
 class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
     def __init__(
         self,
-        sampler : BatchSampler[
-            SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
-            BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
-        ],
-        target_fn : Callable[[BatchSampler[
-            SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
-            BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
-        ], TaskInfoT], ResultT],
+        target_fn : Callable[[TaskInfoT], ResultT],
         n_workers : int = 4,
         ctx : Optional[mp.context.BaseContext] = None,
         done_event = None,
@@ -80,7 +72,6 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         if ctx is None:
             ctx = mp
 
-        self.sampler = sampler
         self.sampler_result_queue : mp.Queue = ctx.Queue()
         self.sampler_work_queue : mp.Queue = ctx.Queue()
         self.done_event = done_event or ctx.Event()
@@ -111,7 +102,6 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
             worker = ctx.Process(
                 target=worker_loop,
                 args=(
-                    self.sampler, 
                     self.target_fn,
                     self.sampler_work_queue, 
                     self.sampler_result_queue, 
@@ -189,10 +179,7 @@ def wrap_sample_function(
     daemon : Optional[bool] = None,
     done_event = None,
 ):
-    def fn_fetch(sampler : BatchSampler[
-        SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
-        BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
-    ], _: Any):
+    def fn_fetch(_: Any):
         return fn()
 
     def target_fn():
@@ -200,7 +187,6 @@ def wrap_sample_function(
             sample_manager : MultiProcessingSampleManager = target_fn.sample_manager
         else:
             sample_manager = MultiProcessingSampleManager(
-                sampler, 
                 fn_fetch, 
                 n_workers=n_workers, 
                 ctx=ctx,
@@ -231,16 +217,12 @@ def wrap_epoch_iter_function(
     daemon : Optional[bool] = None,
     done_event = None,
 ):
-    def fn_fetch(sampler : BatchSampler[
-        SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType,
-        BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
-    ], index: Any):
+    def fn_fetch(index: Any):
         ret = getter_fn(index)
         return ret
 
     def target_fn():
         sample_manager = MultiProcessingSampleManager(
-            sampler, 
             fn_fetch, 
             n_workers=n_workers, 
             ctx=ctx,

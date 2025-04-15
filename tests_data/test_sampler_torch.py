@@ -45,9 +45,11 @@ def test_step_sampler(
 
 @pytest.mark.parametrize("capacity", [50, 100])
 @pytest.mark.parametrize("seed", [0, 1024])
+@pytest.mark.parametrize("use_mmap", [True, False])
 def test_multiprocessing_sampler(
     capacity : int,
-    seed : int
+    seed : int,
+    use_mmap : bool
 ):
     device = torch.device("cpu")
     space = Box(
@@ -61,7 +63,7 @@ def test_multiprocessing_sampler(
     rb = perform_torch_replay_buffer_with_space_test(
         space,
         capacity,
-        False,
+        use_mmap,
         seed
     )
     sampler = StepSampler(
