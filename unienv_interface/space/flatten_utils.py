@@ -119,7 +119,7 @@ def _flatten_space_binary(space: Discrete | MultiBinary | MultiDiscrete, start_d
         space.backend,
         low=0, high=1, 
         shape=space.shape[:start_dim] + (flat_dim(space, start_dim),), 
-        dtype=space.dtype or space.backend.default_integer_dtype,
+        dtype=space.dtype if (space.dtype is not None and space.backend.dtype_is_real_integer(space.dtype)) else space.backend.default_integer_dtype,
         device=space.device
     )
 
@@ -209,9 +209,14 @@ def _unflatten_data_common(space: typing.Union[
 
 @flatten_data.register(Dict)
 def _flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> Any:
-    return space.backend.array_api_namespace.concat([
-        flatten_data(subspace, data[key], start_dim) for key, subspace in space.spaces.items()
-    ], axis=start_dim)
+    to_concat = []
+    for key, subspace in space.spaces.items():
+        flat_sample = flatten_data(subspace, data[key], start_dim)
+        flat_dim_data = flat_dim(subspace, start_dim)
+        assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}"
+        if flat_sample is not None:
+            to_concat.append(flat_sample)
+    return space.backend.array_api_namespace.concat(to_concat, axis=start_dim)
 
 @unflatten_data.register(Dict)
 def _unflatten_data_dict(space: Dict, data: Any, start_dim : int = 0) -> Any:
