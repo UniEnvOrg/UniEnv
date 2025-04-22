@@ -213,7 +213,7 @@ def _flatten_data_dict(space: Dict, data: typing.Dict[str, typing.Any], start_di
     for key, subspace in space.spaces.items():
         flat_sample = flatten_data(subspace, data[key], start_dim)
         flat_dim_data = flat_dim(subspace, start_dim)
-        assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}"
+        assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}, original data {data[[key]]}, original space {subspace}"
         if flat_sample is not None:
             to_concat.append(flat_sample)
     return space.backend.array_api_namespace.concat(to_concat, axis=start_dim)
