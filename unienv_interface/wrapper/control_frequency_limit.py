@@ -43,7 +43,8 @@ class ControlFrequencyLimitWrapper(
         if dt_remaining > 0:
             time.sleep(dt_remaining)
         else:
-            self._last_control_time = ctime
+            print("Action is late by {:.3f}s".format(-dt_remaining))
+        self._last_control_time = ctime
         
         obs, rew, termination, truncation, info = self.env.step(action)
         return obs, rew, termination, truncation, info
