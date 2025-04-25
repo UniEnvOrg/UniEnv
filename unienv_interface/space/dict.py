@@ -169,6 +169,10 @@ class Dict(Space[DictType[str, Any], DictType[str, Any], BDeviceType, BDtypeType
         new_space = value.to_device(self.device) if self.device is not None else value
         self.spaces[key] = new_space
 
+    def __delitem__(self, key: str) -> None:
+        """Delete the space that is associated to `key`."""
+        del self.spaces[key]
+
     def __iter__(self):
         """Iterator through the keys of the subspaces."""
         yield from self.spaces
