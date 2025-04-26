@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 video = [
-    "moviepy>=1.0.3"
+    "moviepy>=2.1"
 ]
 dev = [
     "pytest"
@@ -31,7 +31,7 @@ jax = [
 mujoco = [
     "mujoco>=3.0",
     "dm_control>=1.0",
-    "mink>=0.0.5"
+    "mink>=0.0.8",
 ]
 mjx = [
     "playground",
