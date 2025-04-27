@@ -9,6 +9,62 @@ from unienv_interface.space import Space, Dict, batch_utils as sbu, flatten_util
 from unienv_interface.transformations.transformation import DataTransformation
 from collections import deque
 
+class TransformWrapper(
+    Wrapper[
+        WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
+        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
+    ]
+):
+    def __init__(
+        self,
+        env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+        context_transformation : Optional[DataTransformation[
+            WrapperContextT, WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
+            ContextType, BArrayType, BDeviceType, BDtypeType, BRNGType
+        ]] = None,
+        observation_transformation : Optional[DataTransformation[
+            WrapperObsT, WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
+            ObsType, BArrayType, BDeviceType, BDtypeType, BRNGType
+        ]] = None,
+        action_transformation : Optional[DataTransformation[
+            WrapperActT, WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
+            ActType, BArrayType, BDeviceType, BDtypeType, BRNGType
+        ]] = None,
+    ):
+        super().__init__(env)
+        assert context_transformation is not None or observation_transformation is not None or action_transformation is not None, "At least one of context_transformation, observation_transformation or action_transformation must be provided"
+        self.context_transformation = context_transformation
+        self.observation_transformation = observation_transformation
+        self.action_transformation = action_transformation
+
+    def step(
+        self,
+        action: ActType
+    ) -> Tuple[
+        ObsType,
+        Union[SupportsFloat, BArrayType],
+        Union[bool, BArrayType],
+        Union[bool, BArrayType],
+        Dict[str, Any]
+    ]:
+        action = self.action_transformation.transform(action) if self.action_transformation is not None else action
+        obs, rew, termination, truncation, info = self.env.step(action)
+        transformed_obs = self.observation_transformation.transform(obs) if self.observation_transformation is not None else obs
+        return transformed_obs, rew, termination, truncation, info
+    
+    def reset(
+        self,
+        *args,
+        mask : Optional[BArrayType] = None,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        context, obs, info = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
+        transformed_context = self.context_transformation.transform(context) if self.context_transformation is not None else context
+        transformed_obs = self.observation_transformation.transform(obs) if self.observation_transformation is not None else obs
+        return transformed_context, transformed_obs, info
+    
+
 class ContextObservationTransformWrapper(
     ContextObservationWrapper[
         WrapperContextT, WrapperObsT,
