@@ -45,7 +45,7 @@ class TransformWrapper(
         Union[SupportsFloat, BArrayType],
         Union[bool, BArrayType],
         Union[bool, BArrayType],
-        Dict[str, Any]
+        DictT[str, Any]
     ]:
         action = self.action_transformation.transform(action) if self.action_transformation is not None else action
         obs, rew, termination, truncation, info = self.env.step(action)
@@ -58,7 +58,7 @@ class TransformWrapper(
         mask : Optional[BArrayType] = None,
         seed : Optional[int] = None,
         **kwargs
-    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+    ) -> Tuple[ContextType, ObsType, DictT[str, Any]]:
         context, obs, info = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
         transformed_context = self.context_transformation.transform(context) if self.context_transformation is not None else context
         transformed_obs = self.observation_transformation.transform(obs) if self.observation_transformation is not None else obs
