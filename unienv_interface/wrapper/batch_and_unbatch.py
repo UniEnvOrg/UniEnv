@@ -2,12 +2,13 @@ from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal
 import numpy as np
 from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
+from unienv_interface.space import batch_utils as sbu
 
-from unienv_interface.transformations.batch_and_unbatch import BachifyTransformation, UnBachifyTransformation
+from unienv_interface.transformations.batch_and_unbatch import BatchifyTransformation, UnBatchifyTransformation
 from .transformation import TransformWrapper
 
 
-class BachifyWrapper(
+class BatchifyWrapper(
     TransformWrapper[
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
@@ -21,14 +22,30 @@ class BachifyWrapper(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
     ):
+        assert env.batch_size is None
         super().__init__(
             env,
-            context_transformation=None if env.context_space is None else BachifyTransformation(env.context_space),
-            observation_transformation=BachifyTransformation(env.observation_space),
-            action_transformation=BachifyTransformation(env.action_space),
+            context_transformation=None if env.context_space is None else BatchifyTransformation(env.context_space),
+            observation_transformation=BatchifyTransformation(env.observation_space),
+            action_transformation=UnBatchifyTransformation(env.action_space),
         )
+        print(env.action_space, self.action_space)
     
-class UnBachifyWrapper(
+    @property
+    def batch_size(self) -> int:
+        return 1
+    
+    def step(self, action):
+        obs, rewards, terminated, truncated, info = super().step(action)
+        terminated = self.backend.array_api_namespace.asarray(
+            [terminated], dtype=self.backend.default_boolean_dtype, device=self.device
+        )
+        truncated = self.backend.array_api_namespace.asarray(
+            [truncated], dtype=self.backend.default_boolean_dtype, device=self.device
+        )
+        return obs, rewards, terminated, truncated, info
+
+class UnBatchifyWrapper(
     TransformWrapper[
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
@@ -42,10 +59,20 @@ class UnBachifyWrapper(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
     ):
+        assert env.batch_size == 1, "UnBatchifyWrapper can only be used with envs that have batch_size == 1"
         super().__init__(
             env,
-            context_transformation=None if env.context_space is None else UnBachifyTransformation(env.context_space),
-            observation_transformation=UnBachifyTransformation(env.observation_space),
-            action_transformation=UnBachifyTransformation(env.action_space),
+            context_transformation=None if env.context_space is None else UnBatchifyTransformation(env.context_space),
+            observation_transformation=UnBatchifyTransformation(env.observation_space),
+            action_transformation=UnBatchifyTransformation(env.action_space),
         )
 
+    @property
+    def batch_size(self) -> Optional[int]:
+        return None
+    
+    def step(self, action):
+        obs, rewards, terminated, truncated, info = super().step(action)
+        terminated = bool(terminated)
+        truncated = bool(truncated)
+        return obs, rewards, terminated, truncated, info

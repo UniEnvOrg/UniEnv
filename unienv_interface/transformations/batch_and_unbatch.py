@@ -3,7 +3,7 @@ from unienv_interface.space import Space, batch_utils as sbu
 from typing import Union, Any, Optional
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
-class BachifyTransformation(DataTransformation[
+class BatchifyTransformation(DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType, 
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType
 ]):
@@ -23,16 +23,16 @@ class BachifyTransformation(DataTransformation[
         return self.transform(data)
     
     def inverse_transform(self, data: BArrayType) -> BArrayType:
-        return self.inverse_transform(data)
+        return self.inverse_transform_batched(data)
 
     def inverse_transform_batched(self, data: BArrayType) -> BArrayType:
         source_data = next(sbu.iterate(self.target_space, data))
         return source_data
 
-def UnBachifyTransformation(
+def UnBatchifyTransformation(
     source_space : Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
 ) -> DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType,
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType
 ]:
-    return BachifyTransformation(source_space).direction_inverse()
+    return BatchifyTransformation(source_space).direction_inverse()

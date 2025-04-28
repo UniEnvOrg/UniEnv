@@ -36,6 +36,9 @@ class TransformWrapper(
         self.context_transformation = context_transformation
         self.observation_transformation = observation_transformation
         self.action_transformation = action_transformation
+        self._context_space = env.context_space if context_transformation is None else context_transformation.target_space
+        self._observation_space = env.observation_space if observation_transformation is None else observation_transformation.target_space
+        self._action_space = env.action_space if action_transformation is None else action_transformation.source_space
 
     def step(
         self,
