@@ -62,7 +62,7 @@ class SpaceDataQueue(
     
     def reset(self, mask : Optional[BArrayType] = None) -> None:
         if self.batch_size is not None:
-            if mask is not None:
+            if mask is not None and self.batch_size > 1:
                 self.count_valid = self.backend.array_api_namespace.where(
                     mask,
                     self.backend.array_api_namespace.zeros_like(self.count_valid),
@@ -105,6 +105,14 @@ class SpaceDataQueue(
         ) # (T, B, ...) or (T, ...)
 
         if self.batch_size is None or queue_t == 0:
+            return stacked_data
+        elif self.batch_size == 1:
+            stacked_data = sbu.swap_batch_dims_in_data(
+                self.flat_stacked_space,
+                stacked_data,
+                0,
+                1
+            ) # (T, B, ...) => (B, T, ...)
             return stacked_data
         else:
             stacked_data = sbu.swap_batch_dims_in_data(
