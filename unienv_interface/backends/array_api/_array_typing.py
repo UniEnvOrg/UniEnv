@@ -1,18 +1,32 @@
 from typing import Protocol, TypeVar, Optional, Any, Tuple, Union, Type
+from abc import abstractmethod
 from enum import Enum
 from array_api_compat.common._typing import Device, DType
 
-try:
-    from dlpack import Capsule as PyCapsule
-except ImportError:
-    PyCapsule = object
+__all__ = [
+    'Array',
+    'PyCapsule',
+    'SupportsDLPack',
+    'Device',
+    'DType',
+]
+
+PyCapsule = object
+class SupportsDLPack(Protocol):
+    @abstractmethod
+    def __dlpack__(self, stream=None) -> PyCapsule:
+        raise NotImplementedError
+
+    @abstractmethod
+    def __dlpack_device__(self) -> Any:
+        raise NotImplementedError
 
 """
 From https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/_types.py
 """
 
-_ARR_C = TypeVar("_ARR_C", bound='ArrayAPIArray')
-class ArrayAPIArray(Protocol):
+_ARR_C = TypeVar("_ARR_C", bound='Array')
+class Array(Protocol):
     def __init__(self: _ARR_C) -> None:
         """Initialize the attributes for the array object class."""
 
