@@ -1,5 +1,6 @@
 from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type, Callable, Mapping, Protocol
 import abc
+from .array_api_stubs import *
 import array_api_compat
 import numpy as np
 import dlpack
@@ -9,8 +10,8 @@ BArrayType = TypeVar("BArrayType", covariant=True)
 BDeviceType = TypeVar("BDeviceType", covariant=True)
 BDtypeType = TypeVar("BDtypeType", covariant=True)
 BRNGType = TypeVar("BRNGType", covariant=True)
-class ComputeBackend(Type, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    array_api_namespace : Any
+class ComputeBackend(Protocol, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    array_api_namespace : ArrayAPINamespace
     default_integer_dtype : BDtypeType
     default_floating_dtype : BDtypeType
     default_boolean_dtype : BDtypeType

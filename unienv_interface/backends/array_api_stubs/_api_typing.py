@@ -2,7 +2,10 @@ from typing import Protocol, TypeVar, Optional, Any, Tuple, Union, Type, TypedDi
 from abc import abstractmethod
 from dataclasses import dataclass
 from ._array_typing import *
-from _api_return_typing import *
+from . import _api_constant as const
+from ._api_return_typing import *
+from ._api_linalg_typing import ArrayAPILinalgNamespace
+from ._api_fft_typing import ArrayAPIFFTNamespace
 
 _NAMESPACE_C = TypeVar("_NAMESPACE_C", bound="ArrayAPINamespace")
 _NAMESPACE_ARRAY = TypeVar("_NAMESPACE_ARRAY", bound=Array)
@@ -10,29 +13,74 @@ _NAMESPACE_DEVICE = TypeVar("_NAMESPACE_DEVICE", bound=Device)
 _NAMESPACE_DTYPE = TypeVar("_NAMESPACE_DTYPE", bound=DType)
 class ArrayAPINamespace(Protocol[_NAMESPACE_ARRAY, _NAMESPACE_DEVICE, _NAMESPACE_DTYPE]):
     """
+    linalg namespace
+    """
+    linalg: ArrayAPILinalgNamespace[_NAMESPACE_ARRAY, _NAMESPACE_DEVICE, _NAMESPACE_DTYPE]
+
+    """
+    fft namespace
+    """
+    fft: ArrayAPIFFTNamespace[_NAMESPACE_ARRAY, _NAMESPACE_DEVICE, _NAMESPACE_DTYPE]
+
+    """
     Constants
     https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/constants.py
     """
     @property
     def e(self : _NAMESPACE_C) -> float:
-        return 2.718281828459045
-
+        return const.e
+    
     @property
     def inf(self : _NAMESPACE_C) -> float:
-        return float("inf")
+        return const.inf
     
     @property
     def nan(self : _NAMESPACE_C) -> float:
-        return float("nan")
+        return const.nan
     
     @property
     def newaxis(self : _NAMESPACE_C) -> None:
-        return None
+        return const.newaxis
     
     @property
     def pi(self : _NAMESPACE_C) -> float:
-        return 3.141592653589793
-    
+        return const.pi
+
+    """
+    __array_namespace_info__ typings
+    https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/info.py
+    """
+    @abstractmethod
+    def __array_namespace_info__(
+        self : _NAMESPACE_C
+    ) -> Info:
+        """
+        Returns a namespace with Array API namespace inspection utilities.
+
+        See :ref:`inspection` for a list of inspection APIs.
+
+        Returns
+        -------
+        out: Info
+            An object containing Array API namespace inspection utilities.
+
+        Notes
+        -----
+
+        The returned object may be either a namespace or a class, so long as an Array API user can access inspection utilities as follows:
+
+        ::
+
+        info = xp.__array_namespace_info__()
+        info.capabilities()
+        info.devices()
+        info.dtypes()
+        info.default_dtypes()
+        # ...
+
+        .. versionadded: 2023.12
+        """
+
     """
     Creation Functions
     https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/creation_functions.py
