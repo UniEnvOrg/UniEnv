@@ -1,8 +1,8 @@
-from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type, Callable, Mapping
+from typing import Optional, Generic, TypeVar, Dict, Union, Any, Sequence, SupportsFloat, Tuple, Type, Callable, Mapping, Protocol
 import abc
+import array_api_compat
 import numpy as np
 import dlpack
-import array_api_compat
 
 BArrayType = TypeVar("BArrayType", covariant=True)
 # _BDictType = TypeVar("_BDictType", Dict, covariant=True)
