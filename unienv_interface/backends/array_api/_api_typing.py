@@ -4766,3 +4766,476 @@ class ArrayAPINamespace(Protocol[_NAMESPACE_ARRAY, _NAMESPACE_DEVICE, _NAMESPACE
 
         .. versionadded:: 2023.12
         """
+
+    """
+    Searching Functions
+    https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/searching_functions.py
+    """
+    def argmax(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /, *, axis: Optional[int] = None, keepdims: bool = False
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns the indices of the maximum values along a specified axis.
+
+        When the maximum value occurs multiple times, only the indices corresponding to the first occurrence are returned.
+
+        .. note::
+        For backward compatibility, conforming implementations may support complex numbers; however, inequality comparison of complex numbers is unspecified and thus implementation-dependent (see :ref:`complex-number-ordering`).
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. Should have a real-valued data type.
+        axis: Optional[int]
+            axis along which to search. If ``None``, the function must return the index of the maximum value of the flattened array. Default: ``None``.
+        keepdims: bool
+            if ``True``, the reduced axes (dimensions) must be included in the result as singleton dimensions, and, accordingly, the result must be compatible with the input array (see :ref:`broadcasting`). Otherwise, if ``False``, the reduced axes (dimensions) must not be included in the result. Default: ``False``.
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            if ``axis`` is ``None``, a zero-dimensional array containing the index of the first occurrence of the maximum value; otherwise, a non-zero-dimensional array containing the indices of the maximum values. The returned array must have be the default array index data type.
+        """
+
+    @abstractmethod
+    def argmin(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /, *, axis: Optional[int] = None, keepdims: bool = False
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns the indices of the minimum values along a specified axis.
+
+        When the minimum value occurs multiple times, only the indices corresponding to the first occurrence are returned.
+
+        .. note::
+        For backward compatibility, conforming implementations may support complex numbers; however, inequality comparison of complex numbers is unspecified and thus implementation-dependent (see :ref:`complex-number-ordering`).
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. Should have a real-valued data type.
+        axis: Optional[int]
+            axis along which to search. If ``None``, the function must return the index of the minimum value of the flattened array. Default: ``None``.
+        keepdims: bool
+            if ``True``, the reduced axes (dimensions) must be included in the result as singleton dimensions, and, accordingly, the result must be compatible with the input array (see :ref:`broadcasting`). Otherwise, if ``False``, the reduced axes (dimensions) must not be included in the result. Default: ``False``.
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            if ``axis`` is ``None``, a zero-dimensional array containing the index of the first occurrence of the minimum value; otherwise, a non-zero-dimensional array containing the indices of the minimum values. The returned array must have the default array index data type.
+        """
+
+    @abstractmethod
+    def count_nonzero(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY,
+        /,
+        *,
+        axis: Optional[Union[int, Tuple[int, ...]]] = None,
+        keepdims: bool = False,
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Counts the number of array elements which are non-zero.
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array.
+        axis: Optional[Union[int, Tuple[int, ...]]]
+            axis or axes along which to count non-zero values. By default, the number of non-zero values must be computed over the entire array. If a tuple of integers, the number of non-zero values must be computed over multiple axes. Default: ``None``.
+        keepdims: bool
+            if ``True``, the reduced axes (dimensions) must be included in the result as singleton dimensions, and, accordingly, the result must be compatible with the input array (see :ref:`broadcasting`). Otherwise, if ``False``, the reduced axes (dimensions) must not be included in the result. Default: ``False``.
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            if the number of non-zeros values was computed over the entire array, a zero-dimensional array containing the total number of non-zero values; otherwise, a non-zero-dimensional array containing the counts along the specified axes. The returned array must have the default array index data type.
+
+        Notes
+        -----
+
+        -   If ``x`` has a complex floating-point data type, non-zero elements are those elements having at least one component (real or imaginary) which is non-zero.
+        -   If ``x`` has a boolean data type, non-zero elements are those elements which are equal to ``True``.
+
+        .. versionadded:: 2024.12
+        """
+
+    @abstractmethod
+    def nonzero(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /
+    ) -> Tuple[_NAMESPACE_ARRAY, ...]:
+        """
+        Returns the indices of the array elements which are non-zero.
+
+        .. admonition:: Data-dependent output shape
+        :class: admonition important
+
+        The shape of the output array for this function depends on the data values in the input array; hence, array libraries which build computation graphs (e.g., JAX, Dask, etc.) may find this function difficult to implement without knowing array values. Accordingly, such libraries may choose to omit this function. See :ref:`data-dependent-output-shapes` section for more details.
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. Must have a positive rank. If ``x`` is zero-dimensional, the function must raise an exception.
+
+        Returns
+        -------
+        out: Tuple[array, ...]
+            a tuple of ``k`` arrays, one for each dimension of ``x`` and each of size ``n`` (where ``n`` is the total number of non-zero elements), containing the indices of the non-zero elements in that dimension. The indices must be returned in row-major, C-style order. The returned array must have the default array index data type.
+
+        Notes
+        -----
+
+        -   If ``x`` has a complex floating-point data type, non-zero elements are those elements having at least one component (real or imaginary) which is non-zero.
+        -   If ``x`` has a boolean data type, non-zero elements are those elements which are equal to ``True``.
+
+        .. versionchanged:: 2022.12
+        Added complex data type support.
+        """
+
+    @abstractmethod
+    def searchsorted(
+        self: _NAMESPACE_C,
+        x1: _NAMESPACE_ARRAY,
+        x2: _NAMESPACE_ARRAY,
+        /,
+        *,
+        side: Literal["left", "right"] = "left",
+        sorter: Optional[_NAMESPACE_ARRAY] = None,
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Finds the indices into ``x1`` such that, if the corresponding elements in ``x2`` were inserted before the indices, the order of ``x1``, when sorted in ascending order, would be preserved.
+
+        Parameters
+        ----------
+        x1: _NAMESPACE_ARRAY
+            input array. Must be a one-dimensional array. Should have a real-valued data type. If ``sorter`` is ``None``, must be sorted in ascending order; otherwise, ``sorter`` must be an array of indices that sort ``x1`` in ascending order.
+        x2: _NAMESPACE_ARRAY
+            array containing search values. Should have a real-valued data type.
+        side: Literal['left', 'right']
+            argument controlling which index is returned if a value lands exactly on an edge.
+
+            Let ``v`` be an element of ``x2`` given by ``v = x2[j]``, where ``j`` refers to a valid index (see :ref:`indexing`).
+
+            - If ``v`` is less than all elements in ``x1``, then ``out[j]`` must be ``0``.
+            - If ``v`` is greater than all elements in ``x1``, then ``out[j]`` must be ``M``, where ``M`` is the number of elements in ``x1``.
+            - Otherwise, each returned index ``i = out[j]`` must satisfy an index condition:
+
+            - If ``side == 'left'``, then ``x1[i-1] < v <= x1[i]``.
+            - If ``side == 'right'``, then ``x1[i-1] <= v < x1[i]``.
+
+            Default: ``'left'``.
+        sorter: Optional[array]
+            array of indices that sort ``x1`` in ascending order. The array must have the same shape as ``x1`` and have an integer data type. Default: ``None``.
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            an array of indices with the same shape as ``x2``. The returned array must have the default array index data type.
+
+        Notes
+        -----
+
+        For real-valued floating-point arrays, the sort order of NaNs and signed zeros is unspecified and thus implementation-dependent. Accordingly, when a real-valued floating-point array contains NaNs and signed zeros, what constitutes ascending order may vary among specification-conforming array libraries.
+
+        While behavior for arrays containing NaNs and signed zeros is implementation-dependent, specification-conforming libraries should, however, ensure consistency with ``sort`` and ``argsort`` (i.e., if a value in ``x2`` is inserted into ``x1`` according to the corresponding index in the output array and ``sort`` is invoked on the resultant array, the sorted result should be an array in the same order).
+
+        .. versionadded:: 2023.12
+
+        .. versionchanged:: 2024.12
+        Fixed incorrect boundary conditions.
+        """
+
+    @abstractmethod
+    def where(
+        self: _NAMESPACE_C,
+        condition: _NAMESPACE_ARRAY,
+        x1: Union[_NAMESPACE_ARRAY, int, float, complex, bool],
+        x2: Union[_NAMESPACE_ARRAY, int, float, complex, bool],
+        /,
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns elements chosen from ``x1`` or ``x2`` depending on ``condition``.
+
+        Parameters
+        ----------
+        condition: _NAMESPACE_ARRAY
+            when ``True``, yield ``x1_i``; otherwise, yield ``x2_i``. Should have a boolean data type. Must be compatible with ``x1`` and ``x2`` (see :ref:`broadcasting`).
+        x1: Union[array, int, float, complex, bool]
+            first input array. Must be compatible with ``condition`` and ``x2`` (see :ref:`broadcasting`).
+        x2: Union[array, int, float, complex, bool]
+            second input array. Must be compatible with ``condition`` and ``x1`` (see :ref:`broadcasting`).
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            an array with elements from ``x1`` where ``condition`` is ``True``, and elements from ``x2`` elsewhere. The returned array must have a data type determined by :ref:`type-promotion` rules with the arrays ``x1`` and ``x2``.
+
+        Notes
+        -----
+
+        -   At least one of  ``x1`` and ``x2`` must be an array.
+        -   If either ``x1`` or ``x2`` is a scalar value, the returned array must have a data type determined according to :ref:`mixing-scalars-and-arrays`.
+
+        .. versionchanged:: 2024.12
+        Added scalar argument support.
+
+        .. versionchanged:: 2024.12
+        Clarified that the ``condition`` argument should have a boolean data type.
+        """
+    
+    """
+    Set Functions
+    https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/set_functions.py
+    """
+    @abstractmethod
+    def unique_all(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /
+    ) -> Tuple[_NAMESPACE_ARRAY, _NAMESPACE_ARRAY, _NAMESPACE_ARRAY, _NAMESPACE_ARRAY]:
+        """
+        Returns the unique elements of an input array ``x``, the first occurring indices for each unique element in ``x``, the indices from the set of unique elements that reconstruct ``x``, and the corresponding counts for each unique element in ``x``.
+
+        .. admonition:: Data-dependent output shape
+            :class: important
+
+            The shapes of two of the output arrays for this function depend on the data values in the input array; hence, array libraries which build computation graphs (e.g., JAX, Dask, etc.) may find this function difficult to implement without knowing array values. Accordingly, such libraries may choose to omit this function. See :ref:`data-dependent-output-shapes` section for more details.
+
+        .. note::
+        Uniqueness should be determined based on value equality (see :func:`~array_api.equal`). For input arrays having floating-point data types, value-based equality implies the following behavior.
+
+        -   As ``nan`` values compare as ``False``, ``nan`` values should be considered distinct.
+        -   As complex floating-point values having at least one ``nan`` component compare as ``False``, complex floating-point values having ``nan`` components should be considered distinct.
+        -   As ``-0`` and ``+0`` compare as ``True``, signed zeros should not be considered distinct, and the corresponding unique element will be implementation-dependent (e.g., an implementation could choose to return ``-0`` if ``-0`` occurs before ``+0``).
+
+        As signed zeros are not distinct, using ``inverse_indices`` to reconstruct the input array is not guaranteed to return an array having the exact same values.
+
+        Each ``nan`` value and each complex floating-point value having a ``nan`` component should have a count of one, while the counts for signed zeros should be aggregated as a single count.
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. If ``x`` has more than one dimension, the function must flatten ``x`` and return the unique elements of the flattened array.
+
+        Returns
+        -------
+        out: Tuple[array, array, array, array]
+            a namedtuple ``(values, indices, inverse_indices, counts)`` whose
+
+            - first element must have the field name ``values`` and must be a one-dimensional array containing the unique elements of ``x``. The array must have the same data type as ``x``.
+            - second element must have the field name ``indices`` and must be an array containing the indices (first occurrences) of a flattened ``x`` that result in ``values``. The array must have the same shape as ``values`` and must have the default array index data type.
+            - third element must have the field name ``inverse_indices`` and must be an array containing the indices of ``values`` that reconstruct ``x``. The array must have the same shape as ``x`` and must have the default array index data type.
+            - fourth element must have the field name ``counts`` and must be an array containing the number of times each unique element occurs in ``x``. The order of the returned counts must match the order of ``values``, such that a specific element in ``counts`` corresponds to the respective unique element in ``values``. The returned array must have same shape as ``values`` and must have the default array index data type.
+
+            .. note::
+            The order of unique elements is not specified and may vary between implementations.
+
+        Notes
+        -----
+
+        .. versionchanged:: 2022.12
+        Added complex data type support.
+
+        .. versionchanged:: 2023.12
+        Clarified flattening behavior and required the order of ``counts`` match the order of ``values``.
+        """
+
+    @abstractmethod
+    def unique_counts(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /
+    ) -> Tuple[_NAMESPACE_ARRAY, _NAMESPACE_ARRAY]:
+        """
+        Returns the unique elements of an input array ``x`` and the corresponding counts for each unique element in ``x``.
+
+        .. admonition:: Data-dependent output shape
+            :class: important
+
+            The shapes of two of the output arrays for this function depend on the data values in the input array; hence, array libraries which build computation graphs (e.g., JAX, Dask, etc.) may find this function difficult to implement without knowing array values. Accordingly, such libraries may choose to omit this function. See :ref:`data-dependent-output-shapes` section for more details.
+
+        .. note::
+        Uniqueness should be determined based on value equality (see :func:`~array_api.equal`). For input arrays having floating-point data types, value-based equality implies the following behavior.
+
+        -   As ``nan`` values compare as ``False``, ``nan`` values should be considered distinct.
+        -   As complex floating-point values having at least one ``nan`` component compare as ``False``, complex floating-point values having ``nan`` components should be considered distinct.
+        -   As ``-0`` and ``+0`` compare as ``True``, signed zeros should not be considered distinct, and the corresponding unique element will be implementation-dependent (e.g., an implementation could choose to return ``-0`` if ``-0`` occurs before ``+0``).
+
+        Each ``nan`` value and each complex floating-point value having a ``nan`` component should have a count of one, while the counts for signed zeros should be aggregated as a single count.
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. If ``x`` has more than one dimension, the function must flatten ``x`` and return the unique elements of the flattened array.
+
+        Returns
+        -------
+        out: Tuple[array, array]
+            a namedtuple `(values, counts)` whose
+
+            -   first element must have the field name ``values`` and must be a one-dimensional array containing the unique elements of ``x``. The array must have the same data type as ``x``.
+            -   second element must have the field name `counts` and must be an array containing the number of times each unique element occurs in ``x``. The order of the returned counts must match the order of ``values``, such that a specific element in ``counts`` corresponds to the respective unique element in ``values``. The returned array must have same shape as ``values`` and must have the default array index data type.
+
+            .. note::
+            The order of unique elements is not specified and may vary between implementations.
+
+        Notes
+        -----
+
+        .. versionchanged:: 2022.12
+        Added complex data type support.
+
+        .. versionchanged:: 2023.12
+        Clarified flattening behavior and required the order of ``counts`` match the order of ``values``.
+        """
+
+    @abstractmethod
+    def unique_inverse(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /
+    ) -> Tuple[_NAMESPACE_ARRAY, _NAMESPACE_ARRAY]:
+        """
+        Returns the unique elements of an input array ``x`` and the indices from the set of unique elements that reconstruct ``x``.
+
+        .. admonition:: Data-dependent output shape
+            :class: important
+
+            The shapes of two of the output arrays for this function depend on the data values in the input array; hence, array libraries which build computation graphs (e.g., JAX, Dask, etc.) may find this function difficult to implement without knowing array values. Accordingly, such libraries may choose to omit this function. See :ref:`data-dependent-output-shapes` section for more details.
+
+        .. note::
+        Uniqueness should be determined based on value equality (see :func:`~array_api.equal`). For input arrays having floating-point data types, value-based equality implies the following behavior.
+
+        -   As ``nan`` values compare as ``False``, ``nan`` values should be considered distinct.
+        -   As complex floating-point values having at least one ``nan`` component compare as ``False``, complex floating-point values having ``nan`` components should be considered distinct.
+        -   As ``-0`` and ``+0`` compare as ``True``, signed zeros should not be considered distinct, and the corresponding unique element will be implementation-dependent (e.g., an implementation could choose to return ``-0`` if ``-0`` occurs before ``+0``).
+
+        As signed zeros are not distinct, using ``inverse_indices`` to reconstruct the input array is not guaranteed to return an array having the exact same values.
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. If ``x`` has more than one dimension, the function must flatten ``x`` and return the unique elements of the flattened array.
+
+        Returns
+        -------
+        out: Tuple[array, array]
+            a namedtuple ``(values, inverse_indices)`` whose
+
+            -   first element must have the field name ``values`` and must be a one-dimensional array containing the unique elements of ``x``. The array must have the same data type as ``x``.
+            -   second element must have the field name ``inverse_indices`` and must be an array containing the indices of ``values`` that reconstruct ``x``. The array must have the same shape as ``x`` and have the default array index data type.
+
+            .. note::
+            The order of unique elements is not specified and may vary between implementations.
+
+        Notes
+        -----
+
+        .. versionchanged:: 2022.12
+        Added complex data type support.
+
+        .. versionchanged:: 2023.12
+        Clarified flattening behavior.
+        """
+
+    @abstractmethod
+    def unique_values(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns the unique elements of an input array ``x``.
+
+        .. admonition:: Data-dependent output shape
+            :class: important
+
+            The shapes of two of the output arrays for this function depend on the data values in the input array; hence, array libraries which build computation graphs (e.g., JAX, Dask, etc.) may find this function difficult to implement without knowing array values. Accordingly, such libraries may choose to omit this function. See :ref:`data-dependent-output-shapes` section for more details.
+
+        .. note::
+        Uniqueness should be determined based on value equality (see :func:`~array_api.equal`). For input arrays having floating-point data types, value-based equality implies the following behavior.
+
+        -   As ``nan`` values compare as ``False``, ``nan`` values should be considered distinct.
+        -   As complex floating-point values having at least one ``nan`` component compare as ``False``, complex floating-point values having ``nan`` components should be considered distinct.
+        -   As ``-0`` and ``+0`` compare as ``True``, signed zeros should not be considered distinct, and the corresponding unique element will be implementation-dependent (e.g., an implementation could choose to return ``-0`` if ``-0`` occurs before ``+0``).
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. If ``x`` has more than one dimension, the function must flatten ``x`` and return the unique elements of the flattened array.
+
+        Returns
+        -------
+        out: _NAMESPACE_ARRAY
+            a one-dimensional array containing the set of unique elements in ``x``. The returned array must have the same data type as ``x``.
+
+            .. note::
+            The order of unique elements is not specified and may vary between implementations.
+
+        Notes
+        -----
+
+        .. versionchanged:: 2022.12
+        Added complex data type support.
+
+        .. versionchanged:: 2023.12
+        Required that the output array must be one-dimensional.
+        """
+
+    """
+    Sorting Functions
+    https://github.com/data-apis/array-api/blob/main/src/array_api_stubs/_2024_12/sorting_functions.py
+    """
+    @abstractmethod
+    def argsort(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /, *, axis: int = -1, descending: bool = False, stable: bool = True
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns the indices that sort an array ``x`` along a specified axis.
+
+        .. note::
+        For backward compatibility, conforming implementations may support complex numbers; however, inequality comparison of complex numbers is unspecified and thus implementation-dependent (see :ref:`complex-number-ordering`).
+
+        Parameters
+        ----------
+        x : _NAMESPACE_ARRAY
+            input array. Should have a real-valued data type.
+        axis: int
+            axis along which to sort. If set to ``-1``, the function must sort along the last axis. Default: ``-1``.
+        descending: bool
+            sort order. If ``True``, the returned indices sort ``x`` in descending order (by value). If ``False``, the returned indices sort ``x`` in ascending order (by value). Default: ``False``.
+        stable: bool
+            sort stability. If ``True``, the returned indices must maintain the relative order of ``x`` values which compare as equal. If ``False``, the returned indices may or may not maintain the relative order of ``x`` values which compare as equal (i.e., the relative order of ``x`` values which compare as equal is implementation-dependent). Default: ``True``.
+
+        Returns
+        -------
+        out : _NAMESPACE_ARRAY
+            an array of indices. The returned array must have the same shape as ``x``. The returned array must have the default array index data type.
+        """
+
+    @abstractmethod
+    def sort(
+        self: _NAMESPACE_C,
+        x: _NAMESPACE_ARRAY, /, *, axis: int = -1, descending: bool = False, stable: bool = True
+    ) -> _NAMESPACE_ARRAY:
+        """
+        Returns a sorted copy of an input array ``x``.
+
+        .. note::
+        For backward compatibility, conforming implementations may support complex numbers; however, inequality comparison of complex numbers is unspecified and thus implementation-dependent (see :ref:`complex-number-ordering`).
+
+        Parameters
+        ----------
+        x: _NAMESPACE_ARRAY
+            input array. Should have a real-valued data type.
+        axis: int
+            axis along which to sort. If set to ``-1``, the function must sort along the last axis. Default: ``-1``.
+        descending: bool
+            sort order. If ``True``, the array must be sorted in descending order (by value). If ``False``, the array must be sorted in ascending order (by value). Default: ``False``.
+        stable: bool
+            sort stability. If ``True``, the returned array must maintain the relative order of ``x`` values which compare as equal. If ``False``, the returned array may or may not maintain the relative order of ``x`` values which compare as equal (i.e., the relative order of ``x`` values which compare as equal is implementation-dependent). Default: ``True``.
+
+        Returns
+        -------
+        out : _NAMESPACE_ARRAY
+            a sorted array. The returned array must have the same data type and shape as ``x``.
+        """
