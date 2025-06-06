@@ -1,6 +1,6 @@
 from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal, Iterable
 import numpy as np
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 
 from unienv_interface.transformations.filter_dict import FilterDictTransformation

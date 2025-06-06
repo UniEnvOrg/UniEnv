@@ -1,7 +1,8 @@
+from unienv_interface.space.space_utils import batch_utils as sbu
 from .transformation import DataTransformation, TargetDataT
-from unienv_interface.space import Space, batch_utils as sbu
+from unienv_interface.space import Space
 from typing import Union, Any, Optional
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class BatchifyTransformation(DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType, 

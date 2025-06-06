@@ -1,9 +1,10 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from ..space import Space
-from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from ..env_base.funcenv import FuncEnv, StateType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
+from unienv_interface.space import Space
+from unienv_interface.env_base.funcenv import FuncEnv, StateType
 from .world import FuncWorld
 
 SensorDataT = TypeVar("SensorDataT", covariant=True)

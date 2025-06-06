@@ -1,7 +1,8 @@
 import abc
 from typing import Generic, TypeVar, Tuple, Dict, Any, Optional, SupportsFloat, Type, Sequence, Union
-from unienv_interface.space import Space, batch_utils as sbu, flatten_utils as sfu
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 
 SourceDataT = TypeVar("SourceDataT")
 SourceBArrT = TypeVar("SourceBArrTypeT")

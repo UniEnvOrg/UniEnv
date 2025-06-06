@@ -1,7 +1,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
 import numpy as np
 from ..space import Space
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(

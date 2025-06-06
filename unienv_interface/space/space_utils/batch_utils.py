@@ -4,7 +4,7 @@ import typing
 import copy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIGetIndex, ArrayAPISetIndex
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIGetIndex, ArrayAPISetIndex
 
 from ..spaces import *
 

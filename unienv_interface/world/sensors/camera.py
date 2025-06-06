@@ -1,11 +1,10 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
-
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import PIL.Image
+
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, Box
 from unienv_interface.env_base.funcenv import StateType
-import PIL
 
 class CameraSensor(
     Sensor[SensorDataT, BDeviceType, BDtypeType, BRNGType],
@@ -28,7 +27,7 @@ class CameraSensor(
     # Shape 3x3
     intrinsic_matrix : Optional[BArrayType] = None
 
-    def to_image(self, data : BArrayType) -> PIL.Image:
+    def to_image(self, data : BArrayType) -> PIL.Image.Image:
         raise NotImplementedError
 
 class FuncCameraSensor(

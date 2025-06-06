@@ -3,7 +3,7 @@ from copy import deepcopy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
 import numpy as np
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space.spaces import *
 
 __all__ = [

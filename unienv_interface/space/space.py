@@ -1,6 +1,6 @@
 from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Type, List
 import numpy as np
-from xarray import ComputeBackend, ArrayAPIArray
+from xbarray import ComputeBackend, ArrayAPIArray
 import abc
 
 SpaceDataT = TypeVar("SpaceDataT", covariant=True)

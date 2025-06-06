@@ -1,6 +1,6 @@
 from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple
-from ..backends.base import ComputeBackend, BDeviceType, BDtypeType, BRNGType
-from ..env_base.funcenv import StateType
+from xbarray import ComputeBackend, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.env_base.funcenv import StateType
 from abc import ABC, abstractmethod
 
 class World(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):

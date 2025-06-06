@@ -1,11 +1,13 @@
 from typing import Dict as DictT, Any, Optional, Tuple, Union, Generic, SupportsFloat, Type, Sequence, TypeVar
 import numpy as np
 import copy
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.utils import seed_util
-from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.env_base.wrapper import *
-from unienv_interface.backends import ComputeBackend
-from unienv_interface.space import Space, Dict, batch_utils as sbu, flatten_utils as sfu
+from unienv_interface.space import Space, Dict
 from unienv_interface.transformations.transformation import DataTransformation
 from collections import deque
 

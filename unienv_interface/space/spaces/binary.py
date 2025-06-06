@@ -2,7 +2,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal
 import numpy as np
 from ..space import Space
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(

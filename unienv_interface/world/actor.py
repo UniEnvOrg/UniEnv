@@ -1,8 +1,7 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Protocol, Iterable, Union
 from abc import ABC, abstractmethod
-from ..space import Space
-from ..space.dict import Dict as DictSpace
-from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from ..space import Space, DictSpace
 from ..env_base.funcenv import FuncEnv, StateType
 from .sensor import Sensor, FuncSensor
 from .world import FuncWorld

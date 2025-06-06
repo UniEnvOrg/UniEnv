@@ -13,7 +13,7 @@ except ImportError:
     )
 
 import numpy as np
-from xarray import ComputeBackend
+from xbarray import ComputeBackend
 from unienv_interface.space.spaces import *
 
 __all__ = [

@@ -1,6 +1,6 @@
 from typing import Optional, Any, Dict, Callable, Tuple, Union, SupportsFloat
 from unienv_interface.space import Space, Dict as DictSpace
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from ..task import StateType, Task, TaskStateT, FuncTask
 from ..world import FuncWorld
 from ..actor import FuncActor, FuncActorCombinedState

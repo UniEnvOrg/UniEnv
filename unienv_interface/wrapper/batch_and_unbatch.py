@@ -1,12 +1,11 @@
 from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal
 import numpy as np
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
-from unienv_interface.space import batch_utils as sbu
+from unienv_interface.space.space_utils import batch_utils as sbu
 
 from unienv_interface.transformations.batch_and_unbatch import BatchifyTransformation, UnBatchifyTransformation
 from .transformation import TransformWrapper
-
 
 class BatchifyWrapper(
     TransformWrapper[

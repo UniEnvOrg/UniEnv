@@ -2,8 +2,8 @@ from .env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BD
 from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
-from ..space import Space
-from ..backends import ComputeBackend
+from unienv_interface.space import Space
+from xbarray import ComputeBackend, ArrayAPIArray
 import numpy as np
 
 WrapperBArrayT = TypeVar("WrapperBArrayT")

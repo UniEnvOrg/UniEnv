@@ -1,10 +1,8 @@
 from typing import Any, Callable, Generic, TypeVar, Tuple, Dict, Optional, SupportsFloat, Type, Sequence, Union
 import abc
 import numpy as np
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.utils import seed_util
-import gymnasium as gym
-from ..space import Space
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space
 from dataclasses import dataclass, replace as dataclass_replace
 from .env import Env, ContextType, ObsType, ActType, RenderFrame
 

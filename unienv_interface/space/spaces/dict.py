@@ -2,7 +2,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List, Dict, Union
 import numpy as np
 from ..space import Space
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from collections.abc import KeysView
 
 class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):

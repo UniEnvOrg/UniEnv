@@ -3,7 +3,7 @@
 from typing import Any, Generic, Iterable, FrozenSet, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List, Dict
 import numpy as np
 from ..space import Space
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils import seed_util
 import string
 

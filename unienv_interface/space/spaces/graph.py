@@ -2,7 +2,7 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 from typing_extensions import TypedDict # for Python < 3.11, otherwise we can use typing.TypedDict
 import numpy as np
 from ..space import Space
-from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray
 from .box import BoxSpace
 import dataclasses
 

@@ -2,11 +2,11 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends import ComputeBackend
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Space, Dict as DictSpace
-from unienv_interface.space import gym_utils
+from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import Space, DictSpace
+from unienv_interface.space.space_utils import gym_utils
 from unienv_interface.utils import seed_util
 
 class ToGymnasiumEnv(

@@ -2,8 +2,8 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 
 import PIL.Image
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, Tuple as TupleSpace
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space, TupleSpace
 from unienv_interface.env_base.funcenv import StateType
 import PIL
 

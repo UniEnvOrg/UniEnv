@@ -1,8 +1,10 @@
 from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
-from ..space import Space, batch_utils as space_batch_utils
-from ..backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
+from unienv_interface.space.space_utils import batch_utils as space_batch_utils
+from unienv_interface.space import Space
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import numpy as np
 
 ContextType = TypeVar("ContextType")

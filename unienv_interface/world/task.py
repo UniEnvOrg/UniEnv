@@ -1,10 +1,11 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, SupportsFloat
 from abc import ABC, abstractmethod
 from unienv_interface.utils import seed_util
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
 from .world import FuncWorld, StateType
 from .actor import FuncActor, ActorStateT, FuncActorCombinedState
-from ..space import Space, Dict as DictSpace
-from ..backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space, DictSpace
 
 class Task(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
@@ -519,7 +520,7 @@ class FuncTaskWrapper(
         return self.task.unwrapped
     
     @property
-    def prev_wrapper_layer(self) -> "FuncTask[StateType, ActorStateT, TaskStateT, RewardType, TerminationType]":
+    def prev_wrapper_layer(self) -> "FuncTask[StateType, ActorStateT, TaskStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         return self.task
     
     def has_wrapper_attr(self, name: str) -> bool:

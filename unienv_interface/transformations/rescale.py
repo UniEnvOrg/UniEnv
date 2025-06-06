@@ -1,7 +1,7 @@
 from .transformation import DataTransformation, TargetDataT
-from unienv_interface.space import Box
+from unienv_interface.space import BoxSpace
 from typing import Union, Any, Optional
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class RescaleTransformation(DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType, 
@@ -10,16 +10,16 @@ class RescaleTransformation(DataTransformation[
     has_inverse = True
     def __init__(
         self,
-        source_space : Box[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        source_space : BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         new_low : Union[BArrayType,float] = -1.0,
         new_high : Union[BArrayType,float] = 1.0,
     ):
-        assert isinstance(source_space, Box), "RescaleTransformation only supports Box action spaces"
+        assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box action spaces"
         assert source_space.backend.dtype_is_real_floating(source_space.dtype), "RescaleTransformation only supports real-valued floating spaces"
         assert source_space.is_bounded('both'), "source_space only supports bounded spaces"
         
         self.source_space = source_space
-        self.target_space = Box(
+        self.target_space = BoxSpace(
             backend=source_space.backend,
             low=new_low,
             high=new_high,
