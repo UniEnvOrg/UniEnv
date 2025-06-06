@@ -1,3 +1,4 @@
+from ..space import Space
 from .binary import BinarySpace
 from .box import BoxSpace
 from .dict import DictSpace

@@ -1,24 +1,28 @@
-"""Implementation of a space that represents graph information where nodes and edges can be represented with euclidean space."""
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Union
 from typing_extensions import TypedDict # for Python < 3.11, otherwise we can use typing.TypedDict
 import numpy as np
 from ..space import Space
 from xarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray
 from .box import BoxSpace
+import dataclasses
 
-class GraphInstance(Generic[BArrayType], TypedDict):
-    """A Graph space instance.
+@dataclasses.dataclass
+class GraphInstance(Generic[BArrayType]):
+    
+    n_nodes: BArrayType
+    """Number of nodes in the graph, shape (*batch_shape)"""
 
-    * nodes : an (*B, n, ...) sized array representing the features for n nodes, (...) must adhere to the shape of the node space.
-    * edges : an optional (*B, m, ...) sized array representing the features for m edges, (...) must adhere to the shape of the edge space.
-    * edges : an optional (m x 2) sized array of ints representing the indices of the two nodes that each edge connects.
-    """
+    n_edges: Optional[BArrayType] = None
+    """Number of edges in the graph, shape (*batch_shape) or None if no edges are present."""
 
-    n_nodes: int
-    n_edges: Optional[int] = None
     nodes_features: Optional[BArrayType] = None
+    """Node features, shape (*batch_shape, max(n_nodes), *node_feature_space.shape) if node_feature_space is not None, otherwise None."""
+
     edges_features: Optional[BArrayType] = None
+    """Edge features, shape (*batch_shape, max(n_edges), *edge_feature_space.shape) if edge_feature_space is not None, otherwise None."""
+
     edges: Optional[BArrayType] = None
+    """Edges in the graph, shape (*batch_shape, max(n_edges), 2) where each edge is represented by a pair of node indices, or None if no edges are present."""
 
 class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGType], Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
@@ -149,56 +153,52 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         # we only have edges when we have at least 2 nodes
         if self.max_nodes is not None:
             rng, num_nodes = self.backend.random.random_discrete_uniform(
-                1,
+                self.batch_shape,
                 self.min_nodes,
                 self.max_nodes + 1,
                 rng=rng,
-                dtype=self.backend.default_integer_dtype
+                dtype=self.backend.default_integer_dtype,
+                device=self.device,
             )
-            num_nodes = int(num_nodes[0])
         else:
             rng, num_nodes = self.backend.random.random_exponential(
-                1,
+                self.batch_shape,
+                rng=rng,
+                device=self.device,
+            )
+            num_nodes = self.backend.astype(self.backend.floor(num_nodes), self.backend.default_integer_dtype) + self.min_nodes
+
+        if self.is_edge:
+            max_edge = self.max_edges or (num_nodes ** 2) # Assume we allow node to have edges to itself
+            rng, num_edges = self.backend.random.random_uniform(
+                self.batch_shape,
                 rng=rng,
                 dtype=self.backend.default_floating_dtype,
+                device=self.device,
             )
-            num_nodes = int(num_nodes[0]) + self.min_nodes
-
-        if self.is_edge and num_nodes >= 2:
-            max_edge = self.max_edges or (num_nodes * (num_nodes - 1))
-            rng, num_edges = self.backend.random.random_discrete_uniform(
-                1,
-                self.min_edges,
-                max_edge + 1,
-                rng=rng,
-                dtype=self.backend.default_integer_dtype
-            )
-            num_edges = int(num_edges[0])
+            num_edges = self.backend.astype(self.backend.floor(num_edges * (max_edge - self.min_edges + 1)), self.backend.default_integer_dtype) + self.min_edges
         else:
-            num_edges = 0
+            num_edges = None
 
         if self.node_feature_space is None:
-            batched_node_space = self._make_batched_node_feature_space(num_nodes)
+            batched_node_space = self._make_batched_node_feature_space(int(self.backend.max(num_nodes)))
             rng, node_features = batched_node_space.sample(rng=rng)
         else:
             node_features = None
         
-        if num_edges > 0:
-            rng, edges = self.backend.random.random_discrete_uniform(
-                self.batch_shape + (num_edges, 2),
-                from_num=0,
-                to_num=num_nodes,
+        num_edges_batch_max = int(self.backend.max(num_edges)) if num_edges is not None else 0
+        if num_edges is not None and num_edges_batch_max > 0:
+            rng, edges = self.backend.random.random_uniform(
+                self.batch_shape + (num_edges_batch_max, 2),
                 rng=rng,
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
+                device=self.device,
             )
-            edges = self.backend.at(edges)[edges[..., 1] == edges[..., 0], 1].add(1)
-            edges = self.backend.at(edges)[edges[..., 1] >= num_nodes, 1].set(0)
+            edges = self.backend.astype(self.backend.floor(edges * num_nodes), self.backend.default_integer_dtype)
         else:
             edges = None
 
-        if num_edges > 0 and self.edge_feature_space is not None:
-            batched_edge_space = self._make_batched_edge_feature_space(num_edges)
+        if num_edges_batch_max > 0 and self.edge_feature_space is not None:
+            batched_edge_space = self._make_batched_edge_feature_space(num_edges_batch_max)
             rng, edge_features = batched_edge_space.sample(rng=rng)
         else:
             edge_features = None
@@ -211,54 +211,42 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             edges=edges,
         )
 
-    def contains(self, x: GraphInstance) -> bool:
+    def contains(self, x: GraphInstance[BArrayType]) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
-        if not isinstance(x, Mapping):
+        if not isinstance(x, GraphInstance):
             return False
         
-        if any(k not in x for k in ["n_nodes", "n_edges", "nodes_features", "edges_features", "edges"]):
+        if not self.backend.is_backendarray(x.n_nodes) or not self.backend.dtype_is_real_integer(x.n_nodes.dtype) or x.n_nodes.shape != self.batch_shape:
             return False
         
-        if not isinstance(x['n_nodes'], int):
-            return False
-
-        if x['n_nodes'] < self.min_nodes or (self.max_nodes is not None and x['n_nodes'] > self.max_nodes):
+        if bool(self.backend.any(x.n_nodes < self.min_nodes)) or (self.max_nodes is not None and bool(self.backend.any(x.n_nodes > self.max_nodes))):
             return False
 
         if self.node_feature_space is not None:
-            if x['nodes_features'] is None:
+            if x.nodes_features is None:
                 return False
-            batched_node_space = self._make_batched_node_feature_space(x['n_nodes'])
-            if not batched_node_space.contains(x['nodes_features']):
+            batched_node_space = self._make_batched_node_feature_space(int(self.backend.max(x.n_nodes)))
+            if not batched_node_space.contains(x.nodes_features):
                 return False
         
-        if self.is_edge and x["n_edges"] is not None:
-            if not isinstance(x['n_edges'], int):
-                return False
-            if x['n_edges'] < self.min_edges or (self.max_edges is not None and x['n_edges'] > self.max_edges):
+        if self.is_edge and (x.n_edges is not None):
+            if not self.backend.is_backendarray(x.n_edges) or not self.backend.dtype_is_real_integer(x.n_edges.dtype) or x.n_edges.shape != self.batch_shape:
                 return False
             
-            if self.edge_feature_space is not None:
-                if x['edges_features'] is None:
-                    return False
-                batched_edge_space = self._make_batched_edge_feature_space(x['n_edges'])
-                if not batched_edge_space.contains(x['edges_features']):
-                    return False
-            
-            if x['edges'] is None or not self.backend.is_backendarray(x['edges']) or x['edges'].shape != self.batch_shape + (x['n_edges'], 2) or not self.backend.dtype_is_real_integer(x['edges'].dtype):
+            if bool(self.backend.any(x.n_edges < self.min_edges)) or (self.max_edges is not None and bool(self.backend.any(x.n_edges > self.max_edges))):
                 return False
-        elif self.is_edge and self.min_edges > 0:
+            
+            if x.edges is None or not self.backend.is_backendarray(x.edges) or x.edges.shape != self.batch_shape + (int(self.backend.max(x.n_edges)), 2) or not self.backend.dtype_is_real_integer(x.edges.dtype):
+                return False
+            
+            if x.edges_features is not None:
+                batched_edge_space = self._make_batched_edge_feature_space(int(self.backend.max(x.n_edges)))
+                if not batched_edge_space.contains(x.edges_features):
+                    return False
+        elif self.is_edge and self.min_edges > 0 and (x.n_edges is None  or x.edges is None):
             return False
-        elif (not self.is_edge) or self.min_edges >= 0:
-            if x['n_edges'] is not None:
-                return False
-            if x['edges'] is not None:
-                return False
-            if x['edges_features'] is not None:
-                return False
-        else:
-            # self.is_edge and self.min_edges >= 0
-            pass
+        elif not self.is_edge and (x.n_edges is not None or x.edges is not None or x.edges_features is not None):
+            return False
 
         return True
 
