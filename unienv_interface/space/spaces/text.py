@@ -56,6 +56,10 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
     @property
     def charset_index(self) -> Optional[Mapping[str, int]]:
         return self._char_index
+    
+    @property
+    def charset_list(self) -> Optional[Tuple[str, ...]]:
+        return self._char_list
 
     def character_index(self, char: str) -> Optional[int]:
         return self._char_index[char] if self._char_index is not None and char in self._char_index else None

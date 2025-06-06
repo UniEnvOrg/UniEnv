@@ -4,41 +4,25 @@ version = "0.0.1a1"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
-    "tqdm",
-    "gymnasium>=0.29.0",
-    "pydlpack",
-    "array-api-compat",
-    "packaging",
-    "pillow",
-    "transforms3d",
-    "h5py"
+    "xarray",
+    "pillow"
 ]
 
 [project.optional-dependencies]
+dev = [
+    "pytest",
+]
+gymnasium = [
+    "gymnasium>=0.29.0",
+]
 video = [
     "moviepy>=2.1"
-]
-dev = [
-    "pytest"
-]
-torch = [
-    "torch",
-    "tensordict>=0.6"
-]
-jax = [
-    "jax"
-]
-mujoco = [
-    "mujoco>=3.0",
-    "dm_control>=1.0",
-    "mink>=0.0.8",
 ]
 mjx = [
     "playground",
 ]
 maniskill = [
-    "mani_skill>=3.0.0b12",
-    "torch"
+    "mani_skill>=3.0.0b12"
 ]
 
 [tool.setuptools.packages.find]
