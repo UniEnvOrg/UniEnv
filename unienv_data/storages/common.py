@@ -2,8 +2,8 @@ import os
 from unienv_data.base import *
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends.numpy import NumpyComputeBackend
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import numpy as NumpyComputeBackend
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable
 import h5py
 import numpy as np
@@ -144,16 +144,16 @@ class ListStorage(TensorStorage[
                 else:
                     assert index.shape == (len_storage, ), f"Expected boolean mask shape to match length {(len_storage, )}, got {index.shape}"
                 
-                indices = self.backend.array_api_namespace.nonzero(index)[0]
+                indices = self.backend.nonzero(index)[0]
             else:
                 indices = index
             indices[indices < 0] += len_storage
             assert (
-                self.capacity is None and self.backend.array_api_namespace.all(
+                self.capacity is None and self.backend.all(
                     (indices >= 0) & (indices < len_storage)
                 )
             ) or (
-                self.capacity is not None and self.backend.array_api_namespace.all(
+                self.capacity is not None and self.backend.all(
                     (indices >= 0) & (indices < self.capacity)
                 )
             ), "Index out of range"
@@ -161,7 +161,7 @@ class ListStorage(TensorStorage[
         to_stack = [
             self._get_data_at(index_positive) for index_positive in indices
         ]
-        return self.backend.array_api_namespace.stack(
+        return self.backend.stack(
             to_stack, axis=0
         )
 
@@ -204,17 +204,17 @@ class ListStorage(TensorStorage[
                 else:
                     assert index.shape == (len_storage, ), f"Expected boolean mask shape to match length {(len_storage, )}, got {index.shape}"
                 
-                indices = self.backend.array_api_namespace.nonzero(index)[0]
+                indices = self.backend.nonzero(index)[0]
             else:
                 indices = index
             if self.capacity is not None:
                 indices[indices < 0] += self.capacity
-                assert self.backend.array_api_namespace.all(
+                assert self.backend.all(
                     (indices >= 0) & (indices < self.capacity)
                 ), "Index out of range"
             else:
                 indices[indices < 0] += len_storage
-                assert self.backend.array_api_namespace.all(
+                assert self.backend.all(
                     (indices >= 0)
                 ), "Index out of range"
 

@@ -1,7 +1,8 @@
 from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, flatten_utils as sfu, batch_utils as sbu
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.utils.seed_util import next_seed_rng
 import multiprocessing as mp
 import queue
@@ -23,8 +24,8 @@ def worker_loop(
     doze_time : float = 0.005,
 ):
     # if seed is not None:
-    #     sampler.rng = sampler.backend.random_number_generator(seed, device=sampler.device)
-    #     sampler.data_rng = sampler.backend.random_number_generator(seed, device=sampler.data.device)
+    #     sampler.rng = sampler.backend.random.random_number_generator(seed, device=sampler.device)
+    #     sampler.data_rng = sampler.backend.random.random_number_generator(seed, device=sampler.data.device)
 
     try:
         while True:
@@ -233,9 +234,9 @@ def wrap_epoch_iter_function(
         target_fn.sample_manager = sample_manager
 
         if sampler.data_rng is not None:
-            sampler.data_rng, idx = sampler.backend.random_permutation(sampler.data_rng, len(sampler.data), device=sampler.data.device)
+            sampler.data_rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.data_rng, device=sampler.data.device)
         else:
-            sampler.rng, idx = sampler.backend.random_permutation(sampler.rng, len(sampler.data), device=sampler.data.device)
+            sampler.rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.rng, device=sampler.data.device)
         n_batches = len(sampler.data) // sampler.batch_size
         num_left = len(sampler.data) % sampler.batch_size
         

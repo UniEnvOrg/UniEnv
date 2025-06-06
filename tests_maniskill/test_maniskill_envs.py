@@ -1,7 +1,7 @@
 import pytest
 import typing
 from unienv_maniskill import FromManiSkillEnv
-from unienv_interface.space.batch_utils import *
+from unienv_interface.space.space_utils.batch_utils import *
 
 import os.path
 import gymnasium as gym

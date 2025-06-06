@@ -1,7 +1,8 @@
 from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, Dict as DictSpace, flatten_utils as sfu, batch_utils as sbu
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space import Space, DictSpace
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 
 class StepSampler(
     BatchSampler[
@@ -25,12 +26,12 @@ class StepSampler(
             batch_size
         )
         self.sampled_space_flat = sfu.flatten_space(self.sampled_space, start_dim=1)
-        self.data_rng = self.backend.random_number_generator(
+        self.data_rng = self.backend.random.random_number_generator(
             seed,
             device=data.device
         )
         if device is not None:
-            self.sampled_space = self.sampled_space.to_device(device)
+            self.sampled_space = self.sampled_space.to(device=device)
 
     @property
     def sampled_metadata_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:

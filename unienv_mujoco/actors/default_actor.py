@@ -1,8 +1,8 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
 from unienv_interface.world.actor import Actor, FuncActor
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Dict as DictSpace, Box
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import DictSpace, BoxSpace
 import mujoco
 import numpy as np
 from ..base.world import MujocoFuncWorldState, MujocoFuncWorld
@@ -26,7 +26,7 @@ class MujocoDefaultFuncActor(
         # Compute Action Space
         is_limited = world._mjmodel.actuator_ctrllimited.ravel().astype(bool)
         ctrlrange = world._mjmodel.actuator_ctrlrange
-        self.extra_action_space = Box(
+        self.extra_action_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=np.where(is_limited, ctrlrange[:, 0], -mujoco.mjMAXVAL),
             high=np.where(is_limited, ctrlrange[:, 1], mujoco.mjMAXVAL),

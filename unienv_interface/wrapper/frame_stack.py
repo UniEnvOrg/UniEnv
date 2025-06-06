@@ -8,7 +8,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.wrapper import ContextObservationWrapper, ActionWrapper, WrapperContextT, WrapperObsT, WrapperActT
-from unienv_interface.space import Space, Dict
+from unienv_interface.space import Space, DictSpace
 from collections import deque
 
 DataT = TypeVar('DataT')
@@ -17,7 +17,7 @@ class SpaceDataQueue(
 ):
     def __init__(
         self,
-        space : Space[DataT, Any, BDeviceType, BDtypeType, BRNGType],
+        space : Space[DataT, BDeviceType, BDtypeType, BRNGType],
         batch_size : Optional[int],
         maxlen: int,
         default_value: Optional[DataT] = None
@@ -29,7 +29,7 @@ class SpaceDataQueue(
         self.flat_default_value = None # Will be set later
 
         if batch_size is not None:
-            self.count_valid : BArrayType = self.backend.array_api_namespace.zeros(
+            self.count_valid : BArrayType = self.backend.zeros(
                 batch_size,
                 dtype=self.backend.default_integer_dtype,
                 device=self.device
@@ -66,13 +66,13 @@ class SpaceDataQueue(
     def reset(self, mask : Optional[BArrayType] = None) -> None:
         if self.batch_size is not None:
             if mask is not None and self.batch_size > 1:
-                self.count_valid = self.backend.array_api_namespace.where(
+                self.count_valid = self.backend.where(
                     mask,
-                    self.backend.array_api_namespace.zeros_like(self.count_valid),
+                    self.backend.zeros_like(self.count_valid),
                     self.count_valid
                 )
             else:
-                self.count_valid = self.backend.array_api_namespace.zeros(
+                self.count_valid = self.backend.zeros(
                     self.batch_size,
                     dtype=self.backend.default_integer_dtype,
                     device=self.device
@@ -128,18 +128,12 @@ class SpaceDataQueue(
             for batch_idx in range(self.batch_size):
                 valid_t = self.count_valid[batch_idx]
                 if valid_t < self.maxlen:
-                    valid_mask = self.backend.array_api_namespace.arange(
+                    valid_mask = self.backend.arange(
                         self.maxlen,
                         device=self.device
                     ) >= (self.maxlen - valid_t)
-                    stacked_data = self.backend.replace_inplace( # (B, T, D)
-                        stacked_data,
-                        batch_idx,
-                        self.backend.replace_inplace( # (T, D)
-                            stacked_data[batch_idx],
-                            valid_mask,
-                            stacked_data[batch_idx, self.maxlen - valid_t][None]
-                        )
+                    stacked_data = self.backend.at(stacked_data)[batch_idx, valid_mask].set( # (B, T, D)
+                        stacked_data[batch_idx, self.maxlen - valid_t][None]
                     )
             return stacked_data
     
@@ -176,8 +170,8 @@ class FrameStackWrapper(
         assert action_stack_size == 0 or action_default_value is not None, "Action default value must be provided if action stack size is greater than 0"
         assert obs_stack_size > 0 or action_stack_size > 0, "At least one of observation stack size or action stack size must be greater than 0"
         super().__init__(env)
-        obs_is_dict = isinstance(env.observation_space, Dict)
-        assert obs_is_dict or action_stack_size == 0, "Action stack size must be 0 if observation space is not a Dict"
+        obs_is_dict = isinstance(env.observation_space, DictSpace)
+        assert obs_is_dict or action_stack_size == 0, "Action stack size must be 0 if observation space is not a DictSpace"
         
         self.action_stack_size = action_stack_size
         self.obs_stack_size = obs_stack_size
@@ -203,7 +197,7 @@ class FrameStackWrapper(
             if action_stack_size > 0:
                 new_obs_spaces = self.obs_deque.output_space.spaces.copy()
                 new_obs_spaces['past_actions'] = self.action_deque.output_space
-                self.observation_space = Dict(
+                self.observation_space = DictSpace(
                     env.backend,
                     new_obs_spaces,
                     device=env.observation_space.device
@@ -214,7 +208,7 @@ class FrameStackWrapper(
             if action_stack_size > 0:
                 spaces = env.observation_space.spaces.copy()
                 spaces['past_actions'] = self.action_deque.output_space
-                self.observation_space = Dict(
+                self.observation_space = DictSpace(
                     env.backend,
                     spaces,
                     device=env.observation_space.device

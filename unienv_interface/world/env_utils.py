@@ -133,7 +133,7 @@ class WorldBasedFuncEnv(
         return self.task.context_space
     
     @property
-    def action_space(self) -> Space[Any, Any, BDeviceType, BDtypeType, BRNGType]:
+    def action_space(self) -> Space[Any, BDeviceType, BDtypeType, BRNGType]:
         return self.actor.action_space
 
     def get_render_sensor_instance(self) -> Optional[FuncSensor[WorldStateT, RenderSensorStateT, RenderSensorDataT, BDeviceType, BDtypeType, BRNGType]]:

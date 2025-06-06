@@ -58,7 +58,7 @@ def from_gym_data(space : Space, data: Any) -> Any:
 def _to_gym_space_box(
     space: BoxSpace,
 ) -> gym.spaces.Box:
-    return gym.spaces.Box(
+    return gym.spaces.BoxSpace(
         low=space.backend.to_numpy(space.low),
         high=space.backend.to_numpy(space.high),
         shape=space.shape,

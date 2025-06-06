@@ -20,7 +20,7 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             ), f"{space} does not inherit from `gymnasium.Space`. Actual Type: {type(space)}"
             assert space.backend == backend, f"Backend mismatch: {space.backend} != {backend}"
             if device is not None:
-                new_spaces.append(space.to_device(device))
+                new_spaces.append(space.to(device=device))
             else:
                 new_spaces.append(space)
         

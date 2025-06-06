@@ -30,9 +30,9 @@ class FuncEnv(
 
     batch_size : Optional[int] = None
 
-    observation_space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType]
-    action_space: Space[Any, Any, BDeviceType, BDtypeType, BRNGType]
-    context_space: Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]] = None
+    observation_space: Space[Any, BDeviceType, BDtypeType, BRNGType]
+    action_space: Space[Any, BDeviceType, BDtypeType, BRNGType]
+    context_space: Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
 
     @abc.abstractmethod
     def initial(self, rng : BRNGType) -> Tuple[
@@ -208,15 +208,15 @@ class FuncEnvBasedEnv(Env[
         return self.func_env.batch_size
 
     @property
-    def action_space(self) -> Space[ActType, Any, BDeviceType, BDtypeType, BRNGType]:
+    def action_space(self) -> Space[ActType, BDeviceType, BDtypeType, BRNGType]:
         return self.func_env.action_space
 
     @property
-    def observation_space(self) -> Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]:
+    def observation_space(self) -> Space[ObsType, BDeviceType, BDtypeType, BRNGType]:
         return self.func_env.observation_space
 
     @property
-    def context_space(self) -> Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]]:
+    def context_space(self) -> Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]]:
         return self.func_env.context_space
     
     def step(

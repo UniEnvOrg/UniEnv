@@ -1,7 +1,7 @@
 from mujoco_playground import registry, MjxEnv
 from unienv_mjxplayground import FromMJXPlaygroundEnv
 from unienv_interface.env_base import FuncEnvBasedEnv, Env
-from unienv_interface.backends.jax import JaxComputeBackend
+from xbarray import jax as JaxComputeBackend
 import jax
 
 def construct_env_from_name(
@@ -19,7 +19,7 @@ def construct_env_from_name(
     )
     env = FuncEnvBasedEnv(
         funcenv,
-        rng=JaxComputeBackend.random_number_generator(seed)
+        rng=JaxComputeBackend.random.random_number_generator(seed)
     )
     return env
 
@@ -44,6 +44,6 @@ def perform_env_test(
             assert action in env.action_space
             obs, reward, terminated, truncated, info = env.step(action)
             assert obs in env.observation_space
-            done = env.backend.array_api_namespace.logical_or(terminated, truncated)
-            if env.backend.array_api_namespace.any(done):
+            done = env.backend.logical_or(terminated, truncated)
+            if env.backend.any(done):
                 break

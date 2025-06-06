@@ -2,8 +2,8 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 from abc import ABC, abstractmethod
 
 from unienv_interface.world.sensor import FuncSensor
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Space, Box
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import Space, BoxSpace
 import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass, replace as dataclass_replace
@@ -25,7 +25,7 @@ class MujocoFuncGenericSensor(
 
         self._sensor_name = sensor_name
         ndim = world._mjmodel.sensor(sensor_name).dim[0]
-        self.observation_space = Box(
+        self.observation_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=-np.inf,
             high=np.inf,

@@ -24,7 +24,7 @@ class TimeLimitWrapper(
         if self.env.batch_size is None:
             self._episode_time = 0
         else:
-            self._episode_time = self.backend.array_api_namespace.zeros(
+            self._episode_time = self.backend.zeros(
                 self.env.batch_size, 
                 dtype=self.backend.default_integer_dtype
             )
@@ -50,12 +50,7 @@ class TimeLimitWrapper(
                 truncation = True
         else:
             exceeds_time_mask = self._episode_time >= self.time_limit
-            truncation = self.backend.array_api_namespace.logical_or(truncation, exceeds_time_mask)
-            # truncation = self.backend.replace_inplace(
-            #     truncation,
-            #     termination,
-            #     False
-            # )
+            truncation = self.backend.logical_or(truncation, exceeds_time_mask)
         return obs, rew, termination, truncation, info
 
     def reset(
@@ -68,18 +63,14 @@ class TimeLimitWrapper(
         ret = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
         if self.env.batch_size is not None:
             if mask is None:
-                self._episode_time = self.backend.array_api_namespace.zeros(
+                self._episode_time = self.backend.zeros(
                     self.env.batch_size, 
                     dtype=self.backend.default_integer_dtype
                 )
                 if self.device is not None:
                     self._episode_time = self.backend.to_device(self._episode_time, self.device)
             else:
-                self._episode_time = self.backend.replace_inplace(
-                    self._episode_time,
-                    mask,
-                    0
-                )
+                self._episode_time = self.backend.at(self._episode_time)[mask].set(0)
         else:
             self._episode_time = 0
         return ret

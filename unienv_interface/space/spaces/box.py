@@ -46,29 +46,44 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         )
 
         # Cast low and high to backend arrays
-        if isinstance(low, (int, float)):
+        if backend.dtype_is_real_integer(dtype):
             dttype_iinfo = backend.iinfo(dtype)
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
-            if low == backend.inf or low == -backend.inf:
-                _low = dtype_min if low == -backend.inf else dtype_max
+            if isinstance(low, int):
+                if low == backend.inf or low == -backend.inf:
+                    _low = dtype_min if low == -backend.inf else dtype_max
+                else:
+                    _low = low
+                _low = backend.full([1] * len(shape), _low, dtype=dtype, device=device)
             else:
-                _low = low
-            _low = backend.full([1] * len(shape), _low, dtype=dtype, device=device)
-            if high == backend.inf or high == -backend.inf:
-                _high = dtype_max if high == backend.inf else dtype_min
+                _low = backend.astype(low, dtype)
+            if isinstance(high, int):
+                if high == backend.inf or high == -backend.inf:
+                    _high = dtype_max if high == backend.inf else dtype_min
+                else:
+                    _high = high
+                _high = backend.full([1] * len(shape), _high, dtype=dtype, device=device)
             else:
-                _high = high
-            _high = backend.full([1] * len(shape), _high, dtype=dtype, device=device)
+                _high = backend.astype(high, dtype)
         else:
-            _low = backend.abbreviate_array(
-                backend.astype(low, self.dtype),
-                try_cast_scalar=False
-            )
-            _high = backend.abbreviate_array(
-                backend.astype(high, self.dtype),
-                try_cast_scalar=False
-            )
+            if isinstance(low, (int, float)):
+                _low = backend.full([1] * len(shape), low, dtype=dtype, device=device)
+            else:
+                _low = backend.astype(low, dtype)
+            if isinstance(high, (int, float)):
+                _high = backend.full([1] * len(shape), high, dtype=dtype, device=device)
+            else:
+                _high = backend.astype(high, dtype)
+        
+        _low = backend.abbreviate_array(
+            _low,
+            try_cast_scalar=False
+        )
+        _high = backend.abbreviate_array(
+            _high,
+            try_cast_scalar=False
+        )
         
         assert backend.all(_low <= _high), f"low is greater than high: low={_low}, high={_high}"
 
@@ -101,15 +116,15 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
     @property
     def low(self) -> BArrayType:
-        return self.backend.array_api_namespace.broadcast_to(self._low, self.shape)
+        return self.backend.broadcast_to(self._low, self.shape)
     
     @property
     def high(self) -> BArrayType:
-        return self.backend.array_api_namespace.broadcast_to(self._high, self.shape)
+        return self.backend.broadcast_to(self._high, self.shape)
 
     def to(
         self, 
-        backend : Optional[ComputeBackend],
+        backend : Optional[ComputeBackend] = None,
         device : Optional[Union[BDeviceType, Any]] = None,
     ) -> Union["BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]", "BoxSpace"]:
         if (backend is None or backend==self.backend) and (device is None or device==self.device):
@@ -216,7 +231,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         else:
             high=self.high + 1
             rng, sample = self.backend.random.random_uniform(
-                rng, shape=self.shape, lower_bound=0.0, upper_bound=1.0, device=self.device
+                self.shape, rng=rng, low=0.0, high=1.0, device=self.device
             )
             sample *= (high - low)
             sample = self.backend.floor(sample)

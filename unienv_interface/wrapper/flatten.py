@@ -25,8 +25,8 @@ class FlattenActionWrapper(
             assert space_flatten_utils.is_flattenable(env.action_space)
             self.action_space = space_flatten_utils.flatten_space(env.action_space)
         else:
-            assert space_flatten_utils.is_batch_flattenable(env.action_space)
-            self.action_space = space_flatten_utils.batch_flatten_space(env.action_space)
+            assert space_flatten_utils.is_flattenable(env.action_space, start_dim=1)
+            self.action_space = space_flatten_utils.flatten_space(env.action_space, start_dim=1)
 
     def map_action(self, action: Any) -> ActType:
         if self.env.batch_size is None:
@@ -35,9 +35,10 @@ class FlattenActionWrapper(
                 action
             )
         else:
-            return space_flatten_utils.batch_unflatten_data(
+            return space_flatten_utils.unflatten_data(
                 self.env.action_space,
-                action
+                action,
+                start_dim=1
             )
     
     def reverse_map_action(self, action: ActType) -> BArrayType:
@@ -47,9 +48,10 @@ class FlattenActionWrapper(
                 action
             )
         else:
-            return space_flatten_utils.batch_flatten_data(
+            return space_flatten_utils.flatten_data(
                 self.env.action_space,
-                action
+                action,
+                start_dim=1
             )
     
 class FlattenContextObservationWrapper(
@@ -70,15 +72,15 @@ class FlattenContextObservationWrapper(
                 assert space_flatten_utils.is_flattenable(env.context_space)
                 self.context_space = space_flatten_utils.flatten_space(env.context_space)
             else:
-                assert space_flatten_utils.is_batch_flattenable(env.context_space)
-                self.context_space = space_flatten_utils.batch_flatten_space(env.context_space)
+                assert space_flatten_utils.is_flattenable(env.context_space, start_dim=1)
+                self.context_space = space_flatten_utils.flatten_space(env.context_space, start_dim=1)
         if flatten_observation:
             if env.batch_size is None:
                 assert space_flatten_utils.is_flattenable(env.observation_space)
                 self.observation_space = space_flatten_utils.flatten_space(env.observation_space)
             else:
-                assert space_flatten_utils.is_batch_flattenable(env.observation_space)
-                self.observation_space = space_flatten_utils.batch_flatten_space(env.observation_space)
+                assert space_flatten_utils.is_flattenable(env.observation_space, start_dim=1)
+                self.observation_space = space_flatten_utils.flatten_space(env.observation_space, start_dim=1)
         self.flatten_context = flatten_context
         self.flatten_observation = flatten_observation
 
@@ -90,9 +92,10 @@ class FlattenContextObservationWrapper(
                     context
                 )
             else:
-                return space_flatten_utils.batch_unflatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.context_space,
-                    context
+                    context,
+                    start_dim=1
                 )
         return context
     
@@ -104,9 +107,10 @@ class FlattenContextObservationWrapper(
                     context
                 )
             else:
-                return space_flatten_utils.batch_flatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.context_space,
-                    context
+                    context,
+                    start_dim=1
                 )
         return context
 
@@ -118,9 +122,10 @@ class FlattenContextObservationWrapper(
                     observation
                 )
             else:
-                return space_flatten_utils.batch_unflatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.observation_space,
-                    observation
+                    observation,
+                    start_dim=1
                 )
         return observation
     
@@ -132,8 +137,9 @@ class FlattenContextObservationWrapper(
                     observation
                 )
             else:
-                return space_flatten_utils.batch_flatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.observation_space,
-                    observation
+                    observation,
+                    start_dim=1
                 )
         return observation

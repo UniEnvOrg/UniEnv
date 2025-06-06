@@ -4,11 +4,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from unienv_interface.env_base import FuncEnv
-from unienv_interface.space import batch_utils as sbu, Space, Box, Dict as DictSpace
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.backends.jax import JaxComputeBackend
+from unienv_interface.space import Space, BoxSpace, DictSpace
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import numpy as NumpyComputeBackend
+from xbarray import jax as JaxComputeBackend
+from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.wrapper import backend_compat
+
 import mujoco.mjx as mjx
 from mujoco_playground import MjxEnv, State as MjxState
 from mujoco_playground._src.wrapper import Wrapper, MadronaWrapper, BraxDomainRandomizationVmapWrapper
@@ -50,7 +52,7 @@ def space_from_size(
     size : AxisMapSingleT,
     device : Optional[JaxComputeBackend.DEVICE_TYPE] = None,
 ) -> Union[
-    Box[JaxComputeBackend.ARRAY_TYPE, JaxComputeBackend.DEVICE_TYPE, JaxComputeBackend.DTYPE_TYPE, JaxComputeBackend.RNG_TYPE],
+    BoxSpace[JaxComputeBackend.ARRAY_TYPE, JaxComputeBackend.DEVICE_TYPE, JaxComputeBackend.DTYPE_TYPE, JaxComputeBackend.RNG_TYPE],
     DictSpace[JaxComputeBackend.DEVICE_TYPE, JaxComputeBackend.DTYPE_TYPE, JaxComputeBackend.RNG_TYPE]
 ]:
     if isinstance(size, Mapping):
@@ -63,7 +65,7 @@ def space_from_size(
             device=device
         )
     else:
-        return Box(
+        return BoxSpace(
             JaxComputeBackend,
             -jnp.inf,
             jnp.inf,

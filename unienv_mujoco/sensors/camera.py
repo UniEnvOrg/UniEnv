@@ -2,8 +2,8 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 from abc import ABC, abstractmethod
 
 from unienv_interface.world.sensors.camera import FuncCameraSensor
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Dict as DictSpace, Box
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import DictSpace, BoxSpace
 import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass
@@ -60,7 +60,7 @@ class MujocoFuncCameraSensor(
             observation_dtype = np.uint8
             observation_min = 0
             observation_max = 255
-        self.observation_space = Box(
+        self.observation_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=observation_min,
             high=observation_max,

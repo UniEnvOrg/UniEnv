@@ -3,14 +3,14 @@ from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGTyp
 import PIL.Image
 
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
-from unienv_interface.space import Space, Box
+from unienv_interface.space import Space, BoxSpace
 from unienv_interface.env_base.funcenv import StateType
 
 class CameraSensor(
     Sensor[SensorDataT, BDeviceType, BDtypeType, BRNGType],
     Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]
 ):
-    observation_space : Box[SensorDataT, BDeviceType, BDtypeType, BRNGType]
+    observation_space : BoxSpace[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     
     """Mode of the camera (rgb_array, depth_array, segmentation_array) """
     camera_mode : str
@@ -34,7 +34,7 @@ class FuncCameraSensor(
     FuncSensor[StateType, SensorStateT, SensorDataT, BDeviceType, BDtypeType, BRNGType],
     Generic[StateType, SensorStateT, SensorDataT, BDeviceType, BDtypeType, BRNGType]
 ):
-    observation_space : Box[SensorDataT, BDeviceType, BDtypeType, BRNGType]
+    observation_space : BoxSpace[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     
     """Mode of the camera (rgb_array, depth_array, segmentation_array) """
     camera_mode : str

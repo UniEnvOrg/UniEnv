@@ -1,7 +1,7 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
 from abc import ABC, abstractmethod
 from unienv_interface.world.world import FuncWorld
-from unienv_interface.backends.numpy import NumpyComputeBackend
+from xbarray import numpy as NumpyComputeBackend
 from unienv_interface.utils import seed_util
 import mujoco
 import os.path

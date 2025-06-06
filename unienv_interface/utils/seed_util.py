@@ -12,11 +12,9 @@ def next_seed_rng(rng : BRNGType, backend : ComputeBackend) -> Tuple[
     iinfo = backend.iinfo(backend.default_integer_dtype)
     rng, sample = backend.random.random_discrete_uniform(
         (1,),
+        iinfo.min,
+        iinfo.max,
         rng=rng,
-        from_num=iinfo.min,
-        to_num=iinfo.max,
-        from_num=0,
-        to_num=iinfo.max,
         dtype=backend.default_integer_dtype,
         device=None if not hasattr(rng, 'device') else rng.device
     )

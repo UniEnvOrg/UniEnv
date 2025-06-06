@@ -2,10 +2,12 @@ from typing import List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar, It
 from types import EllipsisType
 import os
 import abc
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
-from unienv_interface.space import Space, Box, Dict as DictSpace, batch_utils as space_batch_utils, Dict as DictSpace, flatten_utils as space_flatten_utils
+from unienv_interface.space import Space, BoxSpace, DictSpace
 import dataclasses
+
+from unienv_interface.space.space_utils import batch_utils as space_batch_utils, flatten_utils as space_flatten_utils
 
 IndexableType = Union[int, slice, EllipsisType]
 
@@ -19,7 +21,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
 
     def __init__(
         self,
-        single_space : Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
+        single_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
         single_metadata_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None,
     ):
         self.single_space = single_space
@@ -58,7 +60,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         if isinstance(idx, int):
             return space_flatten_utils.unflatten_data(self.single_space, flattened_data)
         else:
-            return space_flatten_utils.batch_unflatten_data(self._batched_space, flattened_data)
+            return space_flatten_utils.unflatten_data(self._batched_space, flattened_data, start_dim=1)
     
     def get_at_with_metadata(
         self, idx : Union[IndexableType, BArrayType]
@@ -67,7 +69,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         if isinstance(idx, int):
             return space_flatten_utils.unflatten_data(self.single_space, flattened_data), metadata
         else:
-            return space_flatten_utils.batch_unflatten_data(self._batched_space, flattened_data), metadata
+            return space_flatten_utils.unflatten_data(self._batched_space, flattened_data, start_dim=1), metadata
 
     def __getitem__(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
         return self.get_at(idx)
@@ -76,7 +78,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         if isinstance(idx, int):
             flattened_data = space_flatten_utils.flatten_data(self.single_space, value)
         else:
-            flattened_data = space_flatten_utils.batch_flatten_data(self._batched_space, value)
+            flattened_data = space_flatten_utils.flatten_data(self._batched_space, value, start_dim=1)
         self.set_flattened_at(idx, flattened_data)
     
     def __setitem__(self, idx : Union[IndexableType, BArrayType], value : BatchT) -> None:
@@ -89,7 +91,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         self.remove_at(idx)
 
     def extend(self, value : BatchT) -> None:
-        flattened_data = space_flatten_utils.batch_flatten_data(self._batched_space, value)
+        flattened_data = space_flatten_utils.flatten_data(self._batched_space, value, start_dim=1)
         self.extend_flattened(flattened_data)
 
     def close(self) -> None:
@@ -108,8 +110,8 @@ class BatchSampler(abc.ABC, Generic[
     BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType,
 ]):
     batch_size : int
-    sampled_space : Space[SamplerBatchT, Any, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
-    sampled_space_flat : Box[SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
+    sampled_space : Space[SamplerBatchT, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
+    sampled_space_flat : BoxSpace[SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
     sampled_metadata_space : Optional[DictSpace[SamplerDeviceType, SamplerDtypeType, SamplerRNGType]] = None
 
     backend : ComputeBackend[SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]
@@ -139,11 +141,11 @@ class BatchSampler(abc.ABC, Generic[
         return space_flatten_utils.unflatten_data(self.sampled_space, flat_data, start_dim=1), metadata
 
     def sample_index(self) -> SamplerArrayType:
-        new_rng, indices = self.backend.random_discrete_uniform( # (B, )
-            self.data_rng if self.data_rng is not None else self.rng,
+        new_rng, indices = self.backend.random.random_discrete_uniform( # (B, )
             (self.batch_size,),
             0,
             len(self.data),
+            rng=self.data_rng if self.data_rng is not None else self.rng,
             device=self.data.device,
         )
         if self.data_rng is not None:
@@ -173,9 +175,9 @@ class BatchSampler(abc.ABC, Generic[
     
     def epoch_iter(self) -> Iterator[SamplerBatchT]:
         if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+            self.data_rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.data_rng, device=self.data.device)
         else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+            self.rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.rng, device=self.data.device)
         n_batches = len(self.data) // self.batch_size
         num_left = len(self.data) % self.batch_size
         for i in range(n_batches):
@@ -185,9 +187,9 @@ class BatchSampler(abc.ABC, Generic[
     
     def epoch_iter_with_metadata(self) -> Iterator[Tuple[SamplerBatchT, Optional[Dict[str, Any]]]]:
         if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+            self.data_rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.data_rng, device=self.data.device)
         else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+            self.rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.rng, device=self.data.device)
         n_batches = len(self.data) // self.batch_size
         num_left = len(self.data) % self.batch_size
         for i in range(n_batches):
@@ -197,9 +199,9 @@ class BatchSampler(abc.ABC, Generic[
 
     def epoch_flat_iter(self) -> Iterator[SamplerArrayType]:
         if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+            self.data_rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.data_rng, device=self.data.device)
         else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+            self.rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.rng, device=self.data.device)
         n_batches = len(self.data) // self.batch_size
         num_left = len(self.data) % self.batch_size
         for i in range(n_batches):
@@ -209,9 +211,9 @@ class BatchSampler(abc.ABC, Generic[
     
     def epoch_flat_iter_with_metadata(self) -> Iterator[Tuple[SamplerArrayType, Optional[Dict[str, Any]]]]:
         if self.data_rng is not None:
-            self.data_rng, idx = self.backend.random_permutation(self.data_rng, len(self.data), device=self.data.device)
+            self.data_rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.data_rng, device=self.data.device)
         else:
-            self.rng, idx = self.backend.random_permutation(self.rng, len(self.data), device=self.data.device)
+            self.rng, idx = self.backend.random.random_permutation(len(self.data), rng=self.rng, device=self.data.device)
         n_batches = len(self.data) // self.batch_size
         num_left = len(self.data) % self.batch_size
         for i in range(n_batches):

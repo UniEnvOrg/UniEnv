@@ -12,7 +12,7 @@ class LambdaSensor(
 ):
     def __init__(
         self,
-        observation_space : Space[SensorDataT, Any, BDeviceType, BDtypeType, BRNGType],
+        observation_space : Space[SensorDataT, BDeviceType, BDtypeType, BRNGType],
         control_timestep : float,
         data_fn : Callable[[], SensorDataT],
     ):
@@ -38,7 +38,7 @@ class FuncLambdaSensor(
 ):
     def __init__(
         self,
-        observation_space : Space[SensorDataT, Any, BDeviceType, BDtypeType, BRNGType],
+        observation_space : Space[SensorDataT, BDeviceType, BDtypeType, BRNGType],
         control_timestep : float,
         data_fn : Callable[[StateType], SensorDataT],
     ):

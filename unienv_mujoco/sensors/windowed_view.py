@@ -4,8 +4,8 @@ from abc import ABC, abstractmethod
 import mujoco.viewer
 
 from unienv_interface.world.sensors.windowed_view import FuncWindowedViewSensor
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Tuple as TupleSpace, Box
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import TupleSpace, BoxSpace
 from unienv_interface.utils import seed_util
 import mujoco
 from dm_control import mjcf

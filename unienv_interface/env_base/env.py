@@ -27,9 +27,9 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
 
     batch_size : Optional[int] = None
 
-    action_space: Space[ActType, Any, BDeviceType, BDtypeType, BRNGType]
-    observation_space: Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]
-    context_space: Optional[Space[ContextType, Any, BDeviceType, BDtypeType, BRNGType]] = None
+    action_space: Space[ActType, BDeviceType, BDtypeType, BRNGType]
+    observation_space: Space[ObsType, BDeviceType, BDtypeType, BRNGType]
+    context_space: Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
 
     rng : BRNGType = None
 
@@ -96,7 +96,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         mask: BArrayType
     ) -> ObsType:
         assert self.batch_size is not None, "This method is used by batched environment after reset"
-        return space_batch_utils.write_batched_data_with_mask(
+        return space_batch_utils.set_at(
             self.observation_space,
             old_obs,
             mask,
@@ -112,7 +112,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         assert self.batch_size is not None, "This method is used by batched environment after reset"
         if self.context_space is None:
             return None
-        return space_batch_utils.write_batched_data_with_mask(
+        return space_batch_utils.set_at(
             self.context_space,
             old_context,
             mask,

@@ -2,9 +2,10 @@ import abc
 import os
 import dataclasses
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
-from unienv_interface.space import Space, Box, flatten_utils as sfu, batch_utils as sbu
-from unienv_interface.backends.base import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.env_base.env import ContextType, ObsType, ActType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
+from unienv_interface.space import Space
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.utils.symbol_util import get_class_from_full_name, get_full_class_name
 from .common import BatchBase, BatchT, IndexableType
 import json
@@ -60,7 +61,7 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
     
     @property
     def default_value(self) -> BArrayType:
-        return self._default_value or self.backend.array_api_namespace.zeros(
+        return self._default_value or self.backend.zeros(
             self.single_instance_shape,
             dtype=self.dtype,
             device=self.device
@@ -68,7 +69,7 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     @default_value.setter
     def default_value(self, value : Optional[BArrayType]):
-        if self.backend.array_api_namespace.all(value == 0):
+        if self.backend.all(value == 0):
             self._default_value = None
         else:
             self._default_value = value
@@ -115,7 +116,7 @@ def index_with_offset(
         assert offset == 0, "Offset must be 0 for unbounded storage"
         capacity = len_transitions
     if index is Ellipsis or index is None:
-        nonzero_index = backend.array_api_namespace.arange(len_transitions)
+        nonzero_index = backend.arange(len_transitions)
         data_index = (nonzero_index + offset) % capacity
         return data_index
     elif isinstance(index, int):
@@ -124,7 +125,7 @@ def index_with_offset(
         data_index = (nonzero_index + offset) % capacity
         return data_index
     elif isinstance(index, slice):
-        nonzero_index = backend.array_api_namespace.asarray(range(*index.indices(len_transitions)))
+        nonzero_index = backend.asarray(range(*index.indices(len_transitions)))
         data_index = (nonzero_index + offset) % capacity
         return data_index
     else:
@@ -133,14 +134,14 @@ def index_with_offset(
             index.dtype
         ):
             # Boolean mask, rotate the mask by offset
-            rotated_mask = backend.array_api_namespace.roll(
+            rotated_mask = backend.roll(
                 index,
                 shift=offset,
                 axis=0
             )
             return rotated_mask
         else:
-            assert backend.array_api_namespace.min(index) >= -len_transitions and backend.array_api_namespace.max(index) < len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
+            assert backend.min(index) >= -len_transitions and backend.max(index) < len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
             assert backend.dtype_is_real_integer(index.dtype), f"Index dtype {index.dtype} is not an integer"
             nonzero_index = (index + len_transitions) % len_transitions
             data_index = (nonzero_index + offset) % capacity
@@ -152,7 +153,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def __init__(
         self,
         storage : TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType],
-        single_space : Space[BatchT, Any, BDeviceType, BDtypeType, BRNGType],
+        single_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         count : int = 0,
         offset : int = 0
     ):
@@ -160,11 +161,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.count = count
         self.offset = offset
         assert storage.single_instance_shape == sfu.flatten_space(single_space).shape, "Storage shape must match single instance shape"
-        super().__init__(single_space.to_device(storage.device))
+        super().__init__(single_space.to(device=storage.device))
 
     @staticmethod
     def create(
-        single_space : Space[BatchT, Any, BDeviceType, BDtypeType, BRNGType],
+        single_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         storage_cls : Type[TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]],
         *storage_args,
         capacity : Optional[int],

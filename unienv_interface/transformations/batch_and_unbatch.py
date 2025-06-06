@@ -11,7 +11,7 @@ class BatchifyTransformation(DataTransformation[
     has_inverse = True
     def __init__(
         self,
-        source_space : Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
+        source_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
     ):  
         self.source_space = source_space
         self.target_space = sbu.batch_space(source_space, 1)
@@ -31,7 +31,7 @@ class BatchifyTransformation(DataTransformation[
         return source_data
 
 def UnBatchifyTransformation(
-    source_space : Space[Any, Any, BDeviceType, BDtypeType, BRNGType],
+    source_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
 ) -> DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType,
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType

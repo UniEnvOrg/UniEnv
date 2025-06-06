@@ -1,8 +1,10 @@
 from typing import Optional, Any, Union
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from .common import *
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations.transformation import DataTransformation, TargetDataT, SourceDataT, SourceBArrT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT
-from unienv_interface.space import Space, flatten_utils as sfu, batch_utils as sbu
+from unienv_interface.space import Space
 
 class TransformedBatch(
     BatchBase[

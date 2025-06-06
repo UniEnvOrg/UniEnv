@@ -9,7 +9,7 @@ from unienv_interface.space.spaces import *
 __all__ = [
     "is_flattenable",
     "flat_dim",
-    "flatten_space"
+    "flatten_space",
     "flatten_data",
     "unflatten_data",
 ]

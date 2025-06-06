@@ -2,8 +2,8 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 from abc import ABC, abstractmethod
 
 from unienv_interface.world.sensors.lambda_sensor import FuncLambdaSensor
-from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.space import Dict as DictSpace, Box
+from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.space import DictSpace, BoxSpace
 import mujoco
 from dm_control import mjcf
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ class MujocoFuncJointPosSensor(
         for i, joint_name in enumerate(joint_names):
             joint = world._mjmodel.joint(joint_name)
             observation_limits[i] = joint.range
-        observation_space = Box(
+        observation_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=observation_limits[:, 0],
             high=observation_limits[:, 1],
@@ -56,7 +56,7 @@ class MujocoFuncJointVelSensor(
         assert len(joint_names) > 0
         self.joint_names = joint_names
 
-        observation_space = Box(
+        observation_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=-np.inf,
             high=np.inf,
@@ -87,7 +87,7 @@ class MujocoFuncJointAccSensor(
         assert len(joint_names) > 0
         self.joint_names = joint_names
 
-        observation_space = Box(
+        observation_space = BoxSpace(
             backend=NumpyComputeBackend,
             low=-np.inf,
             high=np.inf,

@@ -7,7 +7,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.env_base.wrapper import *
-from unienv_interface.space import Space, Dict
+from unienv_interface.space import Space
 from unienv_interface.transformations.transformation import DataTransformation
 from collections import deque
 

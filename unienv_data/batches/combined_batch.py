@@ -2,11 +2,13 @@ from typing import Sequence, List, Tuple, Union, Dict, Any, Optional, Generic, T
 from types import EllipsisType
 import os
 import abc
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
-from unienv_interface.space import Space, batch_utils as sbu, Dict as DictSpace, Box, flatten_utils as sfu
+from unienv_interface.space import Space, DictSpace, BoxSpace
 import dataclasses
 import copy
+
+from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 
 from ..base.common import BatchBase, IndexableType, BatchT
 
@@ -46,7 +48,7 @@ class CombinedBatch(BatchBase[
             self.original_single_metadata_space = None
             self.original_single_metadata_space_flat = None
             self.original_batched_metadata_space = None
-        new_metadata_space['batch_index'] = Box(
+        new_metadata_space['batch_index'] = BoxSpace(
             backend,
             low=0,
             high=len(batches),
@@ -71,7 +73,7 @@ class CombinedBatch(BatchBase[
         """
         Build a cache of start and end indices for each batch
         """
-        index_caches = self.backend.array_api_namespace.zeros(
+        index_caches = self.backend.zeros(
             (len(self.batches), 3), 
             dtype=self.backend.default_integer_dtype,
             device=self.device
@@ -80,10 +82,8 @@ class CombinedBatch(BatchBase[
         for i, batch in enumerate(self.batches):
             batch_size = len(batch)
             end_idx = start_idx + batch_size
-            index_caches = self.backend.replace_inplace(
-                index_caches,
-                i,
-                self.backend.array_api_namespace.asarray([start_idx, end_idx, batch_size], dtype=self.backend.default_integer_dtype, device=self.device)
+            index_caches = self.backend.at(index_caches)[i].set(
+                self.backend.asarray([start_idx, end_idx, batch_size], dtype=self.backend.default_integer_dtype, device=self.device)
             )
             start_idx = end_idx
         self.index_caches = index_caches
@@ -97,7 +97,7 @@ class CombinedBatch(BatchBase[
          - the batch index
          - the index within the batch
         """
-        batch_index = int(self.backend.array_api_namespace.sum(
+        batch_index = int(self.backend.sum(
             idx >= self.index_caches[:, 0]
         ))
         return batch_index, idx - self.index_caches[batch_index, 0]
@@ -117,13 +117,13 @@ class CombinedBatch(BatchBase[
              - The bool mask to index into the resulting array
         """
         if isinstance(idx, slice):
-            idx_array = self.backend.array_api_namespace.arange(
+            idx_array = self.backend.arange(
                 *idx.indices(len(self)),
                 dtype=self.backend.default_integer_dtype,
                 device=self.device
             )
         elif idx is Ellipsis:
-            idx_array = self.backend.array_api_namespace.arange(
+            idx_array = self.backend.arange(
                 len(self),
                 dtype=self.backend.default_integer_dtype,
                 device=self.device
@@ -136,13 +136,13 @@ class CombinedBatch(BatchBase[
         
         idx_array_positive = idx_array % len(self)
         idx_array_bigger = idx_array_positive[:, None] >= self.index_caches[None, :, 0] # (idx_array_shape, len(self.batches))
-        idx_array_batch_idx = self.backend.array_api_namespace.sum(
+        idx_array_batch_idx = self.backend.sum(
             idx_array_bigger,
             axis=-1
         ) - 1 # (idx_array_shape, )
         
         result_batch_list = []
-        batch_indexes = self.backend.array_api_namespace.unique_values(idx_array_batch_idx)
+        batch_indexes = self.backend.unique_values(idx_array_batch_idx)
         for i in range(batch_indexes.shape[0]):
             batch_index = int(batch_indexes[i])
             result_mask = idx_array_batch_idx == batch_index
@@ -162,7 +162,7 @@ class CombinedBatch(BatchBase[
             for batch_index, index_into_batch, mask in batch_list:
                 batch_result = self.batches[batch_index].get_flattened_at(index_into_batch)
                 if result is None:
-                    result = self.backend.array_api_namespace.zeros(
+                    result = self.backend.zeros(
                         (batch_size, *batch_result.shape[1:]),
                         dtype=batch_result.dtype,
                         device=self.device
@@ -176,7 +176,7 @@ class CombinedBatch(BatchBase[
             dat, metadata = self.batches[batch_idx].get_flattened_at_with_metadata(index_into_batch)
             if metadata is None:
                 metadata = {}
-            metadata['batch_index'] = self.backend.array_api_namespace.full(
+            metadata['batch_index'] = self.backend.full(
                 (),
                 batch_idx,
                 dtype=self.backend.default_integer_dtype,
@@ -189,12 +189,12 @@ class CombinedBatch(BatchBase[
             result = None
             metadata_arr = None
             if self.original_single_metadata_space_flat is not None:
-                metadata_arr = self.backend.array_api_namespace.zeros(
+                metadata_arr = self.backend.zeros(
                     (batch_size, *self.original_single_metadata_space_flat.shape),
                     dtype=self.original_single_metadata_space_flat.dtype,
                     device=self.device
                 )
-            batch_index_arr = self.backend.array_api_namespace.zeros(
+            batch_index_arr = self.backend.zeros(
                 (batch_size,),
                 dtype=self.backend.default_integer_dtype,
                 device=self.device
@@ -203,7 +203,7 @@ class CombinedBatch(BatchBase[
             for batch_index, index_into_batch, mask in batch_list:
                 batch_result, metadata = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
                 if result is None:
-                    result = self.backend.array_api_namespace.zeros(
+                    result = self.backend.zeros(
                         (batch_size, *batch_result.shape[1:]),
                         dtype=batch_result.dtype,
                         device=self.device

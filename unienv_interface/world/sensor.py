@@ -9,7 +9,7 @@ from .world import FuncWorld
 
 SensorDataT = TypeVar("SensorDataT", covariant=True)
 class Sensor(ABC, Generic[SensorDataT, BDeviceType, BDtypeType, BRNGType]):
-    observation_space : Space[SensorDataT, Any, BDeviceType, BDtypeType, BRNGType]
+    observation_space : Space[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     control_timestep : float
     
     @property
@@ -70,7 +70,7 @@ class FuncSensor(
     ABC,
     Generic[StateType, SensorStateT, SensorDataT, BDeviceType, BDtypeType, BRNGType]
 ):
-    observation_space : Space[SensorDataT, Any, BDeviceType, BDtypeType, BRNGType]
+    observation_space : Space[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     control_timestep : float
 
     @property
@@ -187,14 +187,14 @@ class SensorWrapper(
         sensor : Sensor[SensorDataT, BDeviceType, BDtypeType, BRNGType]
     ):
         self.sensor = sensor
-        self._observation_space : Optional[Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]] = None
+        self._observation_space : Optional[Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]] = None
     
     @property
-    def observation_space(self) -> Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]:
+    def observation_space(self) -> Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]:
         return self._observation_space or self.sensor.observation_space
     
     @observation_space.setter
-    def observation_space(self, value : Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]) -> None:
+    def observation_space(self, value : Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]) -> None:
         self._observation_space = value
 
     @property
@@ -270,14 +270,14 @@ class FuncSensorWrapper(
         sensor : FuncSensor[StateType, SensorStateT, SensorDataT, BDeviceType, BDtypeType, BRNGType]
     ):
         self.sensor = sensor
-        self._observation_space : Optional[Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]] = None
+        self._observation_space : Optional[Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]] = None
     
     @property
-    def observation_space(self) -> Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]:
+    def observation_space(self) -> Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]:
         return self._observation_space or self.sensor.observation_space
     
     @observation_space.setter
-    def observation_space(self, value : Space[WrapperDataT, Any, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]) -> None:
+    def observation_space(self, value : Space[WrapperDataT, WrapperDeviceT, WrapperDtypeT, WrapperRNGT]) -> None:
         self._observation_space = value
 
     @property

@@ -4,12 +4,13 @@ from unienv_data.storages.common import ListStorage
 from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *
 from unienv_interface.space import *
-from unienv_interface.space import flatten_utils as sfu, batch_utils as sbu
-from unienv_interface.backends.pytorch import PyTorchComputeBackend
+from unienv_interface.space.space_utils import flatten_utils as sfu
+from xbarray import pytorch as PyTorchComputeBackend
 import torch
 import numpy as np
 import pytest
 from test_replay_buffer import perform_torch_replay_buffer_with_space_test
+from unienv_interface.space.space_utils import batch_utils as sbu
 
 
 @pytest.mark.parametrize("capacity", [10, 50])
@@ -19,7 +20,7 @@ def test_step_sampler(
     seed : int
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    space = Box(
+    space = BoxSpace(
         PyTorchComputeBackend,
         0.0,
         1.0,
@@ -52,7 +53,7 @@ def test_multiprocessing_sampler(
     use_mmap : bool
 ):
     device = torch.device("cpu")
-    space = Box(
+    space = BoxSpace(
         PyTorchComputeBackend,
         0.0,
         1.0,
@@ -97,7 +98,7 @@ def test_slice_sampler(
     if prefetch_horizon == 0 and postfetch_horizon == 0:
         return
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dat_space = Box(
+    dat_space = BoxSpace(
         PyTorchComputeBackend,
         0.0,
         1.0,
@@ -105,11 +106,11 @@ def test_slice_sampler(
         device=device,
         shape=(3, 5, 2)
     )
-    space = Dict(
+    space = DictSpace(
         PyTorchComputeBackend,
         spaces={
             "dat": dat_space,
-            "episode_id": Box(
+            "episode_id": BoxSpace(
                 PyTorchComputeBackend,
                 0,
                 2,

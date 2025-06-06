@@ -66,14 +66,14 @@ class EpisodeRenderStackWrapper(
             return termination or truncation
         else:
             if self.rendered_env_index is None:
-                return self.env.backend.array_api_namespace.any(
-                    self.env.backend.array_api_namespace.logical_or(
+                return self.env.backend.any(
+                    self.env.backend.logical_or(
                         termination, truncation
                     )
                 )
             else:
-                return self.env.backend.array_api_namespace.any(
-                    self.env.backend.array_api_namespace.logical_or(
+                return self.env.backend.any(
+                    self.env.backend.logical_or(
                         termination[self.rendered_env_index], truncation[self.rendered_env_index]
                     )
                 )
@@ -100,7 +100,7 @@ class EpisodeRenderStackWrapper(
                 render_terminated = True
             else:
                 if self.rendered_env_index is None:
-                    render_terminated = self.env.backend.array_api_namespace.any(mask)
+                    render_terminated = self.env.backend.any(mask)
                 else:
                     render_terminated = bool(mask[self.rendered_env_index])
 

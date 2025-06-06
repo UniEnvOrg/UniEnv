@@ -25,7 +25,7 @@ class ActorMixin(Protocol, Generic[ActorMixinT, ActorMixinFuncT]):
         instance : Union[ActorMixinT, ActorMixinFuncT],
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], 
         device : BDeviceType
-    ) -> Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]:
+    ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
         raise NotImplementedError
 
     def get_mixin_action_space(
@@ -33,7 +33,7 @@ class ActorMixin(Protocol, Generic[ActorMixinT, ActorMixinFuncT]):
         instance : Union[ActorMixinT, ActorMixinFuncT],
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         device : BDeviceType
-    ) -> Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]]:
+    ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
         raise NotImplementedError
     
     def read_mixin_data(
@@ -129,13 +129,13 @@ class Actor(ABC, Generic[BDeviceType, BDtypeType, BRNGType]):
     device : Optional[BDeviceType]
 
     extra_observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
-    extra_action_space : Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = None
+    extra_action_space : Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None
 
     control_timestep : float
     is_real : bool
 
     @property
-    def action_space(self) -> Union[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+    def action_space(self) -> Union[Space[Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
         if len(self._mixin_action_spaces) > 0:
             if self.extra_action_space is None:
                 new_spaces = self._mixin_action_spaces
@@ -360,7 +360,7 @@ class FuncActor(
     device : Optional[BDeviceType]
 
     extra_observation_space : Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]] = None
-    extra_action_space : Optional[Space[Any, Any, BDeviceType, BDtypeType, BRNGType]] = None
+    extra_action_space : Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None
     
     control_timestep : float
     is_real : bool
@@ -406,7 +406,7 @@ class FuncActor(
         return self._mixins
     
     @property
-    def action_space(self) -> Union[Space[Any, Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+    def action_space(self) -> Union[Space[Any, BDeviceType, BDtypeType, BRNGType], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
         if len(self._mixin_action_spaces) > 0:
             if self.extra_action_space is None:
                 new_spaces = self._mixin_action_spaces

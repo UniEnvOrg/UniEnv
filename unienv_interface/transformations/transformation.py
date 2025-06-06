@@ -17,13 +17,13 @@ class DataTransformation(
         SourceDataT, SourceBArrT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT
     ]
 ):
-    target_space : Space[TargetDataT, Any, BDeviceType, BDtypeType, BRNGType]
-    source_space : Space[SourceDataT, Any, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]
+    target_space : Space[TargetDataT, BDeviceType, BDtypeType, BRNGType]
+    source_space : Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]
 
-    def get_source_space_batched(self, batch_size : int) -> Space[SourceDataT, Any, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]:
+    def get_source_space_batched(self, batch_size : int) -> Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]:
         return sbu.batch_space(self.source_space, batch_size)
     
-    def get_target_space_batched(self, batch_size : int) -> Space[TargetDataT, Any, BDeviceType, BDtypeType, BRNGType]:
+    def get_target_space_batched(self, batch_size : int) -> Space[TargetDataT, BDeviceType, BDtypeType, BRNGType]:
         return sbu.batch_space(self.target_space, batch_size)
 
     has_inverse : bool = False
@@ -93,11 +93,11 @@ class DirectionInverseTransformation(
         self.transformation = transformation
     
     @property
-    def target_space(self) -> Space[TargetDataT, Any, BDeviceType, BDtypeType, BRNGType]:
+    def target_space(self) -> Space[TargetDataT, BDeviceType, BDtypeType, BRNGType]:
         return self.transformation.source_space
     
     @property
-    def source_space(self) -> Space[SourceDataT, Any, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]:
+    def source_space(self) -> Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]:
         return self.transformation.target_space
     
     def transform(self, data : SourceDataT) -> TargetDataT:

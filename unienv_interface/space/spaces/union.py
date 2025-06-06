@@ -12,7 +12,7 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         device: Optional[BDeviceType] = None,
     ):
         assert isinstance(spaces, Iterable), f"{spaces} is not an iterable"
-        self.spaces = tuple(spaces if device is None else [space.to_device(device) for space in spaces])
+        self.spaces = tuple(spaces if device is None else [space.to(device=device) for space in spaces])
         assert len(self.spaces) > 0, "Cannot have an empty Union space"
         for space in self.spaces:
             assert isinstance(

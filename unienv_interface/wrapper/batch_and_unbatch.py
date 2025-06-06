@@ -36,10 +36,10 @@ class BatchifyWrapper(
     
     def step(self, action):
         obs, rewards, terminated, truncated, info = super().step(action)
-        terminated = self.backend.array_api_namespace.asarray(
+        terminated = self.backend.asarray(
             [terminated], dtype=self.backend.default_boolean_dtype, device=self.device
         )
-        truncated = self.backend.array_api_namespace.asarray(
+        truncated = self.backend.asarray(
             [truncated], dtype=self.backend.default_boolean_dtype, device=self.device
         )
         return obs, rewards, terminated, truncated, info

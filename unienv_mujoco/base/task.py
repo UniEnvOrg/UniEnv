@@ -1,7 +1,7 @@
 from typing import Generic, Any
 from .world import MujocoFuncWorld, MujocoFuncWorldState
 
-from unienv_interface.backends.numpy import NumpyComputeBackend
+from xbarray import numpy as NumpyComputeBackend
 from unienv_interface.world.actor import ActorStateT
 from unienv_interface.world.task import FuncTask, TaskStateT, FuncTaskWrapper, TaskWrapperStateT
 

@@ -57,35 +57,35 @@ class Wrapper(
     @property
     def action_space(
         self,
-    ) -> Space[WrapperActT, Any, WrapperBDeviceT, Any, WrapperBRngT]:
+    ) -> Space[WrapperActT, WrapperBDeviceT, Any, WrapperBRngT]:
         if self._action_space is None:
             return self.env.action_space
         return self._action_space
 
     @action_space.setter
-    def action_space(self, space: Space[WrapperActT, Any, WrapperBDeviceT, Any, WrapperBRngT]):
+    def action_space(self, space: Space[WrapperActT, WrapperBDeviceT, Any, WrapperBRngT]):
         self._action_space = space
 
     @property
     def observation_space(
         self,
-    ) -> Space[WrapperObsT, Any, WrapperBDeviceT, Any, WrapperBRngT]:
+    ) -> Space[WrapperObsT, WrapperBDeviceT, Any, WrapperBRngT]:
         if self._observation_space is None:
             return self.env.observation_space
         return self._observation_space
 
     @observation_space.setter
-    def observation_space(self, space: Space[WrapperObsT, Any, WrapperBDeviceT, Any, WrapperBRngT]):
+    def observation_space(self, space: Space[WrapperObsT, WrapperBDeviceT, Any, WrapperBRngT]):
         self._observation_space = space
 
     @property
     def context_space(
         self,
-    ) -> Optional[Space[WrapperContextT, Any, WrapperBDeviceT, Any, WrapperBRngT]]:
+    ) -> Optional[Space[WrapperContextT, WrapperBDeviceT, Any, WrapperBRngT]]:
         return self._context_space
     
     @context_space.setter
-    def context_space(self, space: Optional[Space[WrapperContextT, Any, WrapperBDeviceT, Any, WrapperBRngT]]):
+    def context_space(self, space: Optional[Space[WrapperContextT, WrapperBDeviceT, Any, WrapperBRngT]]):
         self._context_space = space
 
     @property
@@ -103,9 +103,9 @@ class Wrapper(
         self.env = env
         assert isinstance(env, Env)
 
-        self._action_space: Optional[Space[WrapperActT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
-        self._observation_space: Optional[Space[WrapperObsT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
-        self._context_space: Optional[Space[WrapperContextT, Any, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = self.env.context_space
+        self._action_space: Optional[Space[WrapperActT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
+        self._observation_space: Optional[Space[WrapperObsT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None
+        self._context_space: Optional[Space[WrapperContextT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = self.env.context_space
         self._metadata: Optional[Dict[str, Any]] = None
         self._rng : Optional[WrapperBRngT] = None
 

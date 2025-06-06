@@ -31,9 +31,9 @@ class ToGymnasiumEnv(
 
     @staticmethod
     def combine_context_obs_space(
-        context_space: Space[ContextType, Any, BDeviceType, BDeviceType, BRNGType],
-        observation_space: Space[ObsType, Any, BDeviceType, BDtypeType, BRNGType]
-    ) -> Space[Union[ContextType, ObsType], Any, BDeviceType, BDtypeType, BRNGType]:
+        context_space: Space[ContextType, BDeviceType, BDeviceType, BRNGType],
+        observation_space: Space[ObsType, BDeviceType, BDtypeType, BRNGType]
+    ) -> Space[Union[ContextType, ObsType], BDeviceType, BDtypeType, BRNGType]:
         if isinstance(context_space, DictSpace) and isinstance(observation_space, DictSpace):
             spaces = context_space.spaces.copy()
             spaces.update(observation_space.spaces)
