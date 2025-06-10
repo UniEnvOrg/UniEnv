@@ -38,11 +38,8 @@ def worker_loop(
             except ValueError:
                 break
             
-            print(f"Got work {work_info}! Fetching!")
             result = fetch_fn(work_info)
-            print("Result!")
             result_queue.put(result)
-            print("Result put!")
             del result
     except KeyboardInterrupt:
         pass
@@ -52,8 +49,6 @@ def worker_loop(
         #     del sampler.data_rng
         #     sampler.rng = None
         #     sampler.data_rng = None
-        
-        del sampler
         result_queue.cancel_join_thread()
         result_queue.close()
 

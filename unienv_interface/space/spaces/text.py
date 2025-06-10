@@ -6,11 +6,14 @@ from ..space import Space
 from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils import seed_util
 import string
+from xbarray.serialization import *
 
 alphanumeric: FrozenSet[str] = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 )
 
+
+@wrap_class_compute_backend(['backend'])
 class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

@@ -24,6 +24,7 @@ class GraphInstance(Generic[BArrayType]):
     edges: Optional[BArrayType] = None
     """Edges in the graph, shape (*batch_shape, max(n_edges), 2) where each edge is represented by a pair of node indices, or None if no edges are present."""
 
+@wrap_class_compute_backend(['backend'])
 class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGType], Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

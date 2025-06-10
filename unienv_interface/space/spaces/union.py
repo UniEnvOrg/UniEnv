@@ -3,7 +3,9 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from ..space import Space
 from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray.serialization import *
 
+@wrap_class_compute_backend(['backend'])
 class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

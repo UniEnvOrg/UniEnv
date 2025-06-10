@@ -4,8 +4,10 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 import numpy as np
 from ..space import Space
 from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from xbarray.serialization import *
 import copy
 
+@wrap_class_compute_backend(['backend'])
 class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

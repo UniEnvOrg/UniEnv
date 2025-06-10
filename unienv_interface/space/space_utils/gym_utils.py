@@ -75,7 +75,9 @@ def _from_gym_space_box(
     new_low = backend.from_numpy(gym_space.low, dtype=dtype, device=device)
     new_high = backend.from_numpy(gym_space.high, dtype=dtype, device=device)
     dtype = dtype or new_low.dtype or backend.default_floating_dtype
-    assert backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype), f"Unsupported dtype for BoxSpace: {dtype}"
+    
+    if not (backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype)):
+        dtype = backend.default_floating_dtype
 
     return BoxSpace(
         backend,
