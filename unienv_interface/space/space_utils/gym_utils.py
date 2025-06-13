@@ -13,7 +13,7 @@ except ImportError:
     )
 
 import numpy as np
-from xbarray import ComputeBackend
+from unienv_interface.backends import ComputeBackend
 from unienv_interface.space.spaces import *
 
 __all__ = [
@@ -58,11 +58,13 @@ def from_gym_data(space : Space, data: Any) -> Any:
 def _to_gym_space_box(
     space: BoxSpace,
 ) -> gym.spaces.Box:
-    return gym.spaces.BoxSpace(
-        low=space.backend.to_numpy(space.low),
-        high=space.backend.to_numpy(space.high),
+    new_low = space.backend.to_numpy(space.low)
+    new_high = space.backend.to_numpy(space.high)
+    return gym.spaces.Box(
+        low=new_low,
+        high=new_high,
         shape=space.shape,
-        dtype=space.dtype,
+        dtype=new_low.dtype
     )
 
 @from_gym_space.register(gym.spaces.Box)

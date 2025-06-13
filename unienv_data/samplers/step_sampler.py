@@ -1,6 +1,6 @@
 from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 

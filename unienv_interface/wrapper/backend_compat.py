@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import numpy as np
 import copy
 
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.env_base.wrapper import Wrapper, WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT

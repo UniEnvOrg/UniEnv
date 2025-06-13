@@ -1,5 +1,5 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import PIL.Image
 
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT

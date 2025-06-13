@@ -6,9 +6,9 @@ import numpy as np
 
 from unienv_interface.env_base.env import Env
 from unienv_interface.space import Space
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from xbarray import numpy as NumpyComputeBackend
-from xbarray import pytorch as PyTorchComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.space.space_utils import batch_utils as space_batch_utils, gym_utils as space_gym_utils
 from unienv_interface.wrapper import backend_compat, gym_compat
 

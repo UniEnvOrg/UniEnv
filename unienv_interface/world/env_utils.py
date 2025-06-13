@@ -1,6 +1,6 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable, SupportsFloat
 from dataclasses import dataclass, replace as dataclass_replace
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.env_base.env import Env

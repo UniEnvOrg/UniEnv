@@ -1,5 +1,5 @@
 from typing import Dict, Any, Tuple, Optional, Sequence, Union, Generic, Literal, SupportsFloat
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.env_base.wrapper import Wrapper
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame

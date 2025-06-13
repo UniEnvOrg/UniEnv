@@ -6,9 +6,9 @@ from unienv_data.samplers import *
 from unienv_data.batches import *
 from unienv_interface.space import *
 from unienv_interface.space.space_utils import flatten_utils as sfu
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from xbarray import numpy as NumpyComputeBackend
-from xbarray import pytorch as PyTorchComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 import torch
 import numpy as np
 import tempfile
@@ -34,7 +34,7 @@ def perform_rb_fill_test(
 
     check_size = fill_length if replay_buffer.capacity is None else min(fill_length, replay_buffer.capacity)
     index_check_mask = space.backend.zeros((fill_length,), dtype=space.backend.default_boolean_dtype, device=space.device)
-    index_check_mask[-check_size:] = True
+    index_check_mask = space.backend.at(index_check_mask)[-check_size:].set(True)
     ref_slice = sbu.get_at(batched_space, datas, index_check_mask)
     for i in range(check_size):
         sampled = replay_buffer.get_at(-(check_size - i))
@@ -46,9 +46,10 @@ def perform_rb_fill_test(
         assert space.backend.all(flat_sampled == flat_data)
         assert space.backend.all(flat_sampled_p == flat_data)
     
+    batched_check_space = sbu.batch_space(space, check_size)
     sampled_slice = replay_buffer.get_at(slice(-check_size, None))
-    flat_sampled_slice = sfu.flatten_data(batched_space, sampled_slice)
-    flat_ref_slice = sfu.flatten_data(batched_space, ref_slice)
+    flat_sampled_slice = sfu.flatten_data(batched_check_space, sampled_slice)
+    flat_ref_slice = sfu.flatten_data(batched_check_space, ref_slice)
     assert space.backend.all(flat_sampled_slice == flat_ref_slice)
     return slice(-check_size, None), flat_ref_slice
 
@@ -138,7 +139,7 @@ def perform_list_replay_buffer_with_space_test(
         capacity=capacity,
     )
     
-    rng = np.random.default_rng(seed)
+    rng = space.backend.random.random_number_generator(seed, device=space.device)
     
     if capacity is None:
         perform_rb_fill_test(rb, space, 10, rng)

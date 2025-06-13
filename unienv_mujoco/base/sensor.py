@@ -1,7 +1,7 @@
 from typing import Generic
 from .world import MujocoFuncWorld, MujocoFuncWorldState
 
-from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.world.sensor import FuncSensor, SensorDataT, SensorStateT, FuncSensorWrapper, WrapperStateT, WrapperDataT
 
 class MujocoFuncSensor(

@@ -1,7 +1,7 @@
 from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, Callable
 from ..sensor import Sensor, SensorDataT, FuncSensor, SensorStateT
 from ..world import FuncWorld
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
 from unienv_interface.env_base.funcenv import StateType
 

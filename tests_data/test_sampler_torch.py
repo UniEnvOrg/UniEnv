@@ -5,7 +5,7 @@ from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *
 from unienv_interface.space import *
 from unienv_interface.space.space_utils import flatten_utils as sfu
-from xbarray import pytorch as PyTorchComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 import torch
 import numpy as np
 import pytest

@@ -2,7 +2,7 @@ from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, Typ
 from typing_extensions import TypedDict # for Python < 3.11, otherwise we can use typing.TypedDict
 import numpy as np
 from ..space import Space
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray
 from .box import BoxSpace
 import dataclasses
 
@@ -24,7 +24,6 @@ class GraphInstance(Generic[BArrayType]):
     edges: Optional[BArrayType] = None
     """Edges in the graph, shape (*batch_shape, max(n_edges), 2) where each edge is represented by a pair of node indices, or None if no edges are present."""
 
-@wrap_class_compute_backend(['backend'])
 class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGType], Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

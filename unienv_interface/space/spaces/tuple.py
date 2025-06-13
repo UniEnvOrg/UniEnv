@@ -3,11 +3,9 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, Tuple, Type, Literal, List, Dict
 import numpy as np
 from ..space import Space
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from xbarray.serialization import *
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import copy
 
-@wrap_class_compute_backend(['backend'])
 class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,

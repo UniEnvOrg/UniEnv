@@ -2,8 +2,8 @@ import os
 from unienv_data.base import *
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.numpy import NumpyComputeBackend
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable
 import h5py
 import numpy as np
@@ -147,7 +147,7 @@ class ListStorage(TensorStorage[
                 indices = self.backend.nonzero(index)[0]
             else:
                 indices = index
-            indices[indices < 0] += len_storage
+            indices = self.backend.at(indices)[indices < 0].add(len_storage)
             assert (
                 self.capacity is None and self.backend.all(
                     (indices >= 0) & (indices < len_storage)

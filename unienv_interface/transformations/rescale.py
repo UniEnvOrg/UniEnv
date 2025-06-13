@@ -1,7 +1,7 @@
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import BoxSpace
 from typing import Union, Any, Optional
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class RescaleTransformation(DataTransformation[
     BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType, 

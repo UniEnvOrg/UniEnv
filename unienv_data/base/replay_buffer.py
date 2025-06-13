@@ -2,7 +2,7 @@ import abc
 import os
 import dataclasses
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu

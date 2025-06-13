@@ -1,7 +1,7 @@
 from mujoco_playground import registry, MjxEnv
 from unienv_mjxplayground import FromMJXPlaygroundEnv
 from unienv_interface.env_base import FuncEnvBasedEnv, Env
-from xbarray import jax as JaxComputeBackend
+from unienv_interface.backends.jax import JaxComputeBackend
 import jax
 
 def construct_env_from_name(

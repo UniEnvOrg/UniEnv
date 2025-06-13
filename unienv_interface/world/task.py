@@ -1,7 +1,7 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union, SupportsFloat
 from abc import ABC, abstractmethod
 from unienv_interface.utils import seed_util
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from .world import FuncWorld, StateType
 from .actor import FuncActor, ActorStateT, FuncActorCombinedState

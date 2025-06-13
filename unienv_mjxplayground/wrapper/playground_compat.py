@@ -5,9 +5,9 @@ import numpy as np
 
 from unienv_interface.env_base import FuncEnv
 from unienv_interface.space import Space, BoxSpace, DictSpace
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from xbarray import numpy as NumpyComputeBackend
-from xbarray import jax as JaxComputeBackend
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.jax import JaxComputeBackend
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.wrapper import backend_compat
 

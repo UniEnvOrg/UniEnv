@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Ty
 import gymnasium as gym
 import numpy as np
 import copy
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space.space_utils import flatten_utils as space_flatten_utils
 from unienv_interface.utils import seed_util

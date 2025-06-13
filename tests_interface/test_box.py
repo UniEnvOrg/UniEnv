@@ -1,9 +1,9 @@
 import typing
 import pytest
-from xbarray import ComputeBackend
-from xbarray import numpy as NumpyComputeBackend
-from xbarray import jax as JaxComputeBackend
-from xbarray import pytorch as PyTorchComputeBackend
+from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.jax import JaxComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 
 from unienv_interface.space.spaces import *
 from unienv_interface.space.space_utils import gym_utils as space_gym_utils
@@ -28,7 +28,7 @@ NUM_SAMPLES_TEST = 20
 NUM_SPACE_INSTANCES = 50
 
 def perform_single_space_cross_backend_device_test(space : Space, rng : typing.Any) -> None:
-    gym_space = space.to_gym_space()
+    gym_space = space_gym_utils.to_gym_space(space)
     converted_back_space = space_gym_utils.from_gym_space(gym_space, space.backend, dtype=space.dtype, device=space.device)
     assert space == converted_back_space
     for _ in range(NUM_SAMPLES_TEST):
@@ -47,9 +47,9 @@ def perform_single_space_cross_backend_device_test(space : Space, rng : typing.A
             converted_space = space.to(target_backend, target_device)
             for _ in range(NUM_SAMPLES_TEST):
                 rng, data = space.sample(rng)
-                converted_data = converted_space.from_other_backend(data, space.backend) if target_backend != space.backend else converted_space.from_same_backend(data)
+                converted_data = space.data_to(data, target_backend, target_device)
                 assert converted_space.contains(converted_data)
-                converted_back_data = space.from_other_backend(converted_data, target_backend) if target_backend != space.backend else space.from_same_backend(converted_data)
+                converted_back_data = converted_space.data_to(converted_data, space.backend, space.device)
                 assert space.contains(converted_back_data)
 
 def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.Any], rng : typing.Any, np_rng : np.random.Generator):

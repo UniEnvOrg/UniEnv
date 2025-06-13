@@ -1,7 +1,7 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import Space
 from unienv_interface.env_base.funcenv import FuncEnv, StateType

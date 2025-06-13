@@ -3,8 +3,8 @@ import torch
 from unienv_data.base import *
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
-from xbarray import ComputeBackend
-from xbarray import pytorch as PyTorchComputeBackend
+from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from tensordict.memmap import MemoryMappedTensor
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List
 

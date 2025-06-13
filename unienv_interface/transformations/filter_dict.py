@@ -1,7 +1,7 @@
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import DictSpace
 from typing import Union, Any, Optional, Dict, Set, Iterable
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class FilterDictTransformation(DataTransformation[
     Dict[str, Any], BArrayType, BDeviceType, BDtypeType, BRNGType, 

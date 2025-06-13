@@ -3,7 +3,7 @@ from copy import deepcopy
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
 from unienv_interface.space import Space
-from xbarray import ComputeBackend, ArrayAPIArray
+from unienv_interface.backends import ComputeBackend, ArrayAPIArray
 import numpy as np
 
 WrapperBArrayT = TypeVar("WrapperBArrayT")

@@ -2,7 +2,7 @@ from typing import Sequence, List, Tuple, Union, Dict, Any, Optional, Generic, T
 from types import EllipsisType
 import os
 import abc
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.space import Space, DictSpace, BoxSpace
 import dataclasses

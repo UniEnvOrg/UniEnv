@@ -1,5 +1,5 @@
 from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple
-from xbarray import ComputeBackend, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.funcenv import StateType
 from abc import ABC, abstractmethod
 

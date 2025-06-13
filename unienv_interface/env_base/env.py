@@ -4,7 +4,7 @@ import abc
 
 from unienv_interface.space.space_utils import batch_utils as space_batch_utils
 from unienv_interface.space import Space
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 import numpy as np
 
 ContextType = TypeVar("ContextType")

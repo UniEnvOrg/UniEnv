@@ -2,7 +2,7 @@ from typing import Any, Generic, TypeVar, Optional, Dict, Tuple, Sequence, List,
 from abc import ABC, abstractmethod
 
 from unienv_interface.world.sensors.lambda_sensor import FuncLambdaSensor
-from xbarray import numpy as NumpyComputeBackend
+from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.space import DictSpace, BoxSpace
 import mujoco
 from dm_control import mjcf
