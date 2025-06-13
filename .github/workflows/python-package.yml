@@ -5,9 +5,9 @@ name: Pytest Package Test
 
 on:
   push:
-    branches: [ "*" ]
+    branches: [ "**" ]
   pull_request:
-    branches: [ "*" ]
+    branches: [ "**" ]
 
 jobs:
   build:
