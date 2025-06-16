@@ -194,7 +194,7 @@ def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> An
     start = 0
     for key, subspace in space.spaces.items():
         end = start + flat_dim(subspace, start_dim)
-        part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.get_device(data))
+        part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.device(data))
         part_data = space.backend.take(data, part_idx, axis=start_dim)
         result[key] = unflatten_data(subspace, part_data, start_dim)
         start = end

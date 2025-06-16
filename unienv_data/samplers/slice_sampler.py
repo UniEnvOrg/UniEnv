@@ -164,7 +164,7 @@ class SliceSampler(
         Optional[BArrayType] # episode id (B)
     ]:
         B = flat_dat.shape[0]
-        device = self._device or self.backend.get_device(flat_dat)
+        device = self._device or self.backend.device(flat_dat)
         if self.get_episode_id_fn is not None:
             # fetch episode ids
             if self._epid_flatidx is None:
