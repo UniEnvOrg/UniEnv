@@ -29,8 +29,9 @@ jobs:
         python -m pip install --upgrade pip
         pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         python -m pip install flake8 pytest
+        python -m pip install tensordict h5py
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pip install -e .[video,dev,jax,torch,mujoco,mjx]
+        pip install -e .[video,dev,gymnasium,mjx]
     # - name: Lint with flake8
     #   run: |
     #     # stop the build if there are Python syntax errors or undefined names

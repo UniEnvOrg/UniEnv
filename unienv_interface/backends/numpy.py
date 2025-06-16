@@ -1,4 +1,4 @@
-from xbarray.jax import JaxComputeBackend as XBNumpyBackend
+from xbarray.numpy import NumpyComputeBackend as XBNumpyBackend
 from xbarray import ComputeBackend
 
 NumpyComputeBackend : ComputeBackend = XBNumpyBackend
