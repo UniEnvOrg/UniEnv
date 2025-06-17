@@ -169,18 +169,18 @@ class SliceSampler(
             # fetch episode ids
             if self._epid_flatidx is None:
                 if self._device is not None:
-                    new_flat_dat = self.backend.to_device(flat_dat, device, non_blocking=True)
+                    new_flat_dat = self.backend.to_device(flat_dat, device)
                 dat = sfu.unflatten_data(self.sampled_space, flat_dat, start_dim=2) # (B, T, D)
                 episode_ids = self.get_episode_id_fn(dat)
                 if self._device is not None:
-                    episode_ids = self.backend.to_device(episode_ids, device, non_blocking=False)
+                    episode_ids = self.backend.to_device(episode_ids, device)
                     flat_dat = new_flat_dat
                 del dat
             else:
                 episode_ids = flat_dat[:, :, self._epid_flatidx]
                 if self._device is not None:
-                    flat_dat = self.backend.to_device(flat_dat, device, non_blocking=True)
-                    episode_ids = self.backend.to_device(episode_ids, device, non_blocking=False)
+                    flat_dat = self.backend.to_device(flat_dat, device)
+                    episode_ids = self.backend.to_device(episode_ids, device)
 
             assert self.backend.is_backendarray(episode_ids)
             assert episode_ids.shape == (B, self.prefetch_horizon + self.postfetch_horizon + 1)

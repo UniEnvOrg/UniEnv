@@ -176,7 +176,8 @@ class ToDeviceWrapper(
     def __init__(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        device : BDeviceType
+        device : BDeviceType,
+        original_device : Optional[BDeviceType] = None
     ) -> None:
         assert device is not None
         super().__init__(env)
@@ -189,6 +190,7 @@ class ToDeviceWrapper(
         self._context_space = None if env.context_space is None else env.context_space.to(
             device=device
         )
+        self.original_device = original_device if original_device is not None else env.device
 
         env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
         self._rng : BRNGType = env.backend.random.random_number_generator(
@@ -215,7 +217,7 @@ class ToDeviceWrapper(
     ]:
         c_action = self.action_space.data_to(
             action,
-            device=self.action_space.device
+            device=self.env.action_space.device or self.original_device
         )
         obs, reward, terminated, truncated, info = self.env.step(c_action)
         c_obs = self.env.observation_space.data_to(

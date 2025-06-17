@@ -27,12 +27,15 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 np.issubdtype(type(dim), np.integer) for dim in shape
             ), f"Expect all shape elements to be an integer, actual type: {tuple(type(dim) for dim in shape)}"
             shape = tuple(int(dim) for dim in shape)  # This changes any np types to int
-        elif backend.is_backendarray(low):
-            shape = low.shape
-        elif backend.is_backendarray(high):
-            shape = high.shape
+        elif backend.is_backendarray(low) or backend.is_backendarray(high):
+            shapes = []
+            if backend.is_backendarray(low):
+                shapes.append(low.shape)
+            if backend.is_backendarray(high):
+                shapes.append(high.shape)
+            shape = backend.broadcast_shapes(*shapes) if len(shapes) > 1 else shapes[0]
         elif isinstance(low, (int, float)) and isinstance(high, (int, float)):
-            shape = (1,)
+            shape = ()
         else:
             raise ValueError(
                 f"Box shape is inferred from low and high, expect their types to be backend array, an integer or a float, actual type low: {type(low)}, high: {type(high)}"
@@ -273,7 +276,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         include_dtype : bool = True,
     ) -> str:
         if abbreviate:
-            ret = f"[{self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)})"
+            ret = f"[{self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}) {self.shape}"
         else:
             ret = f"BoxSpace({self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}, {self.shape}"
         if include_backend:

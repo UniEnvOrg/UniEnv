@@ -299,6 +299,7 @@ def _unbatch_spaces_box(space: BoxSpace):
             high=high[i] if high.shape[0] > i else high[0],
             dtype=space.dtype,
             device=space.device,
+            shape=space.shape[1:],
         )
 
 @unbatch_spaces.register(BinarySpace)
