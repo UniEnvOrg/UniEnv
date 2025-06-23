@@ -24,9 +24,15 @@ def flat_dim(space : Space, start_dim : int = 0) -> Optional[int]:
 @flat_dim.register(BoxSpace)
 @flat_dim.register(BinarySpace)
 def _flat_dim_common(space: typing.Union[BoxSpace, BinarySpace], start_dim : int = 0) -> int:
-    if start_dim < 0 or start_dim > len(space.shape):
+    if start_dim < -len(space.shape) or start_dim > len(space.shape):
         return None
     return int(np.prod(space.shape[start_dim:]))
+
+@flat_dim.register(DynamicBoxSpace)
+def _flat_dim_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> Optional[int]:
+    if start_dim < -len(space.shape) or start_dim > len(space.shape_high):
+        return None
+    return int(np.prod(space.shape_high[start_dim:]))
 
 @flat_dim.register(DictSpace)
 def _flat_dim_dict(space: DictSpace, start_dim : int = 0) -> Optional[int]:
@@ -50,7 +56,7 @@ def _flat_dim_tuple(space: TupleSpace, start_dim : int = 0) -> Optional[int]:
 
 @flat_dim.register(TextSpace)
 def _flat_dim_text(space: TextSpace, start_dim : int = 0) -> int:
-    if start_dim != 0:
+    if start_dim != 0 or space.charset is None:
         return None
     return space.max_length
 
@@ -72,15 +78,34 @@ def flatten_space(space: Space, start_dim : int = 0) -> BoxSpace:
 
 @flatten_space.register(BoxSpace)
 def _flatten_space_box(space: BoxSpace, start_dim : int = 0) -> BoxSpace:
-    assert start_dim >= 0 and start_dim <= len(space.shape)
+    assert start_dim >= -len(space.shape) and start_dim <= len(space.shape)
+    low = space.low
+    high = space.high
     return BoxSpace(
         space.backend,
         low=space.backend.reshape(
-            space.low, space.low.shape[:start_dim] + (-1,)
+            low, low.shape[:start_dim] + (-1,)
         ), 
         high=space.backend.reshape(
-            space.high, space.high.shape[:start_dim] + (-1,)
+            high, high.shape[:start_dim] + (-1,)
         ), 
+        dtype=space.dtype,
+        device=space.device
+    )
+
+@flatten_space.register(DynamicBoxSpace)
+def _flatten_space_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> BoxSpace:
+    assert start_dim >= -len(space.shape_high) and start_dim <= len(space.shape_high)
+    low = space.get_low(space.shape_high)
+    high = space.get_high(space.shape_high)
+    return BoxSpace(
+        space.backend,
+        low=space.backend.reshape(
+            low, low.shape[:start_dim] + (-1,)
+        ),
+        high=space.backend.reshape(
+            high, high.shape[:start_dim] + (-1,)
+        ),
         dtype=space.dtype,
         device=space.device
     )

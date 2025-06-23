@@ -46,6 +46,19 @@ def _swap_batch_dims_box(space: BoxSpace, dim1: int, dim2: int):
         high=_tensor_transpose(space.backend, space.high, dim1, dim2),
         dtype=space.dtype,
         device=space.device,
+        shape=_shape_transpose(space.shape, dim1, dim2),
+    )
+
+@swap_batch_dims.register(DynamicBoxSpace)
+def _swap_batch_dims_dynamic_box(space: DynamicBoxSpace, dim1: int, dim2: int):
+    return DynamicBoxSpace(
+        backend=space.backend,
+        low=_tensor_transpose(space.backend, space.low, dim1, dim2),
+        high=_tensor_transpose(space.backend, space.high, dim1, dim2),
+        shape_low=_shape_transpose(space.shape_low, dim1, dim2),
+        shape_high=_shape_transpose(space.shape_high, dim1, dim2),
+        dtype=space.dtype,
+        device=space.device,
     )
 
 @swap_batch_dims.register(BinarySpace)
@@ -84,6 +97,7 @@ def swap_batch_dims_in_data(
 
 @swap_batch_dims_in_data.register(BoxSpace)
 @swap_batch_dims_in_data.register(BinarySpace)
+@swap_batch_dims_in_data.register(DynamicBoxSpace)
 def _swap_batch_dims_in_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArrayType, dim1: int, dim2: int):
     return _tensor_transpose(space.backend, data, dim1, dim2)
 
@@ -111,6 +125,10 @@ def batch_size(space: Space) -> Optional[int]:
 @batch_size.register(BinarySpace)
 def _batch_size_box(space: typing.Union[BoxSpace, BinarySpace]):
     return space.shape[0] if len(space.shape) > 0 else None
+
+@batch_size.register(DynamicBoxSpace)
+def _batch_size_dynamic_box(space: DynamicBoxSpace):
+    return space.shape_low[0] if len(space.shape_low) > 0 and space.shape_high[0] == space.shape_low[0] else None
 
 @batch_size.register(GraphSpace)
 def _batch_size_graph(space: GraphSpace):
@@ -164,6 +182,18 @@ def _batch_space_box(space: BoxSpace, n: int = 1):
         dtype=space.dtype,
         device=space.device,
         shape=(n,) + space.shape,
+    )
+
+@batch_space.register(DynamicBoxSpace)
+def _batch_space_dynamic_box(space: DynamicBoxSpace, n: int = 1):
+    return DynamicBoxSpace(
+        backend=space.backend,
+        low=space._low[None],
+        high=space._high[None],
+        shape_low=(n,) + space.shape_low,
+        shape_high=(n,) + space.shape_high,
+        dtype=space.dtype,
+        device=space.device,
     )
 
 @batch_space.register(BinarySpace)
@@ -245,6 +275,32 @@ def _batch_differing_spaces_box(spaces: typing.Sequence[BoxSpace], device : Opti
         device=device if device is not None else spaces[0].device,
     )
 
+@batch_differing_spaces.register(DynamicBoxSpace)
+def _batch_differing_spaces_dynamic_box(spaces: typing.Sequence[DynamicBoxSpace], device : Optional[Any] = None):
+    assert all(
+        spaces[0].dtype == space.dtype for space in spaces
+    ), f"Expected all dtypes to be equal, actually {[space.dtype for space in spaces]}"
+    assert all(
+        spaces[0].shape_low == space.shape_low for space in spaces
+    ), f"Expected all DynamicBoxSpace.low shape to be equal, actually {[space.low.shape for space in spaces]}"
+    assert all(
+        spaces[0].shape_high == space.shape_high for space in spaces
+    ), f"Expected all DynamicBoxSpace.high shape to be equal, actually {[space.high.shape for space in spaces]}"
+
+    backend = spaces[0].backend
+    target_low = backend.stack(backend.broadcast_arrays(*[space._low for space in spaces]), axis=0)
+    target_high = backend.stack(backend.broadcast_arrays(*[space._high for space in spaces]), axis=0)
+
+    return DynamicBoxSpace(
+        backend=backend,
+        low=target_low,
+        high=target_high,
+        shape_low=(len(spaces),) + spaces[0].shape_low,
+        shape_high=(len(spaces),) + spaces[0].shape_high,
+        dtype=spaces[0].dtype,
+        device=device if device is not None else spaces[0].device,
+    )
+
 @batch_differing_spaces.register(BinarySpace)
 def _batch_differing_spaces_binary(spaces: typing.Sequence[BinarySpace], device : Optional[Any] = None):
     assert all(spaces[0].shape == space.shape for space in spaces)
@@ -300,6 +356,22 @@ def _unbatch_spaces_box(space: BoxSpace):
             dtype=space.dtype,
             device=space.device,
             shape=space.shape[1:],
+        )
+
+@unbatch_spaces.register(DynamicBoxSpace)
+def _unbatch_spaces_dynamic_box(space: DynamicBoxSpace):
+    assert len(space.shape_low) > 0, "Expected DynamicBoxSpace to be batched, but it is not."
+    low = space._low
+    high = space._high
+    for i in range(space.shape_low[0]):
+        yield DynamicBoxSpace(
+            backend=space.backend,
+            low=low[i] if low.shape[0] > i else low[0],
+            high=high[i] if high.shape[0] > i else high[0],
+            shape_low=space.shape_low[1:],
+            shape_high=space.shape_high[1:],
+            dtype=space.dtype,
+            device=space.device,
         )
 
 @unbatch_spaces.register(BinarySpace)
@@ -362,6 +434,7 @@ def get_at(space: Space, items: Any, index: ArrayAPIGetIndex) -> Any:
 
 @get_at.register(BoxSpace)
 @get_at.register(BinarySpace)
+@get_at.register(DynamicBoxSpace)
 def _get_at_common(space: typing.Union[BoxSpace, BinarySpace], items: BArrayType, index: ArrayAPIGetIndex):
     return items[index]
 
@@ -395,6 +468,7 @@ def set_at(
 
 @set_at.register(BoxSpace)
 @set_at.register(BinarySpace)
+@set_at.register(DynamicBoxSpace)
 def _set_at_common(
     space: typing.Union[BoxSpace, BinarySpace],
     items: BArrayType,
@@ -460,7 +534,7 @@ def _set_at_tuple(
 
 @singledispatch
 def concatenate(
-    space: Space, items: Iterable[Any]
+    space: Space, items: Iterable[Any], axis : int = 0,
 ) -> Any:
     raise TypeError(
         f"The space provided to `concatenate` is not a Space instance, type: {type(space)}, {space}"
@@ -471,31 +545,32 @@ def concatenate(
 def _concatenate_base(
     space: typing.Union[BoxSpace, BinarySpace],
     items: Iterable,
+    axis: int = 0,
 ) -> Any:
-    return space.backend.stack(items, axis=0)
+    return space.backend.stack(items, axis=axis)
 
 @concatenate.register(GraphSpace)
 def _concatenate_graph(
-    space: GraphSpace, items: Iterable[GraphInstance]
+    space: GraphSpace, items: Iterable[GraphInstance], axis: int = 0
 ) -> GraphInstance:
-    n_nodes = space.backend.stack([item.n_nodes for item in items], axis=0)
+    n_nodes = space.backend.stack([item.n_nodes for item in items], axis=axis)
     n_edges = (
-        space.backend.stack([item.n_edges for item in items], axis=0)
+        space.backend.stack([item.n_edges for item in items], axis=axis)
         if all(item.n_edges is not None for item in items)
         else None
     )
     nodes_features = (
-        space.backend.stack([item.nodes_features for item in items], axis=0)
+        space.backend.stack([item.nodes_features for item in items], axis=axis)
         if all(item.nodes_features is not None for item in items)
         else None
     )
     edges_features = (
-        space.backend.stack([item.edges_features for item in items], axis=0)
+        space.backend.stack([item.edges_features for item in items], axis=axis)
         if all(item.edges_features is not None for item in items)
         else None
     )
     edges = (
-        space.backend.stack([item.edges for item in items], axis=0)
+        space.backend.stack([item.edges for item in items], axis=axis)
         if all(item.edges is not None for item in items)
         else None
     )
@@ -510,20 +585,20 @@ def _concatenate_graph(
 
 @concatenate.register(DictSpace)
 def _concatenate_dict(
-    space: DictSpace, items: Iterable
+    space: DictSpace, items: Iterable, axis: int = 0
 ) -> dict[str, Any]:
     return {
-        key: concatenate(subspace, [item[key] for item in items])
+        key: concatenate(subspace, [item[key] for item in items], axis=axis)
         for key, subspace in space.spaces.items()
     }
 
 @concatenate.register(TupleSpace)
 def _concatenate_tuple(
-    space: TupleSpace, items: Iterable
+    space: TupleSpace, items: Iterable, axis: int = 0
 ) -> tuple[Any, ...]:
     if all(type(subspace) in concatenate.registry for subspace in space.spaces):
         return tuple(
-            concatenate(subspace, [item[i] for item in items])
+            concatenate(subspace, [item[i] for item in items], axis=axis)
             for (i, subspace) in enumerate(space.spaces)
         )
     
