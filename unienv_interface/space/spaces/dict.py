@@ -77,6 +77,11 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             rng, ret_dict[key] = space.sample(rng)
         return rng, ret_dict
 
+    def is_bounded(self, manner = "both"):
+        return all(
+            space.is_bounded(manner) for space in self.spaces.values()
+        )
+
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if isinstance(x, Mapping) and x.keys() == self.spaces.keys():

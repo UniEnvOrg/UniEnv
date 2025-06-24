@@ -203,7 +203,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             device=new_device
         )
 
-    def is_bounded(self, manner: Literal["both", "below", "above"] = "both") -> bool:
+    def is_bounded(self, manner = "both"):
         bounded_below = -self.backend.inf < self._low
         bounded_above = self.backend.inf > self._high
         below = bool(self.backend.all(bounded_below))

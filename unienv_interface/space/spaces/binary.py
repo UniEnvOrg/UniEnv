@@ -54,6 +54,9 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             copy=False
         )
 
+    def is_bounded(self, manner = "both"):
+        return True
+
     def contains(self, x: BArrayType) -> bool:
         return bool(
             self.backend.is_backendarray(x)

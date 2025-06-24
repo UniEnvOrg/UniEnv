@@ -87,6 +87,11 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
         ) if length > 0 else ""
         return rng, sample
 
+    def is_bounded(self, manner = "both"):
+        return manner == "below" or (
+            self.charset is not None
+        )
+
     def contains(self, x: Any) -> bool:
         if not isinstance(x, str):
             return False

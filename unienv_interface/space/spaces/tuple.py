@@ -53,6 +53,9 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             samples.append(sample)
         return rng, tuple(samples)
 
+    def is_bounded(self, manner = "both"):
+        return all(space.is_bounded(manner) for space in self.spaces)
+
     def contains(self, x: Tuple[Any, ...]) -> bool:
         return (
             isinstance(x, Tuple)

@@ -1,4 +1,4 @@
-from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Type, List
+from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Literal
 import numpy as np
 from unienv_interface.backends import ComputeBackend, ArrayAPIArray
 import abc
@@ -39,6 +39,11 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
 
     @abc.abstractmethod
     def sample(self, rng : _SpaceBDRNGT, **kwargs) -> Tuple[_SpaceBDRNGT, SpaceDataT]:
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def is_bounded(self, manner: Literal["both", "below", "above"] = "both") -> bool:
+        """Return boolean specifying if this space is bounded in the specified manner."""
         raise NotImplementedError
 
     @abc.abstractmethod

@@ -58,6 +58,11 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         rng, sample = subspace.sample(rng)
         return rng, (subspace_idx, sample)
 
+    def is_bounded(self, manner = "both"):
+        return all(
+            space.is_bounded(manner) for space in self.spaces
+        )
+
     def contains(self, x: Tuple[int, Any]) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         return (

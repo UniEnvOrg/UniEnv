@@ -211,6 +211,12 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             edges=edges,
         )
 
+    def is_bounded(self, manner = "both"):
+        return (
+            (self.node_feature_space is None or self.node_feature_space.is_bounded(manner)) 
+            and (self.edge_feature_space is None or self.edge_feature_space.is_bounded(manner))
+        )
+
     def contains(self, x: GraphInstance[BArrayType]) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if not isinstance(x, GraphInstance):
