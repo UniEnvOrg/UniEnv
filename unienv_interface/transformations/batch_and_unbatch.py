@@ -4,36 +4,33 @@ from unienv_interface.space import Space
 from typing import Union, Any, Optional
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
-class BatchifyTransformation(DataTransformation[
-    BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType, 
-    BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType
-]):
+class BatchifyTransformation(DataTransformation):
     has_inverse = True
-    def __init__(
-        self,
-        source_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
-    ):  
-        self.source_space = source_space
-        self.target_space = sbu.batch_space(source_space, 1)
-
-    def transform(self, data: BArrayType) -> BArrayType:
-        target_data = sbu.concatenate(self.target_space, [data])
-        return target_data
     
-    def transform_batched(self, data: BArrayType) -> BArrayType:
-        return self.transform(data)
+    def get_target_space_from_source(self, source_space):
+        return sbu.batch_space(source_space, 1)
+
+    def transform(self, source_space, data):
+        return sbu.concatenate(
+            source_space,
+            [data]
+        )
     
-    def inverse_transform(self, data: BArrayType) -> BArrayType:
-        return self.inverse_transform_batched(data)
+    def direction_inverse(self, source_space = None):
+        return UnBatchifyTransformation()
 
-    def inverse_transform_batched(self, data: BArrayType) -> BArrayType:
-        source_data = next(sbu.iterate(self.target_space, data))
-        return source_data
+class UnBatchifyTransformation(DataTransformation):
+    has_inverse = True
+    
+    def get_target_space_from_source(self, source_space):
+        return next(iter(sbu.unbatch_spaces(source_space)))
 
-def UnBatchifyTransformation(
-    source_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
-) -> DataTransformation[
-    BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType,
-    BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType
-]:
-    return BatchifyTransformation(source_space).direction_inverse()
+    def transform(self, source_space, data):
+        return sbu.get_at(
+            source_space,
+            data,
+            0
+        )
+    
+    def direction_inverse(self, source_space = None):
+        return BatchifyTransformation()

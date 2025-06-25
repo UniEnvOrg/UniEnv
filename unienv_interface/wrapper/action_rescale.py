@@ -19,13 +19,13 @@ class ActionRescaleWrapper(
     def __init__(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        new_low : Union[Any, float] = -1.0,
-        new_high : Union[Any, float] = 1.0,
+        new_low : Union[BArrayType, float] = -1.0,
+        new_high : Union[BArrayType, float] = 1.0
     ):
         action_transformation = RescaleTransformation(
-            env.action_space,
             new_low,
             new_high
         )
-        super().__init__(env, action_transformation)
+        target_space = action_transformation.get_target_space_from_source(env.action_space)
+        super().__init__(env, action_transformation.direction_inverse(env.action_space), target_space)
 

@@ -24,11 +24,11 @@ class BatchifyWrapper(
         assert env.batch_size is None
         super().__init__(
             env,
-            context_transformation=None if env.context_space is None else BatchifyTransformation(env.context_space),
-            observation_transformation=BatchifyTransformation(env.observation_space),
-            action_transformation=UnBatchifyTransformation(env.action_space),
+            context_transformation=None if env.context_space is None else BatchifyTransformation(),
+            observation_transformation=BatchifyTransformation(),
+            action_transformation=UnBatchifyTransformation(),
+            target_action_space=sbu.batch_space(env.action_space, 1)
         )
-        print(env.action_space, self.action_space)
     
     @property
     def batch_size(self) -> int:
@@ -36,12 +36,18 @@ class BatchifyWrapper(
     
     def step(self, action):
         obs, rewards, terminated, truncated, info = super().step(action)
-        terminated = self.backend.asarray(
-            [terminated], dtype=self.backend.default_boolean_dtype, device=self.device
-        )
-        truncated = self.backend.asarray(
-            [truncated], dtype=self.backend.default_boolean_dtype, device=self.device
-        )
+        if self.backend.is_backendarray(terminated):
+            terminated = self.backend.stack([terminated], axis=0)
+        else:
+            terminated = self.backend.asarray(
+                [terminated], dtype=self.backend.default_boolean_dtype, device=self.device
+            )
+        if self.backend.is_backendarray(truncated):
+            truncated = self.backend.stack([truncated], axis=0)
+        else:
+            truncated = self.backend.asarray(
+                [truncated], dtype=self.backend.default_boolean_dtype, device=self.device
+            )
         return obs, rewards, terminated, truncated, info
 
 class UnBatchifyWrapper(
@@ -61,9 +67,10 @@ class UnBatchifyWrapper(
         assert env.batch_size == 1, "UnBatchifyWrapper can only be used with envs that have batch_size == 1"
         super().__init__(
             env,
-            context_transformation=None if env.context_space is None else UnBatchifyTransformation(env.context_space),
-            observation_transformation=UnBatchifyTransformation(env.observation_space),
-            action_transformation=UnBatchifyTransformation(env.action_space),
+            context_transformation=None if env.context_space is None else UnBatchifyTransformation(),
+            observation_transformation=UnBatchifyTransformation(),
+            action_transformation=BatchifyTransformation(),
+            target_action_space=next(iter(sbu.unbatch_spaces(env.action_space, 1)))
         )
 
     @property
@@ -72,6 +79,6 @@ class UnBatchifyWrapper(
     
     def step(self, action):
         obs, rewards, terminated, truncated, info = super().step(action)
-        terminated = bool(terminated)
-        truncated = bool(truncated)
+        terminated = bool(terminated[0])
+        truncated = bool(truncated[0])
         return obs, rewards, terminated, truncated, info

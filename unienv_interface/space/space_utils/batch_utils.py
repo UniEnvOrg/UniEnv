@@ -542,6 +542,7 @@ def concatenate(
 
 @concatenate.register(BoxSpace)
 @concatenate.register(BinarySpace)
+@concatenate.register(DynamicBoxSpace)
 def _concatenate_base(
     space: typing.Union[BoxSpace, BinarySpace],
     items: Iterable,

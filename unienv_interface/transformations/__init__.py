@@ -1,4 +1,4 @@
-from .transformation import DataTransformation, DirectionInverseTransformation
+from .transformation import DataTransformation
 from .rescale import RescaleTransformation
-from .filter_dict import FilterDictTransformation
+from .filter_dict import DictIncludeKeyTransformation, DictExcludeKeyTransformation
 from .batch_and_unbatch import BatchifyTransformation, UnBatchifyTransformation

@@ -6,5 +6,4 @@ from .control_frequency_limit import ControlFrequencyLimitWrapper
 from .action_rescale import ActionRescaleWrapper
 from .flatten import FlattenActionWrapper, FlattenContextObservationWrapper
 from .frame_stack import FrameStackWrapper
-from .filter_dict import FilterContextObsWrapper
 from .batch_and_unbatch import BatchifyWrapper, UnBatchifyWrapper
