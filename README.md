@@ -18,6 +18,6 @@ Also supports on-the-fly conversion between backend data (using DLPack, so that 
 
 Current environments:
 - Any Environment defined in Gymnasium interface
-- Mujoco
+- <s>Mujoco</s> (New code will be added in the future, but I'm currently working on refractoring World based environments)
 - MJX based on [Mujoco-Playground](https://github.com/google-deepmind/mujoco_playground)
 - [ManiSkill 3](https://github.com/haosulab/ManiSkill/)
