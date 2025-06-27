@@ -44,7 +44,7 @@ class Sensor(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         Reset the sensor and update its internal state.
         When this method is called, the `update` method will not be called until the next environment step.
         """
-        pass
+        self.update()
     
     def close(self) -> None:
         """
