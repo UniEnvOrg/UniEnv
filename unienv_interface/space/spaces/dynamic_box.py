@@ -3,44 +3,59 @@ import numpy as np
 from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
-def pad_array_on_axis(
-    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
-    data : BArrayType, # (..., T, ...)
-    axis : int,
-    target_size : int,
-    fill_value : Union[int, float] = 0,
-) -> BArrayType:
-    n_pad = target_size - data.shape[axis]
-    if n_pad != 0:
-        assert n_pad > 0
-        return backend.concat([
-            data,
-            backend.full(data.shape[:axis] + (n_pad,) + data.shape[axis+1:], fill_value, device=backend.device(data), dtype=data.dtype)
-        ], axis=axis)
-    return data
-
-def unpad_array_on_axis(
-    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
-    data : BArrayType, # (..., T, ...)
-    axis : int,
-    fill_value : Union[int, float] = 0,
-) -> BArrayType:
-    new_shape = (int(np.prod(data.shape[:axis])), data.shape[axis], int(np.prod(data.shape[axis+1:])) if axis != -1 else 1)
-    fill_mask = backend.reshape(backend.equal(
-        data, fill_value
-    ), new_shape) # (B, T, D)
-    fill_mask = backend.all(fill_mask, axis=0) # (T, D)
-    fill_mask = backend.all(fill_mask, axis=-1) # (T,)
-    
-    final_len = data.shape[axis]
-    for i in reversed(range(data.shape[axis])):
-        if fill_mask[i]:
-            final_len -= 1
-        else:
-            break
-    return backend.take(data, backend.arange(final_len, dtype=backend.default_integer_dtype, device=backend.device(data)), axis=axis)
-
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+
+    @staticmethod
+    def pad_array_on_axis(
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        data : BArrayType, # (..., T, ...)
+        axis : int,
+        target_size : int,
+        fill_value : Union[int, float] = 0,
+    ) -> BArrayType:
+        n_pad = target_size - data.shape[axis]
+        if n_pad != 0:
+            assert n_pad > 0
+            return backend.concat([
+                data,
+                backend.full(data.shape[:axis] + (n_pad,) + data.shape[axis+1:], fill_value, device=backend.device(data), dtype=data.dtype)
+            ], axis=axis)
+        return data
+
+    @staticmethod
+    def get_array_axis_length(
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        data : BArrayType, # (..., T, ...)
+        axis : int,
+        fill_value : Union[int, float] = 0,
+    ) -> int:
+        if axis < 0:
+            axis += len(data.shape)
+        new_shape = (int(np.prod(data.shape[:axis])), data.shape[axis], int(np.prod(data.shape[axis+1:])))
+        fill_mask = backend.reshape(backend.equal(
+            data, fill_value
+        ), new_shape) # (B, T, D)
+        fill_mask = backend.all(fill_mask, axis=0) # (T, D)
+        fill_mask = backend.all(fill_mask, axis=-1) # (T,)
+        
+        final_len = data.shape[axis]
+        for i in reversed(range(data.shape[axis])):
+            if fill_mask[i]:
+                final_len -= 1
+            else:
+                break
+        return final_len
+
+    @staticmethod
+    def unpad_array_on_axis(
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        data : BArrayType, # (..., T, ...)
+        axis : int,
+        fill_value : Union[int, float] = 0,
+    ) -> BArrayType:
+        axis_len = __class__.get_array_axis_length(backend, data, axis, fill_value)
+        return backend.take(data, backend.arange(axis_len, dtype=backend.default_integer_dtype, device=backend.device(data)), axis=axis)
+
     def __init__(
         self,
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -308,6 +323,14 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             sample = self.backend.astype(sample, self.dtype)
             sample += low
         return rng, sample
+
+    def create_empty(self):
+        # Create an empty data structure with maximum shape
+        return self.backend.empty(
+            self.shape_high,
+            dtype=self.dtype,
+            device=self.device
+        )
 
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""

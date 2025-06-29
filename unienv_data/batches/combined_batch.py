@@ -37,17 +37,15 @@ class CombinedBatch(BatchBase[
             is_mutable = is_mutable and batch.is_mutable
         
         if single_metadata_space is not None:
-            new_metadata_space = single_metadata_space.spaces.copy()
-            self.original_single_metadata_space = single_metadata_space
-            self.original_single_metadata_space_flat = sfu.flatten_space(
-                single_metadata_space
-            )
-            self.original_batched_metadata_space = batches[0].batched_metadata_space
+            new_metadata_space = copy.copy(single_metadata_space)
         else:
-            new_metadata_space = {}
-            self.original_single_metadata_space = None
-            self.original_single_metadata_space_flat = None
-            self.original_batched_metadata_space = None
+            new_metadata_space = DictSpace(
+                backend,
+                {},
+                device=device,
+            )
+        
+        # Add our own metadata space for batch index
         new_metadata_space['batch_index'] = BoxSpace(
             backend,
             low=0,
@@ -55,11 +53,6 @@ class CombinedBatch(BatchBase[
             dtype=backend.default_integer_dtype,
             device=device,
             shape=(),
-        )
-        new_metadata_space = DictSpace(
-            backend,
-            new_metadata_space,
-            device=device,
         )
         super().__init__(single_space, new_metadata_space)
 
@@ -86,7 +79,7 @@ class CombinedBatch(BatchBase[
                 self.backend.asarray([start_idx, end_idx, batch_size], dtype=self.backend.default_integer_dtype, device=self.device)
             )
             start_idx = end_idx
-        self.index_caches = index_caches
+        self.index_caches = index_caches # (len(self.batches), 3) where the second dimension is start, end, and size of each batch
     
     def __len__(self) -> int:
         return self.index_caches[-1, 1]
@@ -97,9 +90,12 @@ class CombinedBatch(BatchBase[
          - the batch index
          - the index within the batch
         """
+        assert -len(self) <= idx < len(self), f"Index {idx} out of bounds for batch of size {len(self)}"
+        if idx < 0:
+            idx += len(self)
         batch_index = int(self.backend.sum(
             idx >= self.index_caches[:, 0]
-        ))
+        ) - 1)
         return batch_index, idx - self.index_caches[batch_index, 0]
 
     def _convert_index(self, idx : Union[IndexableType, BArrayType]) -> Tuple[
@@ -130,12 +126,26 @@ class CombinedBatch(BatchBase[
             )
         elif self.backend.is_backendarray(idx):
             assert len(idx.shape) == 1, "Index must be 1D"
-            idx_array = idx
+            assert self.backend.dtype_is_real_integer(idx.dtype) or self.backend.dtype_is_boolean(idx.dtype), \
+                f"Index must be of integer or boolean type, got {idx.dtype}"
+            if self.backend.dtype_is_boolean(idx.dtype):
+                assert idx.shape[0] == len(self), f"Boolean index must have the same length as the batch, got {idx.shape[0]} vs {len(self)}"
+                idx_array = self.backend.nonzero(idx)[0]
+            else:
+                idx_array = idx
         else:
             raise ValueError(f"Invalid index type: {type(idx)}")
         
-        idx_array_positive = idx_array % len(self)
-        idx_array_bigger = idx_array_positive[:, None] >= self.index_caches[None, :, 0] # (idx_array_shape, len(self.batches))
+        assert bool(self.backend.all(
+            self.backend.logical_and(
+                -len(self) <= idx_array,
+                idx_array < len(self)
+            )
+        )), f"Index {idx} converted to {idx_array} is out of bounds for batch of size {len(self)}"
+        
+        # Convert negative indices to positive indices
+        idx_array = self.backend.at(idx_array)[idx_array < 0].add(len(self))
+        idx_array_bigger = idx_array[:, None] >= self.index_caches[None, :, 0] # (idx_array_shape, len(self.batches))
         idx_array_batch_idx = self.backend.sum(
             idx_array_bigger,
             axis=-1
@@ -146,7 +156,7 @@ class CombinedBatch(BatchBase[
         for i in range(batch_indexes.shape[0]):
             batch_index = int(batch_indexes[i])
             result_mask = idx_array_batch_idx == batch_index
-            index_into_batch = idx_array_positive[result_mask] - self.index_caches[batch_index, 0]
+            index_into_batch = idx_array[result_mask] - self.index_caches[batch_index, 0]
             result_batch_list.append((batch_index, index_into_batch, result_mask))
         return idx_array.shape[0], result_batch_list
 
@@ -165,9 +175,9 @@ class CombinedBatch(BatchBase[
                     result = self.backend.zeros(
                         (batch_size, *batch_result.shape[1:]),
                         dtype=batch_result.dtype,
-                        device=self.device
+                        device=self.backend.device(batch_result)
                     )
-                result[mask] = batch_result
+                result = self.backend.at(result)[mask].set(batch_result)
             return result
     
     def get_flattened_at_with_metadata(self, idx : Union[IndexableType, BaseException]) -> Tuple[BArrayType, Dict[str, Any]]:
@@ -187,13 +197,11 @@ class CombinedBatch(BatchBase[
             batch_size, batch_list = self._convert_index(idx)
             
             result = None
-            metadata_arr = None
-            if self.original_single_metadata_space_flat is not None:
-                metadata_arr = self.backend.zeros(
-                    (batch_size, *self.original_single_metadata_space_flat.shape),
-                    dtype=self.original_single_metadata_space_flat.dtype,
-                    device=self.device
-                )
+            metadata_space = sbu.batch_space(
+                self.single_metadata_space,
+                batch_size,
+            )
+            metadata = metadata_space.create_empty()
             batch_index_arr = self.backend.zeros(
                 (batch_size,),
                 dtype=self.backend.default_integer_dtype,
@@ -201,7 +209,7 @@ class CombinedBatch(BatchBase[
             )
 
             for batch_index, index_into_batch, mask in batch_list:
-                batch_result, metadata = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
+                batch_result, metadata_result = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
                 if result is None:
                     result = self.backend.zeros(
                         (batch_size, *batch_result.shape[1:]),
@@ -209,28 +217,88 @@ class CombinedBatch(BatchBase[
                         device=self.device
                     )
 
-                result[mask] = batch_result
-                if metadata_arr is not None:
-                    metadata_flat = sfu.flatten_data(
-                        self.original_batched_metadata_space,
-                        metadata,
-                        start_dim=1,
-                    )
-                    metadata_arr[mask] = metadata_flat
-                batch_index_arr[mask] = batch_index
-            
-            if metadata_arr is not None:
-                metadata = sfu.unflatten_data(
-                    self.original_batched_metadata_space,
-                    metadata_arr,
-                    start_dim=1,
+                result = self.backend.at(result)[mask].set(batch_result)
+                metadata = sbu.set_at(
+                    metadata_space,
+                    metadata,
+                    mask,
+                    metadata_result,
                 )
-            else:
-                metadata = {}
-            metadata['batch_index'] = batch_index_arr
+                batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             
+            metadata['batch_index'] = batch_index_arr
             return result, metadata
     
+    def get_at(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
+        if isinstance(idx, int):
+            batch_idx, index_into_batch = self._convert_single_index(idx)
+            return self.batches[batch_idx].get_at(index_into_batch)
+        else:
+            batch_size, batch_list = self._convert_index(idx)
+            result_space = sbu.batch_space(
+                self.single_space,
+                batch_size,
+            )
+            result = result_space.create_empty()
+            for batch_index, index_into_batch, mask in batch_list:
+                result = sbu.set_at(
+                    self.single_space,
+                    result,
+                    mask,
+                    self.batches[batch_index].get_at(index_into_batch),
+                )
+            return result
+
+    def get_at_with_metadata(self, idx : Union[IndexableType, BArrayType]) -> Tuple[BatchT, Dict[str, Any]]:
+        if isinstance(idx, int):
+            batch_idx, index_into_batch = self._convert_single_index(idx)
+            dat, metadata = self.batches[batch_idx].get_at_with_metadata(index_into_batch)
+            if metadata is None:
+                metadata = {}
+            metadata['batch_index'] = self.backend.full(
+                (),
+                batch_idx,
+                dtype=self.backend.default_integer_dtype,
+                device=self.device
+            )
+            return dat, metadata
+        else:
+            batch_size, batch_list = self._convert_index(idx)
+            result_space = sbu.batch_space(
+                self.single_space,
+                batch_size,
+            )
+            result = result_space.create_empty()
+            metadata_space = sbu.batch_space(
+                self.single_metadata_space,
+                batch_size,
+            )
+            metadata = metadata_space.create_empty()
+            batch_index_arr = self.backend.zeros(
+                (batch_size,),
+                dtype=self.backend.default_integer_dtype,
+                device=self.device
+            )
+
+            for batch_index, index_into_batch, mask in batch_list:
+                batch_result, metadata_result = self.batches[batch_index].get_at_with_metadata(index_into_batch)
+                result = sbu.set_at(
+                    self.single_space,
+                    result,
+                    mask,
+                    batch_result,
+                )
+                metadata = sbu.set_at(
+                    metadata_space,
+                    metadata,
+                    mask,
+                    metadata_result,
+                )
+                batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+            
+            metadata['batch_index'] = batch_index_arr
+            return result, metadata
+
     def set_flattened_at(self, idx : Union[IndexableType, BArrayType], value : BArrayType) -> None:
         assert self.is_mutable, "Batch is not mutable"
         if isinstance(idx, int):

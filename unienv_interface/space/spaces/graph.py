@@ -211,6 +211,11 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             edges=edges,
         )
 
+    def create_empty(self) -> GraphInstance[BArrayType]:
+        raise NotImplementedError(
+            "GraphSpace does not support create_empty method. Use GraphInstance with appropriate shapes instead."
+        )
+
     def is_bounded(self, manner = "both"):
         return (
             (self.node_feature_space is None or self.node_feature_space.is_bounded(manner)) 

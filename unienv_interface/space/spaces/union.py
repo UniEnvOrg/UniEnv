@@ -58,6 +58,10 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         rng, sample = subspace.sample(rng)
         return rng, (subspace_idx, sample)
 
+    def create_empty(self) -> Tuple[int, Any]:
+        """Create an empty data structure for this space."""
+        return (0, self.spaces[0].create_empty())
+
     def is_bounded(self, manner = "both"):
         return all(
             space.is_bounded(manner) for space in self.spaces

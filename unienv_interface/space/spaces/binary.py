@@ -53,6 +53,13 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             self.dtype,
             copy=False
         )
+    
+    def create_empty(self):
+        return self.backend.empty(
+            self.shape,
+            dtype=self.dtype,
+            device=self.device
+        )
 
     def is_bounded(self, manner = "both"):
         return True

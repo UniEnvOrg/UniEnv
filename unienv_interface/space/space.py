@@ -42,6 +42,13 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         raise NotImplementedError
 
     @abc.abstractmethod
+    def create_empty(
+        self
+    ) -> SpaceDataT:
+        """Create an empty data structure for this space."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def is_bounded(self, manner: Literal["both", "below", "above"] = "both") -> bool:
         """Return boolean specifying if this space is bounded in the specified manner."""
         raise NotImplementedError

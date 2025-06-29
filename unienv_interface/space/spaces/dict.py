@@ -76,6 +76,13 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
         for key, space in self.spaces.items():
             rng, ret_dict[key] = space.sample(rng)
         return rng, ret_dict
+    
+    def create_empty(self) -> Dict[str, Any]:
+        """Create an empty data structure for this space."""
+        return {
+            key: space.create_empty() 
+            for key, space in self.spaces.items()
+        }
 
     def is_bounded(self, manner = "both"):
         return all(
@@ -87,7 +94,7 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
         if isinstance(x, Mapping) and x.keys() == self.spaces.keys():
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
-    
+
     def get_repr(
         self,
         abbreviate : bool = False,

@@ -250,6 +250,13 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             sample += low
         return rng, sample
 
+    def create_empty(self) -> BArrayType:
+        return self.backend.empty(
+            self.shape,
+            dtype=self.dtype,
+            device=self.device
+        )
+
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if not self.backend.is_backendarray(x):

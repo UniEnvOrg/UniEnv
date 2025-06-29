@@ -53,6 +53,10 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             samples.append(sample)
         return rng, tuple(samples)
 
+    def create_empty(self) -> Tuple[Any, ...]:
+        """Create an empty data structure for this space."""
+        return tuple(space.create_empty() for space in self.spaces)
+
     def is_bounded(self, manner = "both"):
         return all(space.is_bounded(manner) for space in self.spaces)
 
