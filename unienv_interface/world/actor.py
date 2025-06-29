@@ -5,7 +5,7 @@ from unienv_interface.space import Space, DictSpace
 from .sensor import Sensor
 from dataclasses import dataclass
 
-class Actor(ABC, Sensor[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+class Actor(Sensor[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     action_space : Space[Any, BDeviceType, BDtypeType, BRNGType] = None
 
     @abstractmethod
