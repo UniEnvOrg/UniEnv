@@ -4,7 +4,6 @@ from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
-
     @staticmethod
     def pad_array_on_axis(
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -65,6 +64,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         shape_high : Sequence[int],
         dtype: BDtypeType,
         device : Optional[BDeviceType] = None,
+        fill_value : Union[int, float] = 0,
     ):
         assert (
             dtype is not None
@@ -172,6 +172,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
         self._low = _low
         self._high = _high
+        self.fill_value = fill_value
 
     def get_low(self, shape : Sequence[int]) -> BArrayType:
         return self.backend.broadcast_to(self._low, shape)
@@ -215,7 +216,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             shape_low=self.shape_low,
             shape_high=self.shape_high,
             dtype=new_dtype,
-            device=new_device
+            device=new_device,
+            fill_value=self.fill_value,
         )
 
     def is_bounded(self, manner = "both"):
@@ -324,6 +326,47 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             sample += low
         return rng, sample
 
+    def pad_data(
+        self,
+        data : BArrayType,
+        start_axis : Optional[int] = None,
+        end_axis : Optional[int] = None,
+    ) -> BArrayType:
+        """Pad the data to the maximum shape of this space."""
+        assert self.backend.is_backendarray(data), f"DynamicBoxSpace.pad_data expects data to be a backend array, actual type: {type(data)}"
+        axis_slice = slice(start_axis, end_axis)
+        for axis_i in range(*axis_slice.indices(len(self.shape_low))):
+            if self.shape_high[axis_i] == self.shape_low[axis_i]:
+                continue
+            data = self.pad_array_on_axis(
+                self.backend,
+                data,
+                axis_i,
+                self.shape_high[axis_i],
+                fill_value=self.fill_value
+            )
+        return data
+    
+    def unpad_data(
+        self,
+        data : BArrayType,
+        start_axis : Optional[int] = None,
+        end_axis : Optional[int] = None,
+    ) -> BArrayType:
+        """Unpad the data to the minimum shape of this space."""
+        assert self.backend.is_backendarray(data), f"DynamicBoxSpace.unpad_data expects data to be a backend array, actual type: {type(data)}"
+        axis_slice = slice(start_axis, end_axis)
+        for axis_i in range(*axis_slice.indices(len(self.shape_low))):
+            if self.shape_high[axis_i] == self.shape_low[axis_i]:
+                continue
+            data = self.unpad_array_on_axis(
+                self.backend,
+                data,
+                axis_i,
+                fill_value=self.fill_value
+            )
+        return data
+
     def create_empty(self):
         # Create an empty data structure with maximum shape
         return self.backend.empty(
@@ -367,9 +410,9 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         include_dtype : bool = True,
     ) -> str:
         if abbreviate:
-            ret = f"[{self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}) {self.shape_low}, {self.shape_high}"
+            ret = f"[{self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}) {self.shape_low}, {self.shape_high}, fill_value={self.fill_value}"
         else:
-            ret = f"DynamicBoxSpace({self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}, {self.shape_low}, {self.shape_high}"
+            ret = f"DynamicBoxSpace({self.backend.abbreviate_array(self._low, try_cast_scalar=True)}, {self.backend.abbreviate_array(self._high, try_cast_scalar=True)}, {self.shape_low}, {self.shape_high}, fill_value={self.fill_value}"
         if include_backend:
             ret += f", backend={self.backend}"
         if include_device:

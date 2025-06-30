@@ -111,7 +111,7 @@ class SpaceDataQueue(
             return stacked_data
         elif self.batch_size == 1:
             stacked_data = sbu.swap_batch_dims_in_data(
-                self.flat_stacked_space,
+                self.backend,
                 stacked_data,
                 0,
                 1
@@ -119,7 +119,7 @@ class SpaceDataQueue(
             return stacked_data
         else:
             stacked_data = sbu.swap_batch_dims_in_data(
-                self.flat_stacked_space,
+                self.backend,
                 stacked_data,
                 0,
                 1

@@ -5,6 +5,7 @@ import copy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIGetIndex, ArrayAPISetIndex
+import numpy as np
 
 from ..spaces import *
 
@@ -13,6 +14,8 @@ __all__ = [
     "batch_space",
     "batch_differing_spaces",
     "unbatch_spaces",
+    "reshape_batch_size",
+    "reshape_batch_size_in_data",
     "swap_batch_dims",
     "swap_batch_dims_in_data",
     "iterate",
@@ -33,9 +36,204 @@ def _shape_transpose(shape : tuple[int, ...], dim1 : int, dim2 : int) -> tuple[i
     return tuple(shape)
 
 @singledispatch
+def reshape_batch_size(
+    space : Space,
+    old_batch_shape : typing.Tuple[int], 
+    new_batch_shape : typing.Tuple[int]
+) -> Space:
+    raise TypeError(
+        f"The space provided to `reshape_batch_size` is not supported, type: {type(space)}, {space}"
+    )
+
+@reshape_batch_size.register(BoxSpace)
+def _reshape_batch_size_box(
+    space: BoxSpace, 
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> BoxSpace:
+    assert np.prod(old_batch_shape) == np.prod(new_batch_shape), \
+        f"Expected the product of old and new batch shapes to be equal, but got old {np.prod(old_batch_shape)} != new {np.prod(new_batch_shape)}"
+    assert space.shape[:len(old_batch_shape)] == old_batch_shape, \
+        f"Expected the beginning of the shape to match the old batch shape, but got {space.shape[:len(old_batch_shape)]} != {old_batch_shape}"
+    new_shape = new_batch_shape + space.shape[len(old_batch_shape):]
+    new_low = space.backend.reshape(space.low, new_shape)
+    new_high = space.backend.reshape(space.high, new_shape)
+    return BoxSpace(
+        backend=space.backend,
+        low=new_low,
+        high=new_high,
+        dtype=space.dtype,
+        device=space.device,
+        shape=new_shape,
+    )
+
+@reshape_batch_size.register(DynamicBoxSpace)
+def _reshape_batch_size_dynamic_box(
+    space: DynamicBoxSpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> DynamicBoxSpace:
+    assert np.prod(old_batch_shape) == np.prod(new_batch_shape), \
+        f"Expected the product of old and new batch shapes to be equal, but got old {np.prod(old_batch_shape)} != new {np.prod(new_batch_shape)}"
+    assert space.shape_low[:len(old_batch_shape)] == old_batch_shape, \
+        f"Expected the beginning of the shape_low to match the old batch shape, but got {space.shape_low[:len(old_batch_shape)]} != {old_batch_shape}"
+    assert space.shape_high[:len(old_batch_shape)] == old_batch_shape, \
+        f"Expected the beginning of the shape_high to match the old batch shape, but got {space.shape_high[:len(old_batch_shape)]} != {old_batch_shape}"
+    
+    new_shape_low = new_batch_shape + space.shape_low[len(old_batch_shape):]
+    new_shape_high = new_batch_shape + space.shape_high[len(old_batch_shape):]
+    
+    value_resize_origin = tuple([
+        space.shape_low[i] if space.shape_low[i] == space.shape_high[i] else 1
+        for i in range(len(space.shape_low))
+    ])
+    value_resize_target = tuple([
+        new_shape_low[i] if new_shape_low[i] == new_shape_high[i] else 1
+        for i in range(len(new_shape_low))
+    ])
+    new_low = space.backend.reshape(space.get_low(value_resize_origin), value_resize_target)
+    new_high = space.backend.reshape(space.get_high(value_resize_origin), value_resize_target)
+    return DynamicBoxSpace(
+        backend=space.backend,
+        low=new_low,
+        high=new_high,
+        shape_low=new_shape_low,
+        shape_high=new_shape_high,
+        dtype=space.dtype,
+        device=space.device,
+        fill_value=space.fill_value,
+    )
+
+@reshape_batch_size.register(BinarySpace)
+def _reshape_batch_size_binary(
+    space: BinarySpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> BinarySpace:
+    assert np.prod(old_batch_shape) == np.prod(new_batch_shape), \
+        f"Expected the product of old and new batch shapes to be equal, but got old {np.prod(old_batch_shape)} != new {np.prod(new_batch_shape)}"
+    assert space.shape[:len(old_batch_shape)] == old_batch_shape, \
+        f"Expected the beginning of the shape to match the old batch shape, but got {space.shape[:len(old_batch_shape)]} != {old_batch_shape}"
+    new_shape = new_batch_shape + space.shape[len(old_batch_shape):]
+    return BinarySpace(
+        backend=space.backend,
+        shape=new_shape,
+        dtype=space.dtype,
+        device=space.device,
+    )
+
+@reshape_batch_size.register(GraphSpace)
+def _reshape_batch_size_graph(
+    space: GraphSpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> GraphSpace:
+    assert np.prod(old_batch_shape) == np.prod(new_batch_shape), \
+        f"Expected the product of old and new batch shapes to be equal, but got old {np.prod(old_batch_shape)} != new {np.prod(new_batch_shape)}"
+    assert space.batch_shape[:len(old_batch_shape)] == old_batch_shape, \
+        f"Expected the beginning of the batch shape to match the old batch shape, but got {space.batch_shape[:len(old_batch_shape)]} != {old_batch_shape}"
+    new_shape = new_batch_shape + space.batch_shape[len(old_batch_shape):]
+    return GraphSpace(
+        backend=space.backend,
+        node_feature_space=space.node_feature_space,
+        edge_feature_space=space.edge_feature_space,
+        is_edge=space.is_edge,
+        min_nodes=space.min_nodes,
+        max_nodes=space.max_nodes,
+        min_edges=space.min_edges,
+        max_edges=space.max_edges,
+        batch_shape=new_shape,
+        device=space.device,
+    )
+
+@reshape_batch_size.register(DictSpace)
+def _reshape_batch_size_dict(
+    space: DictSpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> DictSpace:
+    new_spaces = {
+        key: reshape_batch_size(subspace, old_batch_shape, new_batch_shape)
+        for key, subspace in space.spaces.items()
+    }
+    return DictSpace(
+        backend=space.backend,
+        spaces=new_spaces,
+        device=space.device,
+    )
+
+@reshape_batch_size.register(TupleSpace)
+def _reshape_batch_size_tuple(
+    space: TupleSpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> TupleSpace:
+    new_spaces = [
+        reshape_batch_size(subspace, old_batch_shape, new_batch_shape)
+        for subspace in space.spaces
+    ]
+    return TupleSpace(
+        backend=space.backend,
+        spaces=new_spaces,
+        device=space.device,
+    )
+
+def reshape_batch_size_in_data(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    data : Any, 
+    old_batch_shape: typing.Tuple[int], 
+    new_batch_shape: typing.Tuple[int]
+) -> Any:
+    assert np.prod(old_batch_shape) == np.prod(new_batch_shape), \
+        f"Expected the product of old and new batch shapes to be equal, but got old {np.prod(old_batch_shape)} != new {np.prod(new_batch_shape)}"
+    
+    if data is None:
+        return None
+    
+    if backend.is_backendarray(data):
+        assert data.shape[:len(old_batch_shape)] == old_batch_shape, \
+            f"Expected the beginning of the shape to match the old batch shape, but got {data.shape[:len(old_batch_shape)]} != {old_batch_shape}"
+        data = data.reshape(new_batch_shape + data.shape[len(old_batch_shape):])
+    elif isinstance(data, GraphInstance):
+        assert data.n_nodes.shape[:len(old_batch_shape)] == old_batch_shape, \
+            f"Expected the beginning of the n_nodes shape to match the old batch shape, but got {data.n_nodes.shape[:len(old_batch_shape)]} != {old_batch_shape}"
+        data = GraphInstance(
+            n_nodes=backend.reshape(data.n_nodes, new_batch_shape + data.n_nodes.shape[len(old_batch_shape):]),
+            n_edges=None if data.n_edges is None else backend.reshape(data.n_edges, new_batch_shape + data.n_edges.shape[len(old_batch_shape):]),
+            nodes_features=None if data.nodes_features is None else backend.reshape(data.nodes_features, new_batch_shape + data.nodes_features.shape[len(old_batch_shape):]),
+            edges_features=None if data.edges_features is None else backend.reshape(data.edges_features, new_batch_shape + data.edges_features.shape[len(old_batch_shape):]),
+            edges=None if data.edges is None else backend.reshape(data.edges, new_batch_shape + data.edges.shape[len(old_batch_shape):]),
+        )
+    elif isinstance(data, typing.Mapping):
+        data = {
+            key: reshape_batch_size_in_data(
+                backend,
+                value,
+                old_batch_shape,
+                new_batch_shape
+            )
+            for key, value in data.items()
+        }
+    elif isinstance(data, typing.Sequence):
+        return tuple([
+            reshape_batch_size_in_data(
+                backend,
+                item,
+                old_batch_shape,
+                new_batch_shape
+            ) for item in data
+        ])
+    else:
+        raise TypeError(
+            f"Unable to reshape batch size of data, type: {type(data)}, {data}"
+        )
+    
+    return data
+
+@singledispatch
 def swap_batch_dims(space: Space, dim1: int, dim2: int) -> Space:
     raise TypeError(
-        f"The space provided to `swap_batch_dims` is not a Space instance, type: {type(space)}, {space}"
+        f"The space provided to `swap_batch_dims` is not supported, type: {type(space)}, {space}"
     )
 
 @swap_batch_dims.register(BoxSpace)
@@ -59,6 +257,7 @@ def _swap_batch_dims_dynamic_box(space: DynamicBoxSpace, dim1: int, dim2: int):
         shape_high=_shape_transpose(space.shape_high, dim1, dim2),
         dtype=space.dtype,
         device=space.device,
+        fill_value=space.fill_value,
     )
 
 @swap_batch_dims.register(BinarySpace)
@@ -87,34 +286,34 @@ def _swap_batch_dims_tuple(space: TupleSpace, dim1: int, dim2: int):
         device=space.device,
     )
 
-@singledispatch
+
 def swap_batch_dims_in_data(
-    space: Space, data: Any, dim1: int, dim2: int
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], 
+    data: Any, 
+    dim1: int, 
+    dim2: int
 ) -> Any:
-    raise TypeError(
-        f"The space provided to `swap_batch_dims_in_data` is not a Space instance, type: {type(space)}, {space}"
-    )
-
-@swap_batch_dims_in_data.register(BoxSpace)
-@swap_batch_dims_in_data.register(BinarySpace)
-@swap_batch_dims_in_data.register(DynamicBoxSpace)
-def _swap_batch_dims_in_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArrayType, dim1: int, dim2: int):
-    return _tensor_transpose(space.backend, data, dim1, dim2)
-
-@swap_batch_dims_in_data.register(DictSpace)
-def _swap_batch_dims_in_data_dict(space: DictSpace, data: dict[str, Any], dim1: int, dim2: int):
-    return {
-        key: swap_batch_dims_in_data(subspace, data[key], dim1, dim2)
-        for key, subspace in space.spaces.items()
-    }
-
-@swap_batch_dims_in_data.register(TupleSpace)
-def _swap_batch_dims_in_data_tuple(space: TupleSpace, data: tuple[Any, ...], dim1: int, dim2: int):
-    assert all(type(subspace) in swap_batch_dims_in_data.registry for subspace in space.spaces), "Expected all subspaces in TupleSpace to be swappable"
-    return tuple(
-        swap_batch_dims_in_data(subspace, data[i], dim1, dim2)
-        for i, subspace in enumerate(space.spaces)
-    )
+    if backend.is_backendarray(data):
+        return _tensor_transpose(backend, data, dim1, dim2)
+    elif isinstance(data, GraphInstance):
+        return GraphInstance(
+            n_nodes=_tensor_transpose(backend, data.n_nodes, dim1, dim2),
+            n_edges=None if data.n_edges is None else _tensor_transpose(backend, data.n_edges, dim1, dim2),
+            nodes_features=None if data.nodes_features is None else _tensor_transpose(backend, data.nodes_features, dim1, dim2),
+            edges_features=None if data.edges_features is None else _tensor_transpose(backend, data.edges_features, dim1, dim2),
+            edges=None if data.edges is None else _tensor_transpose(backend, data.edges, dim1, dim2),
+        )
+    elif isinstance(data, typing.Mapping):
+        return {
+            key: swap_batch_dims_in_data(backend, value, dim1, dim2)
+            for key, value in data.items()
+        }
+    elif isinstance(data, typing.Sequence):
+        return tuple([
+            swap_batch_dims_in_data(backend, item, dim1, dim2) for item in data
+        ])
+    else:
+        raise TypeError(f"Unable to determine batch size of data, type: {type(data)}")
 
 @singledispatch
 def batch_size(space: Space) -> Optional[int]:
@@ -194,6 +393,7 @@ def _batch_space_dynamic_box(space: DynamicBoxSpace, n: int = 1):
         shape_high=(n,) + space.shape_high,
         dtype=space.dtype,
         device=space.device,
+        fill_value=space.fill_value,
     )
 
 @batch_space.register(BinarySpace)
@@ -286,6 +486,9 @@ def _batch_differing_spaces_dynamic_box(spaces: typing.Sequence[DynamicBoxSpace]
     assert all(
         spaces[0].shape_high == space.shape_high for space in spaces
     ), f"Expected all DynamicBoxSpace.high shape to be equal, actually {[space.high.shape for space in spaces]}"
+    assert all(
+        spaces[0].fill_value == space.fill_value for space in spaces
+    ), f"Expected all DynamicBoxSpace.fill_value to be equal, actually {[space.fill_value for space in spaces]}"
 
     backend = spaces[0].backend
     target_low = backend.stack(backend.broadcast_arrays(*[space._low for space in spaces]), axis=0)
@@ -299,6 +502,7 @@ def _batch_differing_spaces_dynamic_box(spaces: typing.Sequence[DynamicBoxSpace]
         shape_high=(len(spaces),) + spaces[0].shape_high,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
+        fill_value=spaces[0].fill_value,
     )
 
 @batch_differing_spaces.register(BinarySpace)
@@ -372,6 +576,7 @@ def _unbatch_spaces_dynamic_box(space: DynamicBoxSpace):
             shape_high=space.shape_high[1:],
             dtype=space.dtype,
             device=space.device,
+            fill_value=space.fill_value,
         )
 
 @unbatch_spaces.register(BinarySpace)
@@ -465,10 +670,8 @@ def set_at(
         f"The space provided to `set_at` is not a batched space instance, type: {type(space)}, {space}"
     )
 
-
 @set_at.register(BoxSpace)
 @set_at.register(BinarySpace)
-@set_at.register(DynamicBoxSpace)
 def _set_at_common(
     space: typing.Union[BoxSpace, BinarySpace],
     items: BArrayType,
@@ -476,6 +679,19 @@ def _set_at_common(
     value: BArrayType,
 ) -> BArrayType:
     return space.backend.at(items)[index].set(value)
+
+@set_at.register(DynamicBoxSpace)
+def _set_at_dynamic_box(
+    space: DynamicBoxSpace,
+    items: BArrayType,
+    index: ArrayAPISetIndex,
+    value: BArrayType,
+) -> BArrayType:
+    try:
+        return space.backend.at(items)[index].set(value)
+    except Exception as e:
+        value = space.pad_data(value, start_axis=1)
+        return space.backend.at(items)[index].set(value)
 
 @set_at.register(GraphSpace)
 def _set_at_graph(
@@ -545,9 +761,40 @@ def concatenate(
 @concatenate.register(DynamicBoxSpace)
 def _concatenate_base(
     space: typing.Union[BoxSpace, BinarySpace],
-    items: Iterable,
+    items: Iterable[BArrayType],
     axis: int = 0,
 ) -> Any:
+    return space.backend.stack(items, axis=axis)
+
+@concatenate.register(DynamicBoxSpace)
+def _concatenate_dynamic_box(
+    space: DynamicBoxSpace, items: Iterable[BArrayType], axis: int = 0
+) -> BArrayType:
+    # Ensure all items have the same shape
+    shapes = [item.shape for item in items]
+    assert all(
+        len(shape) == len(shapes[0]) for shape in shapes
+    ), f"Expected all items to have the same number of dimensions, actual shapes: {[shape for shape in shapes]}"
+    if not all(shape == shapes[0] for shape in shapes):
+        if axis < 0:
+            axis += len(shapes[0])
+        max_shape = list(shapes[0])
+        for shape in shapes:
+            for i in range(len(shape)):
+                max_shape[i] = max(max_shape[i], shape[i])
+        items = list(items)
+        for i in range(len(items)):
+            if items[i].shape != max_shape:
+                for pad_axis in range(len(max_shape)):
+                    items[i] = space.pad_array_on_axis(
+                        space.backend,
+                        items[i],
+                        pad_axis,
+                        max_shape[pad_axis],
+                        fill_value=space.fill_value,
+                    )
+    
+    # Stack the items along the specified axis
     return space.backend.stack(items, axis=axis)
 
 @concatenate.register(GraphSpace)
