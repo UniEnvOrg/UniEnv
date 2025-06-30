@@ -18,7 +18,7 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
         backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         max_length: int,
         *,
-        min_length: int = 1,
+        min_length: int = 0,
         charset: Optional[FrozenSet[str] | str] = None,
         device : Optional[BDeviceType] = None,
     ):
