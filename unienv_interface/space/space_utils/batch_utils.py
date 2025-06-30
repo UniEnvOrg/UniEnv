@@ -676,7 +676,7 @@ def _set_at_common(
     space: typing.Union[BoxSpace, BinarySpace],
     items: BArrayType,
     index: ArrayAPISetIndex,
-    value: BArrayType,
+    value: typing.Union[BArrayType, float, int],
 ) -> BArrayType:
     return space.backend.at(items)[index].set(value)
 
@@ -685,7 +685,7 @@ def _set_at_dynamic_box(
     space: DynamicBoxSpace,
     items: BArrayType,
     index: ArrayAPISetIndex,
-    value: BArrayType,
+    value: typing.Union[BArrayType, float, int],
 ) -> BArrayType:
     try:
         return space.backend.at(items)[index].set(value)
@@ -729,10 +729,10 @@ def _set_at_dict(
     space: DictSpace,
     items: typing.Mapping[str, Any],
     index: ArrayAPISetIndex,
-    value: dict[str, Any],
+    value: typing.Union[typing.Dict[str, Any], float, int],
 ) -> dict[str, Any]:
     return {
-        key: set_at(subspace, items[key], index, value[key])
+        key: set_at(subspace, items[key], index, value[key]) if not isinstance(value, (float, int)) else set_at(subspace, items[key], index, value)
         for key, subspace in space.spaces.items()
     }
 
@@ -741,10 +741,10 @@ def _set_at_tuple(
     space: TupleSpace,
     items: typing.Tuple[Any, ...],
     index: ArrayAPISetIndex,
-    value: tuple[Any, ...],
+    value: typing.Union[typing.Tuple[Any, ...], float, int],
 ) -> tuple[Any, ...]:
     return tuple(
-        set_at(subspace, items[i], index, value[i])
+        set_at(subspace, items[i], index, value[i]) if not isinstance(value, (float, int)) else set_at(subspace, items[i], index, value)
         for i, subspace in enumerate(space.spaces)
     )
 

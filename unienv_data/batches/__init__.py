@@ -1,1 +1,2 @@
 from .combined_batch import CombinedBatch
+from .framestack_batch import FrameStackedBatch
