@@ -31,8 +31,9 @@ class FrameStackedBatch(BatchBase[
         ],
         prefetch_horizon : int = 0,
         postfetch_horizon : int = 0,
+        get_valid_mask_function : Optional[Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]] = None,
         fill_invalid_data : bool = True,
-        get_valid_mask_function : Optional[Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]] = None
+        stack_metadata : bool = False,
     ):
         assert prefetch_horizon >= 0, "Prefetch horizon must be a non-negative integer"
         assert postfetch_horizon >= 0, "Postfetch horizon must be a non-negative integer"
@@ -46,7 +47,7 @@ class FrameStackedBatch(BatchBase[
             metadata_space = sbu.batch_space(
                 batch.single_metadata_space,
                 prefetch_horizon + postfetch_horizon + 1,
-            )
+            ) if stack_metadata else copy.deepcopy(batch.single_metadata_space)
         else:
             metadata_space = DictSpace(
                 batch.backend,
@@ -68,6 +69,7 @@ class FrameStackedBatch(BatchBase[
         )
         self.fill_invalid_data = fill_invalid_data
         self.get_valid_mask_function = get_valid_mask_function
+        self.stack_metadata = stack_metadata
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -296,11 +298,19 @@ class FrameStackedBatch(BatchBase[
                 batched_data,
                 valid_mask
             )
-            metadata = self.fill_data_with_stack_mask(
-                self._batched_metadata_space,
+            if self.stack_metadata:
+                metadata = self.fill_data_with_stack_mask(
+                    self._batched_metadata_space,
+                    metadata,
+                    valid_mask
+                )
+        if not self.stack_metadata:
+            metadata = sbu.get_at(
+                self._batched_metadata_space,  # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
                 metadata,
-                valid_mask
+                (slice(None), self.prefetch_horizon)
             )
+
         metadata['slice_valid_mask'] = valid_mask
         return batched_data, metadata
 
@@ -377,14 +387,27 @@ class FrameStackedBatch(BatchBase[
             batched_data
         )
         if self.fill_invalid_data:
-            batched_data, metadata = self.fill_data_with_stack_mask(
-                TupleSpace(
-                    self.backend, 
-                    (self._batched_space, self._batched_metadata_space),
-                    device=self.device
-                ),
-                (batched_data, metadata),
-                valid_mask
+            if self.stack_metadata:
+                batched_data, metadata = self.fill_data_with_stack_mask(
+                    TupleSpace(
+                        self.backend, 
+                        (self._batched_space, self._batched_metadata_space),
+                        device=self.device
+                    ),
+                    (batched_data, metadata),
+                    valid_mask
+                )
+            else:
+                batched_data = self.fill_data_with_stack_mask(
+                    self._batched_space,
+                    batched_data,
+                    valid_mask
+                )
+        if not self.stack_metadata:
+            metadata = sbu.get_at(
+                self._batched_metadata_space, # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
+                metadata,
+                (slice(None), self.prefetch_horizon)
             )
         metadata['slice_valid_mask'] = valid_mask
         return batched_data, metadata
