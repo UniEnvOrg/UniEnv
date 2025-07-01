@@ -36,6 +36,9 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         cls,
         path: Union[str, os.PathLike],
         single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
+        *,
+        capacity : Optional[int] = None,
+        default_value : Optional[Any] = None,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
@@ -210,6 +213,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         assert metadata['type'] == __class__.__name__, f"Metadata type {metadata['type']} does not match expected type {__class__.__name__}"
         offset = int(metadata["offset"])
         count = int(metadata["count"])
+        capacity = int(metadata["capacity"]) if "capacity" in metadata else None
         single_instance_space = bsu.json_to_space(metadata["single_instance_space"], backend, device)
         
         storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["storage_cls"])
@@ -218,6 +222,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         storage = storage_cls.load_from(
             storage_path,
             single_instance_space,
+            capacity=capacity,
             **storage_kwargs
         )
         return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset)
@@ -230,6 +235,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             "type": __class__.__name__,
             "count": self.count,
             "offset": self.offset,
+            "capacity": self.storage.capacity,
             "storage_cls": get_full_class_name(type(self.storage)),
             "storage_path_relative": self.storage_path_relative,
             "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
