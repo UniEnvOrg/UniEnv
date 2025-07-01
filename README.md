@@ -6,7 +6,7 @@ Provides an universal interface for single / parallel state-based or function-ba
 
 ## Cross-backend Support
 
-UniEnvPy supports multiple tensor backends with zero-copy translation layers through the DLPack protocol, and allows you to use the same abstract compute backend interface to write custom data transformation layers, environment wrappers and other utilities. This is powered by the [xbarray](github.com/realquantumcookie/xbarray) package, which builts on top of the Array API Standard, and supports the following backends:
+UniEnvPy supports multiple tensor backends with zero-copy translation layers through the DLPack protocol, and allows you to use the same abstract compute backend interface to write custom data transformation layers, environment wrappers and other utilities. This is powered by the [xbarray](https://github.com/realquantumcookie/xbarray) package, which builts on top of the Array API Standard, and supports the following backends:
 
 - numpy
 - pytorch
@@ -23,3 +23,24 @@ Current supported simulation environments:
 Current supported real robots:
 - Franka Research 3 + RobotiQ Gripper in Droid Setup
 - OyMotion OHand
+
+## Installation
+
+Clone down this repo
+
+```bash
+git clone https://github.com/realquantumcookie/UniEnvPy
+cd UniEnvPy
+```
+
+Install the package with pip
+
+```bash
+pip install -e .
+```
+
+You can install optional dependencies such as `gymnasium`, `mjx`, `maniskill`, `video` by running
+
+```bash
+pip install -e .[gymnasium,mjx,maniskill,video]
+```
