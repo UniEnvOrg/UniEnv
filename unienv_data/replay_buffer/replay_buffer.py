@@ -81,7 +81,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def is_loadable_from(
         path : Union[str, os.PathLike]
     ) -> bool:
-        return os.path.exists(os.path.join(path, "metadata.json"))
+        if os.path.exists(os.path.join(path, "metadata.json")):
+            with open(os.path.join(path, "metadata.json"), "r") as f:
+                metadata = json.load(f)
+            return metadata.get('type', None) == __class__.__name__
+        return False
 
     @staticmethod
     def load_from(
@@ -115,7 +119,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     # =========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        os.makedirs(path, exist_ok=True)
         storage_path = os.path.join(path, self.storage_path_relative)
         self.storage.dumps(storage_path)
         metadata = {
