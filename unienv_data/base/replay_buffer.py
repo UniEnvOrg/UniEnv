@@ -6,79 +6,109 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 
 from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
+from unienv_interface.space.space_utils import serialization_utils as bsu
 from unienv_interface.utils.symbol_util import get_class_from_full_name, get_full_class_name
 from .common import BatchBase, BatchT, IndexableType
 import json
 import pickle
 
-class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    save_ext : str = ".storage"
-
-    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
-    device : Optional[BDeviceType] = None
-    dtype : BDtypeType
-    capacity : Optional[int] = None
-    
-    def __init__(
-        self,
-        single_instance_shape : Tuple[int, ...],
-        default_value : Optional[BArrayType] = None,
-    ):
-        self.single_instance_shape = single_instance_shape
-        self._default_value = default_value
-
-    def load_params(self) -> Dict[str, Any]:
-        raise NotImplementedError
-
+class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """
+    SpaceStorage is an abstract base class for storages that hold instances of a specific space.
+    It provides a common interface for creating, loading, and managing the storage of instances of a given space.
+    Note that if you want your space storage to support multiprocessing, you need to check / implement `__getstate__` and `__setstate__` methods to ensure that the storage can be pickled and unpickled correctly.
+    """
+    # ========== Class Creation and Loading Methods ==========
     @classmethod
     def create(
         cls,
-        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
-        device : Optional[BDeviceType],
-        dtype : BDtypeType,
-        single_instance_shape : Tuple[int, ...],
+        single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         *args,
+        cache_path : Optional[Union[str, os.PathLike]] = None,
         capacity : Optional[int],
-        default_value : Optional[BArrayType] = None,
+        default_value : Optional[Any] = None,
         **kwargs
-    ) -> "TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+    ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
 
     @classmethod
     def load_from(
         cls,
         path: Union[str, os.PathLike],
-        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
-        device : Optional[BDeviceType],
-        dtype : BDtypeType,
-        single_instance_shape : Tuple[int, ...],
-        *args,
-        capacity : Optional[int],
-        default_value : Optional[BArrayType] = None,
+        single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         **kwargs
-    ) -> "TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+    ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
+
+    # ========== Class Attributes ==========
+    
+    """
+    The file extension (e.g. `.pt`) used for saving a single instance of the space.
+    If this is None, it means the storage stores files in a folder
+    """
+    single_file_ext : Optional[str] = None
+
+    # ======== Instance Attributes ==========
+    """
+    The total capacity (number of single instances) of the storage.
+    If None, the storage has unlimited capacity.
+    """
+    capacity : Optional[int] = None
+
+    """
+    The cache path for the storage.
+    If None, the storage will not use caching.
+    """
+    cache_filename : Optional[Union[str, os.PathLike]] = None
+
+    @property
+    def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+        return self.single_instance_space.backend
     
     @property
-    def default_value(self) -> BArrayType:
-        return self._default_value or self.backend.zeros(
-            self.single_instance_shape,
-            dtype=self.dtype,
-            device=self.device
-        )
+    def device(self) -> Optional[BDeviceType]:
+        return self.single_instance_space.device
+
+    def __init__(
+        self,
+        single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
+        default_value : Optional[Any] = None,
+    ):
+        self.single_instance_space = single_instance_space
+        self._default_value = default_value
+    
+    @property
+    def default_value(self) -> Optional[Any]:
+        return self._default_value
 
     @default_value.setter
-    def default_value(self, value : Optional[BArrayType]):
-        if self.backend.all(value == 0):
-            self._default_value = None
-        else:
-            self._default_value = value
+    def default_value(self, value : Optional[Any]):
+        assert value is None or isinstance(value, (int, float)) or self.single_instance_space.contains(value), \
+            f"Default value {value} must be None or of type int, float or match the single instance space {self.single_instance_space}"
+        self._default_value = value
     
     def extend_length(self, length : int) -> None:
         """
         This is used by capacity = None storages to extend the length of the storage
+        If this is called on a storage with a fixed capacity, we will simply ignore the call.
         """
-        raise NotImplementedError
+        pass
+
+    def shrink_length(self, length : int) -> None:
+        """
+        This is used by capacity = None storages to shrink the length of the storage
+        If this is called on a storage with a fixed capacity, we will simply ignore the call.
+        """
+        pass
+
+    def __len__(self) -> int:
+        """
+        Returns the number of instances in the storage
+        Storages with unlimited capacity should implement this method to return the current length of the storage.
+        """
+        if self.capacity is None:
+            raise NotImplementedError(f"__len__ is not implemented for class {type(self).__name__}")
+        return self.capacity
 
     @abc.abstractmethod
     def get(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
@@ -90,10 +120,18 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
     
     @abc.abstractmethod
     def clear(self) -> None:
+        """
+        Clear all data inside the storage and set the length to 0 if the storage has unlimited capacity.
+        For storages with fixed capacity, this should reset the storage to its initial state.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
     def dumps(self, path : Union[str, os.PathLike]) -> None:
+        """
+        Dumps the storage to the specified path.
+        This is used for storages that have a single file extension (e.g. `.pt` for PyTorch).
+        """
         raise NotImplementedError
 
     def close(self) -> None:
@@ -104,29 +142,26 @@ class TensorStorage(abc.ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGTy
 
 def index_with_offset(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
-    index : Union[int, slice, BArrayType, None],
+    index : Union[int, slice, BArrayType],
     len_transitions : int,
-    capacity : Optional[int],
-    offset : int
+    offset : int,
+    device : Optional[BDeviceType] = None,
 ) -> Union[int, BArrayType]:
     """
-    Helpful function to convert replay buffer indices to data indices in the TensorStorage
+    Helpful function to convert round robin indices to data indices in the SpaceStorage
+    Returns:
+        - data_index: The index in the storage that corresponds to the given index with the specified offset.
     """
-    if capacity is None:
-        assert offset == 0, "Offset must be 0 for unbounded storage"
-        capacity = len_transitions
-    if index is Ellipsis or index is None:
-        nonzero_index = backend.arange(len_transitions)
-        data_index = (nonzero_index + offset) % capacity
+    if index is Ellipsis:
+        nonzero_index = backend.arange(len_transitions, device=device)
+        data_index = (nonzero_index + offset) % len_transitions
         return data_index
     elif isinstance(index, int):
-        assert index < len_transitions and index >= -len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
-        nonzero_index = (index + len_transitions) % len_transitions
-        data_index = (nonzero_index + offset) % capacity
-        return data_index
+        assert -len_transitions <= index < len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
+        return (index + len_transitions + offset) % len_transitions
     elif isinstance(index, slice):
-        nonzero_index = backend.asarray(range(*index.indices(len_transitions)))
-        data_index = (nonzero_index + offset) % capacity
+        nonzero_index = backend.arange(*index.indices(len_transitions), device=device)
+        data_index = (nonzero_index + offset) % len_transitions
         return data_index
     else:
         assert len(index.shape) == 1, f"Index shape {index.shape} is not 1D"
@@ -134,57 +169,26 @@ def index_with_offset(
             index.dtype
         ):
             # Boolean mask, rotate the mask by offset
-            rotated_mask = backend.roll(
-                index,
-                shift=offset,
-                axis=0
-            )
-            return rotated_mask
+            nonzero_index = backend.nonzero(index)[0]
         else:
-            assert backend.min(index) >= -len_transitions and backend.max(index) < len_transitions, f"Index {index} is out of bounds for length {len_transitions}"
             assert backend.dtype_is_real_integer(index.dtype), f"Index dtype {index.dtype} is not an integer"
-            nonzero_index = (index + len_transitions) % len_transitions
-            data_index = (nonzero_index + offset) % capacity
-            return data_index
+            nonzero_index = index + len_transitions
+        data_index = (nonzero_index + offset) % len_transitions
+        return data_index
 
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     is_mutable = True
-
-    def __init__(
-        self,
-        storage : TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType],
-        single_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
-        count : int = 0,
-        offset : int = 0
-    ):
-        self.storage = storage
-        self.count = count
-        self.offset = offset
-        assert storage.single_instance_shape == sfu.flatten_space(single_space).shape, "Storage shape must match single instance shape"
-        super().__init__(single_space.to(device=storage.device))
-
+    # =========== Class Attributes ==========
     @staticmethod
     def create(
-        single_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
-        storage_cls : Type[TensorStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]],
-        *storage_args,
-        capacity : Optional[int],
-        default_value : Optional[BArrayType] = None,
-        **storage_kwargs
+        storage : SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
-        flattened_space = sfu.flatten_space(single_space)
-
-        storage = storage_cls.create(
-            flattened_space.backend,
-            flattened_space.device,
-            flattened_space.dtype,
-            flattened_space.shape,
-            *storage_args,
-            capacity=capacity,
-            default_value=default_value,
-            **storage_kwargs
+        return ReplayBuffer(
+            storage, 
+            "storage" + (storage.single_file_ext or ""),
+            0, 
+            0
         )
-        return ReplayBuffer(storage, single_space)
     
     @staticmethod
     def is_loadable_from(
@@ -195,38 +199,60 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     @staticmethod
     def load_from(
         path : Union[str, os.PathLike],
-        *storage_args,
-        default_value : Optional[BArrayType] = None,
+        *,
+        backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType] = None,
+        device: Optional[BDeviceType] = None,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
-            capacity = metadata["capacity"]
-            if capacity is not None:
-                capacity = int(capacity)
-            
-            offset = int(metadata["offset"])
-            count = int(metadata["count"])
         
-        with open(os.path.join(path, "space.pkl"), "rb") as f:
-            single_space = pickle.load(f)
+        assert metadata['type'] == __class__.__name__, f"Metadata type {metadata['type']} does not match expected type {__class__.__name__}"
+        offset = int(metadata["offset"])
+        count = int(metadata["count"])
+        single_instance_space = bsu.json_to_space(metadata["single_instance_space"], backend, device)
         
-        storage_cls : Type[TensorStorage] = get_class_from_full_name(metadata["storage_cls"])
-        storage_path = os.path.join(path, f"storage.data")
+        storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["storage_cls"])
+        storage_path = os.path.join(path, metadata["storage_path_relative"])
 
-        flattened_space = sfu.flatten_space(single_space)
         storage = storage_cls.load_from(
             storage_path,
-            flattened_space.backend,
-            flattened_space.device,
-            flattened_space.dtype,
-            flattened_space.shape,
-            *storage_args,
-            capacity=capacity,
-            default_value=default_value,
+            single_instance_space,
             **storage_kwargs
         )
-        return ReplayBuffer(storage, single_space, count, offset)
+        return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset)
+
+    def dumps(self, path : Union[str, os.PathLike]):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        storage_path = os.path.join(path, self.storage_path_relative)
+        self.storage.dumps(storage_path)
+        metadata = {
+            "type": __class__.__name__,
+            "count": self.count,
+            "offset": self.offset,
+            "storage_cls": get_full_class_name(type(self.storage)),
+            "storage_path_relative": self.storage_path_relative,
+            "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
+        }
+        with open(os.path.join(path, "metadata.json"), "w") as f:
+            json.dump(metadata, f)
+
+    # =========== Instance Attributes and Methods ==========
+    def __init__(
+        self,
+        storage : SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
+        storage_path_relative : Union[str, os.PathLike],
+        count : int = 0,
+        offset : int = 0,
+    ):
+        self.storage = storage
+        self.count = count
+        self.offset = offset
+        self.storage_path_relative = storage_path_relative
+        super().__init__(
+            storage.single_instance_space,
+            None
+        )
 
     def __len__(self) -> int:
         return self.count
@@ -243,81 +269,84 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def device(self) -> Optional[BDeviceType]:
         return self.storage.device
 
+    def get_flattened_at(self, idx):
+        return self.get_flattened_at_with_metadata(idx)[0]
+
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
-        return self.storage.get(index_with_offset(
+        data, metadata = self.get_at_with_metadata(idx)
+        if isinstance(idx, int):
+            data = sfu.flatten_data(self.single_space, data)
+        else:
+            data = sfu.flatten_data(self._batched_space, data, start_dim=1)
+        return data, metadata
+
+    def get_at(self, idx):
+        return self.get_at_with_metadata(idx)[0]
+
+    def get_at_with_metadata(self, idx):
+        data_index = index_with_offset(
             self.backend,
             idx,
             self.count,
-            self.capacity,
-            self.offset
-        )), None
+            self.offset,
+            self.device
+        )
+        data = self.storage.get(data_index)
+        return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
+        if isinstance(idx, int):
+            value = sfu.unflatten_data(self.single_space, value)
+        else:
+            value = sfu.unflatten_data(self._batched_space, value, start_dim=1)
+        self.set_at(idx, value)
+
+    def set_at(self, idx, value):
         self.storage.set(index_with_offset(
             self.backend,
             idx,
             self.count,
-            self.capacity,
-            self.offset
+            self.offset,
+            self.device
         ), value)
 
     def extend_flattened(
         self,
         value: BArrayType
     ):
-        b = value.shape[0]
-        if b == 0:
+        unflattened_data = sfu.unflatten_data(self._batched_space, value, start_dim=1)
+        self.extend(unflattened_data)
+        
+    def extend(self, value):
+        B = sbu.batch_size_data(value)
+        if B == 0:
             return
-
-        start_storage_idx = self.offset + self.count
         if self.capacity is None:
-            self.storage.set(slice(start_storage_idx, start_storage_idx + b), value)
-            self.count = self.count + b
+            assert self.offset == 0, "Offset must be 0 when capacity is None"
+            self.storage.extend_length(B)
+            self.storage.set(slice(self.count, self.count + B), value)
+            self.count += B
             return
         
-        start_storage_idx = start_storage_idx % self.capacity
-        if b >= self.capacity:
-            self.storage.set(None, value[-self.capacity:])
+        # We have a fixed capacity, only keep the last `capacity` elements
+        if B >= self.capacity:
+            self.storage.set(None, sbu.get_at(self._batched_space, value, slice(-self.capacity)))
             self.count = self.capacity
             self.offset = 0
             return
         
-        remaining_capacity = self.capacity - start_storage_idx
-        if b <= remaining_capacity:
-            self.storage.set(slice(start_storage_idx, start_storage_idx + b), value)
-            outflow = max(0, self.count + b - self.capacity)
-            if outflow > 0:
-                self.offset = (self.offset + outflow) % self.capacity
-            self.count = min(self.count + b, self.capacity)
-            return
-        else:
-            self.storage.set(slice(start_storage_idx, self.capacity), value[:remaining_capacity])
-            self.count = min(self.count + remaining_capacity, self.capacity)
-            self.offset = 0
-            self.extend_flattened(value[remaining_capacity:])
-            return
-    
+        # Otherwise, perform round-robin writes
+        indexes = (self.backend.arange(B, device=self.device) + self.offset) % self.capacity
+        self.storage.set(indexes, value)
+        outflow = max(0, self.count + B - self.capacity)
+        if outflow > 0:
+            self.offset = (self.offset + outflow) % self.capacity
+        self.count = min(self.count + B, self.capacity)
+
     def clear(self):
         self.count = 0
         self.offset = 0
         self.storage.clear()
 
-    def dumps(self, path : Union[str, os.PathLike]):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.storage.dumps(os.path.join(path, f"storage.data"))
-        metadata = {
-            "capacity": self.capacity,
-            "count": self.count,
-            "offset": self.offset,
-            "storage_cls": get_full_class_name(type(self.storage))
-        }
-        with open(os.path.join(path, "metadata.json"), "w") as f:
-            json.dump(metadata, f)
-        with open(os.path.join(path, "space.pkl"), "wb") as f:
-            pickle.dump(self.single_space, f)
-
     def close(self) -> None:
         self.storage.close()
-
-    def __del__(self) -> None:
-        self.close()
