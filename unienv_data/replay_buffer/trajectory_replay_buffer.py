@@ -139,12 +139,23 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         else:
             episode_data_buffer = None
         
+        
+        # Convert JSON string keys back to int keys for episode_id_to_index_map
+        if episode_data_buffer is not None:
+            raw_map = metadata.get("episode_id_to_index_map")
+            episode_id_to_index_map = (
+                {int(k): v for k, v in raw_map.items()}
+                if raw_map is not None else {}
+            )
+        else:
+            episode_id_to_index_map = None
+
         return TrajectoryReplayBuffer(
             step_data_buffer,
             step_episode_id_buffer,
             episode_data_buffer,
             current_episode_id=metadata["current_episode_id"],
-            episode_id_to_index_map=None if episode_data_buffer is None else metadata["episode_id_to_index_map"],
+            episode_id_to_index_map=episode_id_to_index_map,
         )
 
     # ========== Instance Attributes and Methods ==========
@@ -157,10 +168,20 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         if self.episode_data_buffer is not None:
             episode_data_path = os.path.join(path, "episode_data")
             self.episode_data_buffer.dumps(episode_data_path)
+        
+        # Convert episode_id_to_index_map keys to strings for JSON serialization
+        if self.episode_id_to_index_map is not None:
+            episode_id_to_index_map = {
+                str(ep_id): idx
+                for ep_id, idx in self.episode_id_to_index_map.items()
+            }
+        else:
+            episode_id_to_index_map = None
+
         metadata = {
             "type": __class__.__name__,
             "current_episode_id": self.current_episode_id,
-            "episode_id_to_index_map": self.episode_id_to_index_map,
+            "episode_id_to_index_map": episode_id_to_index_map,
         }
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
@@ -308,7 +329,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
     
     def set_at(self, idx, value):
         if "episode_ids" in value:
-            self.step_episode_id_buffer.set_at(idx, episode_ids)
+            self.step_episode_id_buffer.set_at(idx, value['episode_ids'])
             
         if "step_data" in value:
             step_data = value["step_data"]
@@ -318,9 +339,13 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             episode_ids = value["episode_ids"] if "episode_ids" in value else self.step_episode_id_buffer.get_at(idx)
             episode_data = value["episode_data"]
             episode_ids_unique, unique_indices, _, _ = self.backend.unique_all(episode_ids)
-            self.episode_data_buffer.set_at(
+            self.set_episode_data_at(
                 episode_ids_unique,
-                episode_data[unique_indices]
+                sbu.get_at(
+                    self._batched_space['episode_data'],
+                    episode_data,
+                    unique_indices
+                )
             )
     
     def set_episode_data_at(
@@ -413,12 +438,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
                 dtype=self.backend.default_integer_dtype,
                 device=self.device
             )
-        self.step_episode_id_buffer.extend(self.backend.full(
-            (B,),
-            self.current_episode_id,
-            dtype=self.backend.default_integer_dtype,
-            device=self.device
-        ))
+        self.step_episode_id_buffer.extend(episode_ids)
         self.step_data_buffer.extend(value["step_data"])
         
         if "episode_data" in value and self.episode_data_buffer is not None:
