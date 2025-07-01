@@ -26,7 +26,6 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         *args,
         cache_path : Optional[Union[str, os.PathLike]] = None,
         capacity : Optional[int],
-        default_value : Optional[Any] = None,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
@@ -38,7 +37,6 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         *,
         capacity : Optional[int] = None,
-        default_value : Optional[Any] = None,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
@@ -75,20 +73,8 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     def __init__(
         self,
         single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
-        default_value : Optional[Any] = None,
     ):
         self.single_instance_space = single_instance_space
-        self._default_value = default_value
-    
-    @property
-    def default_value(self) -> Optional[Any]:
-        return self._default_value
-
-    @default_value.setter
-    def default_value(self, value : Optional[Any]):
-        assert value is None or isinstance(value, (int, float)) or self.single_instance_space.contains(value), \
-            f"Default value {value} must be None or of type int, float or match the single instance space {self.single_instance_space}"
-        self._default_value = value
     
     def extend_length(self, length : int) -> None:
         """
@@ -175,6 +161,8 @@ def index_with_offset(
             nonzero_index = backend.nonzero(index)[0]
         else:
             assert backend.dtype_is_real_integer(index.dtype), f"Index dtype {index.dtype} is not an integer"
+            assert backend.all(index >= -len_transitions) and backend.all(index < len_transitions), \
+                f"Index values {index} are out of bounds for length {len_transitions}"
             nonzero_index = index + len_transitions
         data_index = (nonzero_index + offset) % len_transitions
         return data_index
@@ -184,12 +172,25 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     # =========== Class Attributes ==========
     @staticmethod
     def create(
-        storage : SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
+        storage_cls : Type[SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
+        *args,
+        cache_path : Optional[Union[str, os.PathLike]] = None,
+        capacity : Optional[int] = None,
+        **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        storage_path_relative = "storage" + (storage_cls.single_file_ext or "")
+        storage = storage_cls.create(
+            single_instance_space,
+            *args,
+            cache_path=None if cache_path is None else os.path.join(cache_path, storage_path_relative),
+            capacity=capacity,
+            **kwargs
+        )
         return ReplayBuffer(
-            storage, 
-            "storage" + (storage.single_file_ext or ""),
-            0, 
+            storage,
+            storage_path_relative,
+            0,
             0
         )
     
@@ -203,7 +204,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def load_from(
         path : Union[str, os.PathLike],
         *,
-        backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType] = None,
+        backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         device: Optional[BDeviceType] = None,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
@@ -214,7 +215,9 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         offset = int(metadata["offset"])
         count = int(metadata["count"])
         capacity = int(metadata["capacity"]) if "capacity" in metadata else None
-        single_instance_space = bsu.json_to_space(metadata["single_instance_space"], backend, device)
+        single_instance_space = bsu.json_to_space(
+            metadata["single_instance_space"], backend, device
+        )
         
         storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["storage_cls"])
         storage_path = os.path.join(path, metadata["storage_path_relative"])
@@ -227,6 +230,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         )
         return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset)
 
+    # =========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         storage_path = os.path.join(path, self.storage_path_relative)
@@ -243,7 +247,6 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f)
 
-    # =========== Instance Attributes and Methods ==========
     def __init__(
         self,
         storage : SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -336,13 +339,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         
         # We have a fixed capacity, only keep the last `capacity` elements
         if B >= self.capacity:
-            self.storage.set(None, sbu.get_at(self._batched_space, value, slice(-self.capacity)))
+            self.storage.set(None, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
             self.count = self.capacity
             self.offset = 0
             return
         
         # Otherwise, perform round-robin writes
-        indexes = (self.backend.arange(B, device=self.device) + self.offset) % self.capacity
+        indexes = (self.backend.arange(B, device=self.device) + self.offset + self.count) % self.capacity
         self.storage.set(indexes, value)
         outflow = max(0, self.count + B - self.capacity)
         if outflow > 0:

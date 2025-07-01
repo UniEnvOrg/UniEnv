@@ -73,14 +73,13 @@ def _json_to_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBac
     new_dtype = bsu.deserialize_dtype(map_backend, json_data["dtype"])
 
     low = map_backend.from_numpy(np.array(json_data["low"], dtype=np_dtype), dtype=new_dtype, device=map_device)
-    high = map_backend.from_numpy(np.array(json_data["high"], dtype=new_dtype, device=map_device))
+    high = map_backend.from_numpy(np.array(json_data["high"], dtype=np_dtype), dtype=new_dtype, device=map_device)
     return BoxSpace(
         map_backend,
         low=low,
         high=high,
         shape=json_data["shape"],
         dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
-        backend=map_backend,
         device=map_device
     )
 

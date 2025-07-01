@@ -1,6 +1,6 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tuple as TupleT, Sequence as SequenceT, Union as UnionT, List
 from unienv_data import *
-from unienv_data.storages.common import ListStorage
+from unienv_data.storages.common import FlattenedStorage
 from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *
 from unienv_data.batches import *
@@ -60,15 +60,14 @@ def perform_torch_replay_buffer_with_space_test(
     use_mmap : bool = False,
     seed : Optional[int] = None
 ):
-    flattened_space = sfu.flatten_space(space)
-    single_instance_shape = flattened_space.shape
     tempdumpdir = tempfile.mkdtemp()
     rb = ReplayBuffer.create(
+        FlattenedStorage,
         space,
-        PytorchTensorStorage,
-        memmap=use_mmap,
-        memmap_path=None if not use_mmap else os.path.join(tempdumpdir, "storage.data"),
-        capacity=capacity
+        inner_storage_cls=PytorchTensorStorage,
+        cache_path=tempdumpdir if use_mmap else None,
+        capacity=capacity,
+        is_memmap=use_mmap,
     )
     
     rng = torch.Generator(space.device)
@@ -81,6 +80,7 @@ def perform_torch_replay_buffer_with_space_test(
         capacity - 1,
         rng
     )
+    assert len(rb) == capacity - 1
     perform_rb_fill_test(
         rb,
         space,
@@ -97,11 +97,15 @@ def perform_torch_replay_buffer_with_space_test(
         rng
     )
     rb.dumps(tempdumpdir)
-    new_rb = ReplayBuffer.load_from(tempdumpdir, memmap=use_mmap)
+    new_rb = ReplayBuffer.load_from(
+        tempdumpdir, 
+        backend=space.backend,
+        device=space.device,
+        is_memmap=use_mmap
+    )
     slice_space = sbu.batch_space(space, capacity)
     new_slice = new_rb.get_at(ref_idx)
     new_flat_slice = sfu.flatten_data(slice_space, new_slice)
-    assert torch.allclose(rb.storage.data, new_rb.storage.data)
     assert torch.allclose(flat_ref_slice, new_flat_slice)
 
     perform_rb_fill_test(
@@ -128,63 +132,6 @@ def perform_torch_replay_buffer_with_space_test(
 
     return rb
 
-def perform_list_replay_buffer_with_space_test(
-    space: Space[Any, BDeviceType, BDtypeType, BRNGType],
-    capacity: Optional[int],
-    seed : Optional[int] = None
-):
-    rb = ReplayBuffer.create(
-        space,
-        ListStorage,
-        capacity=capacity,
-    )
-    
-    rng = space.backend.random.random_number_generator(seed, device=space.device)
-    
-    if capacity is None:
-        perform_rb_fill_test(rb, space, 10, rng)
-        rb.clear()
-        perform_rb_fill_test(rb, space, 5, rng)
-        return rb
-    
-    perform_rb_fill_test(
-        rb,
-        space,
-        capacity - 1,
-        rng
-    )
-    perform_rb_fill_test(
-        rb,
-        space,
-        1,
-        rng
-    )
-    assert rb.offset == 0
-    rb.clear()
-
-
-    perform_rb_fill_test(
-        rb,
-        space,
-        capacity * 3,
-        rng
-    )
-    perform_rb_fill_test(
-        rb,
-        space,
-        capacity // 2,
-        rng
-    )
-
-    rb.clear()
-
-    perform_rb_fill_test(
-        rb,
-        space,
-        capacity*2,
-        rng
-    )
-    return rb
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("use_mmap", [False, True])
@@ -213,21 +160,3 @@ def test_torch_replay_buffer(
         seed
     )
 
-@pytest.mark.parametrize("capacity", [None, 10])
-@pytest.mark.parametrize("seed", [0, 1024])
-def test_list_replay_buffer(
-    capacity : Optional[int],
-    seed : int
-):
-    space = BoxSpace(
-        NumpyComputeBackend,
-        0.0,
-        100.0,
-        np.float32,
-        shape=(3, 5, 2)
-    )
-    perform_list_replay_buffer_with_space_test(
-        space,
-        capacity,
-        seed
-    )
