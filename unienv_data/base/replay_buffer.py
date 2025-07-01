@@ -99,12 +99,20 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
             raise NotImplementedError(f"__len__ is not implemented for class {type(self).__name__}")
         return self.capacity
 
+    # We don't define them here, since they are optional and the `ReplayBuffer` checks if they are implemented
+    # by using hasattr(self, "get_flattened") and hasattr(self, "set_flattened").
+    # def get_flattened(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
+    #     raise NotImplementedError
+    
+    # def set_flattened(self, index : Union[IndexableType, BArrayType], value : BArrayType) -> None:
+    #     raise NotImplementedError
+
     @abc.abstractmethod
-    def get(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
+    def get(self, index : Union[IndexableType, BArrayType]) -> BatchT:
         raise NotImplementedError
     
     @abc.abstractmethod
-    def set(self, index : Union[IndexableType, BArrayType], value : BArrayType) -> None:
+    def set(self, index : Union[IndexableType, BArrayType], value : BatchT) -> None:
         raise NotImplementedError
     
     @abc.abstractmethod
@@ -282,6 +290,10 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_flattened_at_with_metadata(idx)[0]
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
+        if hasattr(self.storage, "get_flattened"):
+            data = self.storage.get_flattened(idx)
+            return data, None
+
         data, metadata = self.get_at_with_metadata(idx)
         if isinstance(idx, int):
             data = sfu.flatten_data(self.single_space, data)
@@ -304,6 +316,10 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
+        if hasattr(self.storage, "set_flattened"):
+            self.storage.set_flattened(idx, value)
+            return
+
         if isinstance(idx, int):
             value = sfu.unflatten_data(self.single_space, value)
         else:
