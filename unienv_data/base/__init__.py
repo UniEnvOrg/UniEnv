@@ -1,3 +1,3 @@
-from .common import BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchBase, BatchSampler
-from .replay_buffer import SpaceStorage, ReplayBuffer
+from .common import BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchBase, BatchSampler, IndexableType
 from .transformations import TransformedBatch
+from .storage import SpaceStorage
