@@ -32,6 +32,35 @@ def call_function_on_chained_dict(
         )
     return new_data
 
+def call_conditioned_function_on_chained_dict(
+    space : DictSpace[BDeviceType, BDtypeType, BRNGType],
+    data : Mapping[str, Any],
+    chained_key : List[str],
+    function : Callable[[Space, Any], Any],
+    ignore_missing_keys : bool = False,
+) -> Mapping[str, Any]:
+    assert len(chained_key) >= 1, "Chained key must have at least one key"
+    if chained_key[0] not in data.keys() or chained_key[0] not in space.keys():
+        if ignore_missing_keys:
+            return data
+        else:
+            raise KeyError(f"Key '{chained_key[0]}' not found in data")
+    
+    new_data = copy.copy(data)
+    if len(chained_key) == 1:
+        new_data[chained_key[0]] = function(space[chained_key[0]], data[chained_key[0]])
+    else:
+        assert isinstance(space[chained_key[0]], DictSpace), \
+            f"Expected DictSpace for key '{chained_key[0]}', but got {type(space[chained_key[0]])}"
+        new_data[chained_key[0]] = call_conditioned_function_on_chained_dict(
+            space[chained_key[0]],
+            data[chained_key[0]],
+            chained_key[1:],
+            function,
+            ignore_missing_keys=ignore_missing_keys
+        )
+    return new_data
+
 class DictTransformation(DataTransformation):
     def __init__(
         self,
@@ -65,12 +94,10 @@ class DictTransformation(DataTransformation):
         source_space: Space,
         data: Union[Mapping[str, Any], BArrayType]
     ) -> Union[Mapping[str, Any], BArrayType]:
-        if isinstance(data, BArrayType):
-            return data
-        
-        new_data = copy.copy(data)
+        new_data = data
         for key, transformation in self.mapping.items():
-            new_data = call_function_on_chained_dict(
+            new_data = call_conditioned_function_on_chained_dict(
+                source_space,
                 new_data,
                 key.split('/'),
                 transformation.transform,
@@ -80,7 +107,7 @@ class DictTransformation(DataTransformation):
 
     def direction_inverse(
         self,
-        source_space: Optional[Space] = None,
+        source_space = None,
     ) -> Optional["DictTransformation"]:
         if not self.has_inverse:
             return None

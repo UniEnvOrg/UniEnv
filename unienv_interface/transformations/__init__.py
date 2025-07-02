@@ -3,3 +3,4 @@ from .rescale import RescaleTransformation
 from .filter_dict import DictIncludeKeyTransformation, DictExcludeKeyTransformation
 from .batch_and_unbatch import BatchifyTransformation, UnBatchifyTransformation
 from .dict_transform import DictTransformation
+from .chained_transform import ChainedTransformation
