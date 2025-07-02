@@ -31,7 +31,7 @@ class FrameStackedBatch(BatchBase[
         ],
         prefetch_horizon : int = 0,
         postfetch_horizon : int = 0,
-        get_valid_mask_function : Optional[Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]] = None,
+        get_valid_mask_function : Optional[Callable[["FrameStackedBatch", BArrayType, BatchT, Dict[str, Any]], BArrayType]] = None,
         fill_invalid_data : bool = True,
         stack_metadata : bool = False,
     ):
@@ -119,7 +119,8 @@ class FrameStackedBatch(BatchBase[
     def get_valid_mask_flattened(
         self, 
         expanded_idx : BArrayType, 
-        data : BArrayType
+        data : BArrayType,
+        metadata : Dict[str, Any],
     ) -> BArrayType:
         """
         Get the valid mask for the flattened data.
@@ -138,13 +139,15 @@ class FrameStackedBatch(BatchBase[
                     self._batched_space,
                     data,
                     start_dim=2
-                )
+                ),
+                metadata
             )
     
     def get_valid_mask(
         self,
         expanded_idx : BArrayType,
-        data : BatchT
+        data : BatchT,
+        metadata : Dict[str, Any]
     ) -> BArrayType:
         """
         Get the valid mask for the data.
@@ -160,7 +163,8 @@ class FrameStackedBatch(BatchBase[
             return self.get_valid_mask_function(
                 self,
                 expanded_idx,
-                data
+                data,
+                metadata
             )
 
     def fill_data_with_stack_mask(
@@ -222,40 +226,7 @@ class FrameStackedBatch(BatchBase[
         return filled_data
 
     def get_flattened_at(self, idx):
-        if isinstance(idx, int):
-            batched_result = self.get_flattened_at(self.backend.full(
-                (1,),
-                idx,
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            ))
-            single_result = batched_result[0]
-            return single_result
-        
-        expanded_idx = self.expand_index(idx)
-        expanded_idx_flat = self.backend.reshape(
-            expanded_idx, 
-            (-1,)
-        )
-        batched_data_flat = self.batch.get_flattened_at(expanded_idx_flat)
-        batched_data = sbu.reshape_batch_size_in_data(
-            self.backend,
-            batched_data_flat,
-            expanded_idx_flat.shape,
-            expanded_idx.shape
-        )
-        valid_mask = self.get_valid_mask_flattened(
-            expanded_idx,
-            batched_data
-        )
-        if self.fill_invalid_data:
-            batched_data = self.fill_data_with_stack_mask(
-                None,
-                batched_data,
-                valid_mask
-            )
-        
-        return batched_data
+        return self.get_flattened_at_with_metadata(idx)[0]
 
     def get_flattened_at_with_metadata(self, idx):
         if isinstance(idx, int):
@@ -290,7 +261,8 @@ class FrameStackedBatch(BatchBase[
         )
         valid_mask = self.get_valid_mask_flattened(
             expanded_idx,
-            batched_data
+            batched_data,
+            metadata
         )
         if self.fill_invalid_data:
             batched_data = self.fill_data_with_stack_mask(
@@ -315,40 +287,7 @@ class FrameStackedBatch(BatchBase[
         return batched_data, metadata
 
     def get_at(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
-        if isinstance(idx, int):
-            batched_result = self.get_at(self.backend.full(
-                (1,),
-                idx,
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            ))
-            single_result = next(sbu.iterate(self._batched_space, batched_result))
-            return single_result
-        
-        expanded_idx = self.expand_index(idx)
-        expanded_idx_flat = self.backend.reshape(
-            expanded_idx, 
-            (-1,)
-        )
-        batched_data_flat = self.batch.get_at(expanded_idx_flat)
-        batched_data = sbu.reshape_batch_size_in_data(
-            self.backend,
-            batched_data_flat,
-            expanded_idx_flat.shape,
-            expanded_idx.shape
-        )
-        valid_mask = self.get_valid_mask(
-            expanded_idx,
-            batched_data
-        )
-        if self.fill_invalid_data:
-            batched_data = self.fill_data_with_stack_mask(
-                self._batched_space,
-                batched_data,
-                valid_mask
-            )
-        
-        return batched_data
+        return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx : Union[IndexableType, BArrayType]) -> Tuple[BatchT, Dict[str, Any]]:
         if isinstance(idx, int):
@@ -384,7 +323,8 @@ class FrameStackedBatch(BatchBase[
         )
         valid_mask = self.get_valid_mask(
             expanded_idx,
-            batched_data
+            batched_data,
+            metadata
         )
         if self.fill_invalid_data:
             if self.stack_metadata:
@@ -421,19 +361,26 @@ class FrameStackedBatch(BatchBase[
         episode_id_key : Union[str, int],
         batch : "FrameStackedBatch",
         expanded_idx : BArrayType,
-        data : BatchT
+        data : BatchT,
+        metadata : Dict[str, Any],
+        is_in_metadata : bool = False,
     ) -> BArrayType:
-        episode_ids = data[episode_id_key]
+        if is_in_metadata:
+            episode_ids = metadata[episode_id_key]
+        else:
+            episode_ids = data[episode_id_key]
         episode_id_at = episode_ids[:, batch.prefetch_horizon]
         return episode_ids == episode_id_at[:, None]
 
     @staticmethod
     def get_valid_mask_function_with_episodeid_key(
         episode_id_key : Union[str, int],
+        is_in_metadata : bool = False,
     ) -> Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]:
         return functools.partial(
             __class__._valid_mask_function_episodeid_key,
-            episode_id_key=episode_id_key
+            episode_id_key=episode_id_key,
+            is_in_metadata=is_in_metadata
         )
 
     @staticmethod
@@ -441,13 +388,19 @@ class FrameStackedBatch(BatchBase[
         episode_end_key : Union[str, int],
         batch : "FrameStackedBatch",
         expanded_idx : BArrayType,
-        data : BatchT
+        data : BatchT,
+        metadata : Dict[str, Any],
+        is_in_metadata : bool = False,
     ) -> BArrayType:
         B, T = expanded_idx.shape
 
-        episode_ends = batch.backend.astype(data[episode_end_key], batch.backend.default_integer_dtype) # Convert to integer
+        if is_in_metadata:
+            episode_ends = batch.backend.astype(metadata[episode_end_key], batch.backend.default_integer_dtype)
+        else:
+            episode_ends = batch.backend.astype(data[episode_end_key], batch.backend.default_integer_dtype)
+        
         episode_ends_cs = batch.backend.cumulative_sum(episode_ends, axis=1)
-
+        
         # We roll to get the cumulative sum before the current timestep (the number of previous episodes to get the current episode delta id)
         episode_ends_cs_before = batch.backend.roll(episode_ends_cs, shift=1, axis=1)
         episode_ends_cs_before[:, 0] = 0  # First element should be 0
@@ -458,8 +411,10 @@ class FrameStackedBatch(BatchBase[
     @staticmethod
     def get_valid_mask_function_with_episode_end_key(
         episode_end_key : Union[str, int],
+        is_in_metadata : bool = False,
     ) -> Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]:
         return functools.partial(
             __class__._valid_mask_function_episode_end_key,
-            episode_end_key=episode_end_key
+            episode_end_key=episode_end_key,
+            is_in_metadata=is_in_metadata
         )
