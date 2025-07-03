@@ -78,7 +78,7 @@ def flatten_space(space: Space, start_dim : int = 0) -> BoxSpace:
 
 @flatten_space.register(BoxSpace)
 def _flatten_space_box(space: BoxSpace, start_dim : int = 0) -> BoxSpace:
-    assert start_dim >= -len(space.shape) and start_dim <= len(space.shape)
+    assert -len(space.shape) <= start_dim <= len(space.shape)
     low = space.low
     high = space.high
     return BoxSpace(
@@ -95,7 +95,7 @@ def _flatten_space_box(space: BoxSpace, start_dim : int = 0) -> BoxSpace:
 
 @flatten_space.register(DynamicBoxSpace)
 def _flatten_space_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> BoxSpace:
-    assert start_dim >= -len(space.shape_high) and start_dim <= len(space.shape_high)
+    assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
     low = space.get_low(space.shape_high)
     high = space.get_high(space.shape_high)
     return BoxSpace(
@@ -112,6 +112,7 @@ def _flatten_space_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> B
 
 @flatten_space.register(BinarySpace)
 def _flatten_space_binary(space: BinarySpace, start_dim : int = 0) -> BoxSpace:
+    assert -len(space.shape) <= start_dim <= len(space.shape)
     return BoxSpace(
         space.backend,
         low=0, high=1, 
@@ -190,17 +191,30 @@ def unflatten_data(space : Space, data : BArrayType, start_dim : int = 0) -> Any
 @flatten_data.register(BoxSpace)
 @flatten_data.register(BinarySpace)
 def _flatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArrayType, start_dim : int = 0) -> BArrayType:
-    assert start_dim >= 0 and start_dim <= len(space.shape)
-    
+    assert -len(space.shape) <= start_dim <= len(space.shape)
     return space.backend.reshape(data, data.shape[:start_dim] + (-1,))
 
 @unflatten_data.register(BoxSpace)
 @unflatten_data.register(BinarySpace)
 def _unflatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: Any, start_dim : int = 0) -> BArrayType:
-    assert start_dim >= 0 and start_dim <= len(space.shape)
+    assert -len(space.shape) <= start_dim <= len(space.shape)
     unflat_dat = space.backend.reshape(data, data.shape[:start_dim] + space.shape[start_dim:])
     unflat_dat = space.backend.astype(unflat_dat, space.dtype)
     return unflat_dat
+
+@flatten_data.register(DynamicBoxSpace)
+def _flatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
+    assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
+    padded_data = space.pad_data(data, start_axis=start_dim)
+    reshaped_data = space.backend.reshape(padded_data, padded_data.shape[:start_dim] + (-1,))
+    return reshaped_data
+
+@unflatten_data.register(DynamicBoxSpace)
+def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
+    assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
+    padded_data = space.backend.reshape(data, data.shape[:start_dim] + space.shape_high[start_dim:])
+    data = space.unpad_data(padded_data, start_axis=start_dim)
+    return data
 
 @flatten_data.register(DictSpace)
 def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> BArrayType:
