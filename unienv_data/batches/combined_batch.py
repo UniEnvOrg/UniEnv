@@ -197,11 +197,16 @@ class CombinedBatch(BatchBase[
             batch_size, batch_list = self._convert_index(idx)
             
             result = None
-            metadata_space = sbu.batch_space(
-                self.single_metadata_space,
-                batch_size,
-            )
-            metadata = metadata_space.create_empty()
+            if self.batches[0].single_metadata_space is None:
+                metadata_space = None
+                metadata = {}
+            else:
+                metadata_space = sbu.batch_space(
+                    self.batches[0].single_metadata_space,
+                    batch_size,
+                )
+                metadata = metadata_space.create_empty()
+            
             batch_index_arr = self.backend.zeros(
                 (batch_size,),
                 dtype=self.backend.default_integer_dtype,
@@ -218,12 +223,13 @@ class CombinedBatch(BatchBase[
                     )
 
                 result = self.backend.at(result)[mask].set(batch_result)
-                metadata = sbu.set_at(
-                    metadata_space,
-                    metadata,
-                    mask,
-                    metadata_result,
-                )
+                if metadata_space is not None:
+                    metadata = sbu.set_at(
+                        metadata_space,
+                        metadata,
+                        mask,
+                        metadata_result,
+                    )
                 batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             
             metadata['batch_index'] = batch_index_arr
@@ -269,11 +275,17 @@ class CombinedBatch(BatchBase[
                 batch_size,
             )
             result = result_space.create_empty()
-            metadata_space = sbu.batch_space(
-                self.single_metadata_space,
-                batch_size,
-            )
-            metadata = metadata_space.create_empty()
+            
+            if self.batches[0].single_metadata_space is None:
+                metadata_space = None
+                metadata = {}
+            else:
+                metadata_space = sbu.batch_space(
+                    self.batches[0].single_metadata_space,
+                    batch_size,
+                )
+                metadata = metadata_space.create_empty()
+            
             batch_index_arr = self.backend.zeros(
                 (batch_size,),
                 dtype=self.backend.default_integer_dtype,
@@ -288,12 +300,13 @@ class CombinedBatch(BatchBase[
                     mask,
                     batch_result,
                 )
-                metadata = sbu.set_at(
-                    metadata_space,
-                    metadata,
-                    mask,
-                    metadata_result,
-                )
+                if metadata_space is not None:
+                    metadata = sbu.set_at(
+                        metadata_space,
+                        metadata,
+                        mask,
+                        metadata_result,
+                    )
                 batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             
             metadata['batch_index'] = batch_index_arr
