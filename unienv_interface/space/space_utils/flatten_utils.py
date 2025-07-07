@@ -30,7 +30,7 @@ def _flat_dim_common(space: typing.Union[BoxSpace, BinarySpace], start_dim : int
 
 @flat_dim.register(DynamicBoxSpace)
 def _flat_dim_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> Optional[int]:
-    if start_dim < -len(space.shape) or start_dim > len(space.shape_high):
+    if start_dim < -len(space.shape_high) or start_dim > len(space.shape_high):
         return None
     return int(np.prod(space.shape_high[start_dim:]))
 
@@ -139,7 +139,7 @@ def _flatten_space_composition(space: typing.Union[TupleSpace, DictSpace], start
 @flatten_space.register(TextSpace)
 def _flatten_space_text(space: TextSpace, start_dim : int = 0) -> BoxSpace:
     if start_dim != 0 or space.charset is None:
-        return None
+        raise ValueError("Text space can only be flattened at start_dim 0 with a defined character set.")
     
     return BoxSpace(
         space.backend,
@@ -288,8 +288,8 @@ def _unflatten_data_tuple(space: TupleSpace, data: BArrayType, start_dim : int =
 def _flatten_data_oneof(space: UnionSpace, data: typing.Tuple[int, Any], start_dim : int = 0) -> BArrayType:
     assert start_dim == 0
     space_idx, space_data = data
-    flat_sample = flatten_data(space.spaces[space_idx], space_data)
-    padding_size = space.flat_dim - len(flat_sample)
+    flat_sample = flatten_data(space.spaces[space_idx], space_data, start_dim)
+    padding_size = flat_dim(space, start_dim=start_dim) - len(flat_sample)
     if padding_size > 0:
         padding = space.backend.zeros(padding_size, dtype=space.dtype)
         flat_sample = space.backend.concat((flat_sample, padding))
