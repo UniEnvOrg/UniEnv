@@ -269,6 +269,21 @@ def _swap_batch_dims_binary(space: BinarySpace, dim1: int, dim2: int):
         device=space.device,
     )
 
+@swap_batch_dims.register(GraphSpace)
+def _swap_batch_dims_graph(space: GraphSpace, dim1: int, dim2: int):
+    return GraphSpace(
+        backend=space.backend,
+        node_feature_space=space.node_feature_space,
+        edge_feature_space=space.edge_feature_space,
+        is_edge=space.is_edge,
+        min_nodes=space.min_nodes,
+        max_nodes=space.max_nodes,
+        min_edges=space.min_edges,
+        max_edges=space.max_edges,
+        batch_shape=_shape_transpose(space.batch_shape, dim1, dim2),
+        device=space.device,
+    )
+
 @swap_batch_dims.register(DictSpace)
 def _swap_batch_dims_dict(space: DictSpace, dim1: int, dim2: int):
     return DictSpace(
@@ -640,7 +655,7 @@ def get_at(space: Space, items: Any, index: ArrayAPIGetIndex) -> Any:
 @get_at.register(BoxSpace)
 @get_at.register(BinarySpace)
 @get_at.register(DynamicBoxSpace)
-def _get_at_common(space: typing.Union[BoxSpace, BinarySpace], items: BArrayType, index: ArrayAPIGetIndex):
+def _get_at_common(space: typing.Union[BoxSpace, BinarySpace, DynamicBoxSpace], items: BArrayType, index: ArrayAPIGetIndex):
     return items[index]
 
 @get_at.register(GraphSpace)
@@ -758,7 +773,6 @@ def concatenate(
 
 @concatenate.register(BoxSpace)
 @concatenate.register(BinarySpace)
-@concatenate.register(DynamicBoxSpace)
 def _concatenate_base(
     space: typing.Union[BoxSpace, BinarySpace],
     items: Iterable[BArrayType],
