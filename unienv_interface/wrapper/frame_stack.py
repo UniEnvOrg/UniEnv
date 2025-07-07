@@ -27,7 +27,7 @@ class SpaceDataQueue(
         self.space = space
         self.single_space = space
         self.stacked_space = sbu.batch_space(space, maxlen) # (H, ...) or (L, B, ...)
-        self.output_space = sbu.swap_batch_dims_in_space(
+        self.output_space = sbu.swap_batch_dims(
             self.stacked_space, 0, 1
         ) if batch_size is not None else self.stacked_space # (B, L, ...) or (H, ...)
         self.data = self.stacked_space.create_empty()
@@ -60,10 +60,7 @@ class SpaceDataQueue(
         index = (
             slice(None), mask
         ) if mask is not None else slice(None)
-        if self.batch_size is None:
-            index = mask
-        else:
-            index = (slice(None), mask)
+        
         expanded_data = sbu.get_at( # Add a singleton horizon dimension to the data
             self.space,
             initial_data,
@@ -77,15 +74,9 @@ class SpaceDataQueue(
         )
 
     def append(self, data : DataT) -> None:
-        self.data = sbu.set_at(
-            self.stacked_space,
+        self.data = self.backend.map_fn_over_arrays(
             self.data,
-            slice(None, -1),
-            sbu.get_at(
-                self.stacked_space,
-                self.data,
-                slice(1, None)
-            )
+            lambda x: self.backend.roll(x, shift=-1, axis=0),
         )
         self.data = sbu.set_at(
             self.stacked_space,
