@@ -20,40 +20,27 @@ class SpaceDataQueue(
         space : Space[DataT, BDeviceType, BDtypeType, BRNGType],
         batch_size : Optional[int],
         maxlen: int,
-        default_value: Optional[DataT] = None
     ) -> None:
+        assert maxlen > 0, "Max length must be greater than 0"
+        assert batch_size is None or batch_size > 0, "Batch size must be greater than 0 if provided"
+        assert batch_size is None or sbu.batch_size(space) == batch_size, "Batch size must match the space's batch size if provided"
         self.space = space
-        self.stacked_space = sbu.batch_space(space, maxlen)
-        self.batch_size = batch_size
-        self.default_value = default_value
-        self.flat_default_value = None # Will be set later
-
-        if batch_size is not None:
-            self.count_valid : BArrayType = self.backend.zeros(
-                batch_size,
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            )
-            self.output_space = sbu.swap_batch_dims(
-                self.stacked_space,
-                0,
-                1
-            ) # (T, B, ...) => (B, T, ...)
-            self.flat_stacked_space = sfu.flatten_space(self.stacked_space, start_dim=2) # (T, B, ...) => (T, B, D)
-            if default_value is not None:
-                self.flat_default_value = sfu.flatten_data(self.space, default_value, start_dim=1) # (B, ...) => (B, D)
-        else:
-            self.count_valid = 0
-            self.output_space = self.stacked_space # (T, ...)
-            self.flat_stacked_space = sfu.flatten_space(self.stacked_space, start_dim=1) # (T, ...) => (T, D)
-            if default_value is not None:
-                self.flat_default_value = sfu.flatten_data(self.space, default_value) # (...) => (D)
-
-        self.flat_data_queue = deque(maxlen=maxlen)
+        self.single_space = space
+        self.stacked_space = sbu.batch_space(space, maxlen) # (H, ...) or (L, B, ...)
+        self.output_space = sbu.swap_batch_dims_in_space(
+            self.stacked_space, 0, 1
+        ) if batch_size is not None else self.stacked_space # (B, L, ...) or (H, ...)
+        self.data = self.stacked_space.create_empty()
+        self._maxlen = maxlen
+        self._batch_size = batch_size
 
     @property
     def maxlen(self) -> int:
-        return self.flat_data_queue.maxlen
+        return self._maxlen
+
+    @property
+    def batch_size(self) -> Optional[int]:
+        return self._batch_size
 
     @property
     def backend(self) -> ComputeBackend:
@@ -63,94 +50,59 @@ class SpaceDataQueue(
     def device(self) -> Optional[BDeviceType]:
         return self.space.device
     
-    def reset(self, mask : Optional[BArrayType] = None) -> None:
-        if self.batch_size is not None:
-            if mask is not None and self.batch_size > 1:
-                self.count_valid = self.backend.where(
-                    mask,
-                    self.backend.zeros_like(self.count_valid),
-                    self.count_valid
-                )
-            else:
-                self.count_valid = self.backend.zeros(
-                    self.batch_size,
-                    dtype=self.backend.default_integer_dtype,
-                    device=self.device
-                )
-                self.flat_data_queue.clear()
+    def reset(
+        self, 
+        initial_data : DataT,
+        mask : Optional[BArrayType] = None,
+    ) -> None:
+        assert self.batch_size is None or mask is None, \
+            "Mask should not be provided if batch size is empty"
+        index = (
+            slice(None), mask
+        ) if mask is not None else slice(None)
+        if self.batch_size is None:
+            index = mask
         else:
-            self.count_valid = 0
-            self.flat_data_queue.clear()
+            index = (slice(None), mask)
+        expanded_data = sbu.get_at( # Add a singleton horizon dimension to the data
+            self.space,
+            initial_data,
+            None
+        )
+        self.data = sbu.set_at(
+            self.stacked_space,
+            self.data,
+            index,
+            expanded_data
+        )
 
     def append(self, data : DataT) -> None:
-        self.count_valid += 1
-        
-        if self.batch_size is not None:
-            flat_data = sfu.flatten_data(self.space, data, start_dim=1) # (B, ...) => (B, D)
-        else:
-            flat_data = sfu.flatten_data(self.space, data) # (...) => (D)
-
-        self.flat_data_queue.append(flat_data)
-
-    def get_stacked_flat_data(self) -> BArrayType:
-        # Since the flat_data_queue can be shorter than maxlen, we need to pad the data
-        queue_t = len(self.flat_data_queue)
-        assert queue_t > 0 or self.flat_default_value is not None, "Data queue is empty and no default value is provided"
-        if queue_t == 0:
-            to_stack = [self.flat_default_value] * self.maxlen
-        else:
-            remaining_t = self.maxlen - queue_t
-            to_stack = [self.flat_data_queue[0]] * remaining_t + list(self.flat_data_queue)
-        
-        stacked_data = sbu.concatenate(
-            self.flat_stacked_space,
-            to_stack
-        ) # (T, B, ...) or (T, ...)
-
-        if self.batch_size is None or queue_t == 0:
-            return stacked_data
-        elif self.batch_size == 1:
-            stacked_data = sbu.swap_batch_dims_in_data(
-                self.backend,
-                stacked_data,
-                0,
-                1
-            ) # (T, B, ...) => (B, T, ...)
-            return stacked_data
-        else:
-            stacked_data = sbu.swap_batch_dims_in_data(
-                self.backend,
-                stacked_data,
-                0,
-                1
-            ) # (T, B, ...) => (B, T, ...)
-            # Now we need to replace the invalid data with the last valid data
-            for batch_idx in range(self.batch_size):
-                valid_t = self.count_valid[batch_idx]
-                if valid_t < self.maxlen:
-                    valid_mask = self.backend.arange(
-                        self.maxlen,
-                        device=self.device
-                    ) >= (self.maxlen - valid_t)
-                    stacked_data = self.backend.at(stacked_data)[batch_idx, valid_mask].set( # (B, T, D)
-                        stacked_data[batch_idx, self.maxlen - valid_t][None]
-                    )
-            return stacked_data
+        self.data = sbu.set_at(
+            self.stacked_space,
+            self.data,
+            slice(None, -1),
+            sbu.get_at(
+                self.stacked_space,
+                self.data,
+                slice(1, None)
+            )
+        )
+        self.data = sbu.set_at(
+            self.stacked_space,
+            self.data,
+            -1,
+            data
+        )
     
     def get_output_data(self) -> DataT:
-        stacked_data = self.get_stacked_flat_data()
         if self.batch_size is None:
-            return sfu.unflatten_data(
-                self.output_space,
-                stacked_data,
-                start_dim=1
-            )
+            return self.data
         else:
-            return sfu.unflatten_data(
-                self.output_space,
-                stacked_data,
-                start_dim=2
-            )
+            return sbu.swap_batch_dims_in_data(
+                self.backend,
+                self.data,
+                0, 1
+            ) # (L, B, ...) -> (B, L, ...)
 
 class FrameStackWrapper(
     ContextObservationWrapper[
@@ -163,7 +115,7 @@ class FrameStackWrapper(
         env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
         obs_stack_size: int = 0,
         action_stack_size: int = 0,
-        action_default_value: Optional[ActType] = None
+        action_default_value: Optional[ActType] = None,
     ):
         assert obs_stack_size >= 0, "Observation stack size must be greater than 0"
         assert action_stack_size >= 0, "Action stack size must be greater than 0"
@@ -181,8 +133,8 @@ class FrameStackWrapper(
                 env.action_space,
                 env.batch_size,
                 action_stack_size,
-                default_value=action_default_value
             )
+            self.action_default_value = action_default_value
         else:
             self.action_deque = None
         
@@ -214,7 +166,6 @@ class FrameStackWrapper(
                     device=env.observation_space.device
                 )
             self.obs_deque = None
-            
 
     def reverse_map_context(self, context: ContextType) -> ContextType:
         return context
@@ -240,6 +191,10 @@ class FrameStackWrapper(
                 self.obs_deque.output_space,
                 stacked_obs,
                 -1
+            ) if self.env.batch_size is None else sbu.get_at(
+                self.obs_deque.output_space,
+                stacked_obs,
+                (slice(None), -1)
             )
             return obs_last
         else:
@@ -262,13 +217,18 @@ class FrameStackWrapper(
 
         if self.action_deque is not None:
             self.action_deque.reset(
+                initial_data=sbu.get_at( # Add a singleton batch dimension to the action
+                    self.env.action_space,
+                    self.action_default_value,
+                    None
+                ) if self.env.batch_size is not None else self.action_default_value,
                 mask=mask
             )
         if self.obs_deque is not None:
             self.obs_deque.reset(
+                initial_data=obs,
                 mask=mask
             )
-            self.obs_deque.append(obs)
         
         return context, self.map_observation(obs), info
     
