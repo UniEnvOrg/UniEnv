@@ -20,10 +20,10 @@ class PytorchTensorStorage(SpaceStorage[
         cls,
         single_instance_space : BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
         *,
+        capacity : Optional[int],
         is_memmap : bool = False,
         cache_path : Optional[str] = None,
         memmap_existok : bool = True,
-        capacity : Optional[int],
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, \
             f"Single instance space must be of type PyTorchComputeBackend, got {single_instance_space.backend}"

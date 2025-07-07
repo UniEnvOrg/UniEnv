@@ -18,8 +18,8 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         cls,
         single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         *args,
-        cache_path : Optional[Union[str, os.PathLike]] = None,
         capacity : Optional[int],
+        cache_path : Optional[Union[str, os.PathLike]] = None,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
@@ -115,7 +115,8 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         Clear all data inside the storage and set the length to 0 if the storage has unlimited capacity.
         For storages with fixed capacity, this should reset the storage to its initial state.
         """
-        raise NotImplementedError
+        if self.capacity is None:
+            self.shrink_length(len(self))
 
     @abc.abstractmethod
     def dumps(self, path : Union[str, os.PathLike]) -> None:

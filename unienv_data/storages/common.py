@@ -10,7 +10,6 @@ from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT
 
-# import h5py
 import numpy as np
 import os
 import json
@@ -29,8 +28,8 @@ class FlattenedStorage(SpaceStorage[
         single_instance_space: Space[Any, BDeviceType, BDtypeType, BRNGType],
         inner_storage_cls : Type[SpaceStorage[BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         *args,
-        cache_path : Optional[str] = None,
         capacity : Optional[int] = None,
+        cache_path : Optional[str] = None,
         **kwargs
     ) -> "FlattenedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         flattened_space = sfu.flatten_space(single_instance_space)
