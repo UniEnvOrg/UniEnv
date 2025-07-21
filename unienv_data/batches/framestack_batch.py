@@ -374,7 +374,7 @@ class FrameStackedBatch(BatchBase[
 
     @staticmethod
     def get_valid_mask_function_with_episodeid_key(
-        episode_id_key : Union[str, int],
+        episode_id_key : Union[str, int] = "episode_id",
         is_in_metadata : bool = False,
     ) -> Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]:
         return functools.partial(
@@ -410,7 +410,7 @@ class FrameStackedBatch(BatchBase[
     
     @staticmethod
     def get_valid_mask_function_with_episode_end_key(
-        episode_end_key : Union[str, int],
+        episode_end_key : Union[str, int] = "episode_end",
         is_in_metadata : bool = False,
     ) -> Callable[["FrameStackedBatch", BArrayType, BatchT], BArrayType]:
         return functools.partial(
