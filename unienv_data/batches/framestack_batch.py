@@ -95,7 +95,7 @@ class FrameStackedBatch(BatchBase[
                 *index.indices(len(self.batch)),
                 device=self.device,
             )
-        elif isinstance(index, Ellipsis):
+        elif index is Ellipsis:
             index = self.backend.arange(
                 0, len(self.batch),
                 device=self.device,
@@ -113,7 +113,7 @@ class FrameStackedBatch(BatchBase[
             -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=index.dtype, device=self.backend.device(index)
         )
         index = index[:, None] + index_shifts[None, :] # (B, T)
-        index = self.backend.clip(index, 0, len(self.data) - 1)
+        index = self.backend.clip(index, 0, len(self.batch) - 1)
         return index
 
     def get_valid_mask_flattened(
@@ -258,7 +258,7 @@ class FrameStackedBatch(BatchBase[
             metadata_flat,
             expanded_idx_flat.shape,
             expanded_idx.shape
-        )
+        ) if metadata_flat is not None else None
         valid_mask = self.get_valid_mask_flattened(
             expanded_idx,
             batched_data,
@@ -270,13 +270,13 @@ class FrameStackedBatch(BatchBase[
                 batched_data,
                 valid_mask
             )
-            if self.stack_metadata:
+            if self.stack_metadata and metadata is not None:
                 metadata = self.fill_data_with_stack_mask(
                     self._batched_metadata_space,
                     metadata,
                     valid_mask
                 )
-        if not self.stack_metadata:
+        if not self.stack_metadata and metadata is not None:
             metadata = sbu.get_at(
                 self._batched_metadata_space,  # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
                 metadata,
@@ -320,14 +320,14 @@ class FrameStackedBatch(BatchBase[
             metadata_flat,
             expanded_idx_flat.shape,
             expanded_idx.shape
-        )
+        ) if metadata_flat is not None else None
         valid_mask = self.get_valid_mask(
             expanded_idx,
             batched_data,
             metadata
         )
         if self.fill_invalid_data:
-            if self.stack_metadata:
+            if self.stack_metadata and metadata is not None:
                 batched_data, metadata = self.fill_data_with_stack_mask(
                     TupleSpace(
                         self.backend, 
@@ -343,12 +343,13 @@ class FrameStackedBatch(BatchBase[
                     batched_data,
                     valid_mask
                 )
-        if not self.stack_metadata:
+        if not self.stack_metadata and metadata is not None:
             metadata = sbu.get_at(
                 self._batched_metadata_space, # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
                 metadata,
                 (slice(None), self.prefetch_horizon)
             )
+        metadata = {} if metadata is None else metadata
         metadata['slice_valid_mask'] = valid_mask
         return batched_data, metadata
 
@@ -358,11 +359,12 @@ class FrameStackedBatch(BatchBase[
     # ========== Valid Mask Utilities ==========
     @staticmethod
     def _valid_mask_function_episodeid_key(
-        episode_id_key : Union[str, int],
         batch : "FrameStackedBatch",
         expanded_idx : BArrayType,
         data : BatchT,
         metadata : Dict[str, Any],
+        *,
+        episode_id_key : Union[str, int],
         is_in_metadata : bool = False,
     ) -> BArrayType:
         if is_in_metadata:
@@ -385,11 +387,12 @@ class FrameStackedBatch(BatchBase[
 
     @staticmethod
     def _valid_mask_function_episode_end_key(
-        episode_end_key : Union[str, int],
         batch : "FrameStackedBatch",
         expanded_idx : BArrayType,
         data : BatchT,
         metadata : Dict[str, Any],
+        *,
+        episode_end_key : Union[str, int],
         is_in_metadata : bool = False,
     ) -> BArrayType:
         B, T = expanded_idx.shape
