@@ -1,3 +1,2 @@
-from .actor import Actor, ActorWrapper
-from .sensor import Sensor, SensorWrapper
-from .world import World, WorldWrapper
+from .world import World, RealWorld
+from .node import WorldNode
