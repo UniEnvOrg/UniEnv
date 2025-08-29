@@ -15,11 +15,17 @@ import mujoco.mjx as mjx
 from mujoco_playground import MjxEnv, State as MjxState
 from mujoco_playground._src.wrapper import Wrapper, MadronaWrapper, BraxDomainRandomizationVmapWrapper
 from brax.envs.wrappers import training as brax_training
+from flax import struct
 
 AxisMapSingleT = Union[Mapping[str, "AxisMapSingleT"], int, None]
 AxisMapT = Union[AxisMapSingleT, Tuple[AxisMapSingleT, ...]]
 JaxTreeOrArrayT = Union[JaxArrayType, Dict[str, Any]]
 RandomizationFnT = Callable[[mjx.Model], Tuple[mjx.Model, AxisMapSingleT]]
+
+@struct.dataclass
+class MJXPlaygroundState:
+    state : MjxState
+    rng : JaxRNGType
 
 def is_mjx_env_vision(
     env: MjxEnv
@@ -136,37 +142,48 @@ class FromMJXPlaygroundEnv(
         
         self.context_space = None
 
-    def initial(self, rng : JaxRNGType) -> Tuple[
-        MjxState,
-        JaxRNGType,
+    def initial(self, *, seed : Optional[int]) -> Tuple[
+        MJXPlaygroundState,
         None,
         JaxTreeOrArrayT,
         Dict[str, Any]
     ]:
+        rng = jax.random.PRNGKey(seed)
         rng, reset_rng = jax.random.split(rng)
         reset_rng = jax.random.split(reset_rng, self.batch_size)
-        state = self.vanilla_reset_fn(rng=reset_rng)
-        return state, rng, None, state.obs, state.info
+        raw_state = self.vanilla_reset_fn(rng=reset_rng)
+        state = MJXPlaygroundState(
+            state=raw_state,
+            rng=rng
+        )
+        return state, None, state.obs, state.info
 
     def reset(
         self,
-        state : MjxState,
-        rng : JaxRNGType,
+        state : MJXPlaygroundState,
+        *,
+        seed : Optional[int] = None,
         mask : Optional[JaxArrayType] = None
     ) -> Tuple[
-        MjxState,
-        JaxRNGType,
+        MJXPlaygroundState,
         None,
         JaxTreeOrArrayT,
         Dict[str, Any]
     ]:
+        if seed is None:
+            rng = state.rng
+        else:
+            rng = jax.random.PRNGKey(seed)
         rng, reset_rng = jax.random.split(rng)
         reset_rng = jax.random.split(reset_rng, self.batch_size)
         reset_state = self.env.reset(
             rng=reset_rng
         )
         if mask is None:
-            return reset_state, rng, None, reset_state.obs, reset_state.info
+            return MJXPlaygroundState(
+                state=reset_state,
+                rng=rng
+            ), None, reset_state.obs, reset_state.info
         else:
             def where_reset(
                 x,y
@@ -185,16 +202,17 @@ class FromMJXPlaygroundEnv(
             reset_info = jax.tree.map(
                 pick_reset, reset_state.info
             )
-            return new_state, rng, None, reset_obs, reset_info
+            return MJXPlaygroundState(
+                state=new_state,
+                rng=rng
+            ), None, reset_obs, reset_info
 
     def step(
         self,
-        state : MjxState,
-        rng : JaxRNGType,
+        state : MJXPlaygroundState,
         action : JaxTreeOrArrayT
     ) -> Tuple[
-        MjxState,
-        JaxRNGType,
+        MJXPlaygroundState,
         JaxTreeOrArrayT,
         JaxArrayType,
         JaxArrayType,
@@ -202,12 +220,14 @@ class FromMJXPlaygroundEnv(
         Dict[str, Any]
     ]:
         step_state = self.vanilla_step_fn(
-            state,
+            state.state,
             action
         )
         return (
-            step_state, 
-            rng, 
+            MJXPlaygroundState(
+                state=step_state,
+                rng=state.rng
+            ), 
             step_state.obs, 
             step_state.reward, 
             step_state.done, 
