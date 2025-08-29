@@ -51,6 +51,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         *,
         mask : Optional[BArrayType] = None,
         seed: Optional[int] = None,
+        **kwargs
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
         """
         Resets the environment to its initial state and returns the initial context and observation.

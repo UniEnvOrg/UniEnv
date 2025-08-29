@@ -1,4 +1,4 @@
-from .funcenv import FuncEnv, ContextType, ObsType, ActType, RenderFrame, StateType, RenderStateType, BArrayType, BDeviceType, BDtypeType, BRNGType
+from .funcenv import FuncEnv, FuncEnvCommonRenderInfo, ContextType, ObsType, ActType, RenderFrame, StateType, RenderStateType, BArrayType, BDeviceType, BDtypeType, BRNGType
 from .wrapper import WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT, WrapperRenderFrame
 from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, Tuple, Sequence, Type
 import abc
@@ -94,23 +94,85 @@ class FuncEnvWrapper(
         self._context_space: Optional[Space[WrapperContextT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = self.func_env.context_space
         self._metadata: Optional[Dict[str, Any]] = None
     
-    def initial(self, rng):
-        return self.func_env.initial(rng)
+    def initial(
+        self, 
+        *,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> Tuple[
+        WrapperStateT,
+        WrapperContextT,
+        WrapperObsT,
+        Dict[str, Any]
+    ]:
+        return self.func_env.initial(seed=seed, **kwargs)
 
-    def reset(self, state, rng, mask):
-        return self.func_env.reset(state, rng, mask)
+    def reset(
+        self, 
+        state : WrapperStateT, 
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[WrapperBArrayT] = None,
+        **kwargs
+    ) -> Tuple[
+        WrapperStateT,
+        WrapperContextT,
+        WrapperObsT,
+        Dict[str, Any]
+    ]:
+        return self.func_env.reset(state, seed=seed, mask=mask, **kwargs)
 
-    def step(self, state, rng, action):
-        return self.func_env.step(state, rng, action)
+    def step(
+        self, 
+        state : WrapperStateT, 
+        action : WrapperActT
+    ) -> Tuple[
+        WrapperStateT,
+        WrapperObsT,
+        Union[SupportsFloat, WrapperBArrayT],
+        Union[bool, WrapperBArrayT],
+        Union[bool, WrapperBArrayT],
+        Dict[str, Any]
+    ]:
+        return self.func_env.step(state, action)
 
-    def close(self, state, rng) -> None:
-        self.func_env.close(state, rng)
+    def close(
+        self, 
+        state : WrapperStateT
+    ) -> None:
+        self.func_env.close(state)
     
-    def render_image(self, state, render_state, rng):
-        return self.func_env.render_image(state, render_state, rng)
+    def render_init(
+        self,
+        state : WrapperStateT,
+        *,
+        seed : Optional[int] = None,
+        render_mode : Optional[str] = None,
+        **kwargs
+    ) -> Tuple[
+        WrapperStateT,
+        WrapperRenderStateT,
+        FuncEnvCommonRenderInfo
+    ]:
+        return self.func_env.render_init(state, seed=seed, render_mode=render_mode, **kwargs)
 
-    def render_close(self, state, render_state, rng):
-        return self.func_env.render_close(state, render_state, rng)
+    def render_image(
+        self,
+        state : WrapperStateT,
+        render_state : WrapperRenderStateT
+    ) -> Tuple[
+        WrapperRenderFrame | Sequence[WrapperRenderFrame] | None,
+        WrapperStateT,
+        WrapperRenderStateT
+    ]:
+        return self.func_env.render_image(state, render_state)
+
+    def render_close(
+        self,
+        state : WrapperStateT,
+        render_state : WrapperRenderStateT
+    ) -> WrapperStateT:
+        return self.func_env.render_close(state, render_state)
 
     # ========== Wrapper Methods ==========
     @property

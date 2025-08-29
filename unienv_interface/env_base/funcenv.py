@@ -35,9 +35,13 @@ class FuncEnv(
     context_space: Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
 
     @abc.abstractmethod
-    def initial(self, rng : BRNGType) -> Tuple[
+    def initial(
+        self, 
+        *,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> Tuple[
         StateType,
-        BRNGType,
         ContextType,
         ObsType,
         Dict[str, Any]
@@ -49,11 +53,12 @@ class FuncEnv(
     def reset(
         self, 
         state : StateType, 
-        rng : BRNGType,
+        *,
+        seed : Optional[int] = None,
         mask : Optional[BArrayType] = None,
+        **kwargs
     ) -> Tuple[
         StateType,
-        BRNGType,
         ContextType,
         ObsType,
         Dict[str, Any]
@@ -61,14 +66,13 @@ class FuncEnv(
         """
         Resets the environment to its initial state and returns the initial context and observation.
         If mask is provided, it will only return the masked context and observation, so the batch dimension in the output will not be same as the batch dimension in the context and observation spaces.
-        Note that state and rng should be with their full batch dimensions
+        Note that state input and output should be with full batch dimensions
         """
         raise NotImplementedError
 
     @abc.abstractmethod
-    def step(self, state: StateType, rng : BRNGType, action : ActType) -> Tuple[
-        StateType, 
-        BRNGType,
+    def step(self, state: StateType, action : ActType) -> Tuple[
+        StateType,
         ObsType, 
         Union[SupportsFloat, BArrayType],
         Union[bool, BArrayType],
@@ -77,21 +81,21 @@ class FuncEnv(
     ]:
         """Transition."""
         raise NotImplementedError
-    
-    def close(self, state: StateType, rng : BRNGType) -> None:
+
+    def close(self, state: StateType) -> None:
         """Close the environment."""
         return
 
     def render_init(
         self, 
         state : StateType, 
-        rng : BRNGType,
         *,
+        seed : Optional[int] = None,
         render_mode : Optional[str] = None, 
+        **kwargs
     ) -> Tuple[
         StateType,
         RenderStateType,
-        BRNGType,
         FuncEnvCommonRenderInfo
     ]:
         """Initialize the render state."""
@@ -101,12 +105,10 @@ class FuncEnv(
         self, 
         state : StateType,
         render_state : RenderStateType,
-        rng : BRNGType
     ) -> Tuple[
         RenderFrame | Sequence[RenderFrame] | None, 
         StateType,
         RenderStateType,
-        BRNGType,
     ]:
         """Render the environment."""
         raise NotImplementedError
@@ -114,12 +116,8 @@ class FuncEnv(
     def render_close(
         self, 
         state : StateType,
-        render_state : RenderStateType,
-        rng : BRNGType
-    ) -> Tuple[
-        StateType,
-        BRNGType
-    ]:
+        render_state : RenderStateType
+    ) -> StateType:
         """Close the render state."""
         raise NotImplementedError
 
@@ -154,50 +152,29 @@ class FuncEnvBasedEnv(Env[
         self,
         func_env : FuncEnv[StateType, RenderStateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
         *,
-        rng : BRNGType,
-        instance_kwargs : Dict[str, Any] = {},
         render_mode : Optional[str] = None,
         render_kwargs : Dict[str, Any] = {},
     ):
         self.func_env = func_env
 
-        self.state, self.rng, _, _, _ = self.func_env.initial(
-            rng, **instance_kwargs
-        )
+        # Environment state
+        self.state : Optional[StateType] = None
+        self._inited = False
 
+        # Render related attributes
         self.render_state : Optional[RenderStateType] = None
-
-        self._metadata : Optional[Dict[str, Any]] = None
-
-        # Construction Metadata
+        self._render_inited = False
         self._render_mode = render_mode
         self._render_fps = None
-        self._render_inited = False
         if self._render_mode is None and hasattr(self.func_env, "render_mode"):
             self._render_mode = self.func_env.render_mode
         if hasattr(self.func_env, "render_fps"):
             self._render_fps = self.func_env.render_fps
-        
         self._render_kwargs = render_kwargs
 
-    def _init_render(self) -> None:
-        if self._render_inited:
-            return
-        
-        (
-            self.state,
-            self.render_state,
-            self.rng,
-            render_info
-        ) = self.func_env.render_init(
-            self.state,
-            self.rng,
-            render_mode=self._render_mode,
-            **self._render_kwargs
-        )
-        self._render_mode = render_info.render_mode or self._render_mode
-        self._render_fps = render_info.render_fps or self._render_fps
-        self._render_inited = True
+        # Env attribute overwrite
+        self._metadata : Optional[Dict[str, Any]] = None
+        self.rng = self.backend.random.random_number_generator(device=self.device)
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -242,6 +219,23 @@ class FuncEnvBasedEnv(Env[
     @property
     def context_space(self) -> Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]]:
         return self.func_env.context_space
+
+    def _init_render(self) -> None:
+        if self._render_inited:
+            return
+        
+        (
+            self.state,
+            self.render_state,
+            render_info
+        ) = self.func_env.render_init(
+            self.state,
+            render_mode=self._render_mode,
+            **self._render_kwargs
+        )
+        self._render_mode = render_info.render_mode or self._render_mode
+        self._render_fps = render_info.render_fps or self._render_fps
+        self._render_inited = True
     
     def step(
         self,
@@ -253,8 +247,8 @@ class FuncEnvBasedEnv(Env[
         Union[bool, BArrayType],
         Dict[str, Any]
     ]:
-        self.state, self.rng, obs, rew, terminated, truncated, info = self.func_env.step(
-            self.state, self.rng, action
+        self.state, obs, rew, terminated, truncated, info = self.func_env.step(
+            self.state, action
         )
         return obs, rew, terminated, truncated, info
 
@@ -263,28 +257,38 @@ class FuncEnvBasedEnv(Env[
         *,
         mask : Optional[BArrayType] = None,
         seed : Optional[int] = None,
+        **kwargs
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
-        self.state, self.rng, context, obs, info = self.func_env.reset(
-            self.state, self.rng, mask=mask
-        )
+        if not self._inited:
+            assert mask is None or bool(self.backend.all(mask)), "For the initial reset mask must not be provided or be all True"
+            self.state, context, obs, info = self.func_env.initial(
+                seed=seed,
+                **kwargs
+            )
+            self._inited = True
+        else:
+            self.state, context, obs, info = self.func_env.reset(
+                self.state, seed=seed, mask=mask, **kwargs
+            )
         return context, obs, info
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         self._init_render()
-        image, self.state, self.render_state, self.rng = self.func_env.render_image(
-            self.state, self.render_state, self.rng
+        image, self.state, self.render_state = self.func_env.render_image(
+            self.state, self.render_state
         )
         return image
     
     def close(self) -> None:
         if self.render_state is not None:
-            self.state, self.rng = self.func_env.render_close(
-                self.state, self.render_state, self.rng
+            self.state = self.func_env.render_close(
+                self.state, self.render_state
             )
             self._render_inited = False
             self.render_state = None
-        self.func_env.close(self.state, self.rng)
+        self.func_env.close(self.state)
         self.state = None
+        self._inited = False
     
     # ========== Wrapper methods ==========
 
