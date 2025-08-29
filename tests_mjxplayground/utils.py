@@ -19,8 +19,8 @@ def construct_env_from_name(
     )
     env = FuncEnvBasedEnv(
         funcenv,
-        rng=JaxComputeBackend.random.random_number_generator(seed)
     )
+    env.reset(seed=seed)
     return env
 
 def perform_env_test(
