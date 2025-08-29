@@ -4,7 +4,7 @@ version = "0.0.1b1"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
-    "xbarray",
+    "xbarray>=0.0.1a8",
     "pillow",
     "h5py",
 ]
