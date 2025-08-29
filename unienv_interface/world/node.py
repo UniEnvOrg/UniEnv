@@ -25,8 +25,6 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     has_termination_signal : bool = False
     has_truncation_signal : bool = False
 
-    dummy_action : Optional[ActType] = None
-
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.world.backend
@@ -35,11 +33,11 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     def device(self) -> Optional[BDeviceType]:
         return self.world.device
 
-    def pre_environment_step(self, dt : float) -> None:
+    def pre_environment_step(self, dt : Union[float, BArrayType]) -> None:
         """
         This method is called before the environment step
         Args:
-            dt (float): The time elapsed between the last world step and the current step (NOT the current step and next step).
+            dt (float/BArrayType): The time elapsed between the last world step and the current step (NOT the current step and next step).
         """
         pass
 
@@ -86,22 +84,32 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         """
         raise NotImplementedError
 
-    def post_environment_step(self, dt : float) -> None:
+    def post_environment_step(self, dt : Union[float, BArrayType]) -> None:
         """
         This method is called after the environment step to update the sensor's internal state.
         Args:
-            dt (float): The time elapsed between the last world step and the current step.
+            dt (float/BArrayType): The time elapsed between the last world step and the current step.
         """
         pass
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> None:
         """
         This method is called after `World.reset(...)` has been called.
         Reset the node and update its internal state.
         """
         pass
 
-    def after_reset(self) -> Tuple[Optional[ContextType], Optional[ObsType], Optional[Dict[str, Any]]]:
+    def after_reset(
+        self,
+        *,
+        mask : Optional[BArrayType] = None,
+    ) -> Tuple[Optional[ContextType], Optional[ObsType], Optional[Dict[str, Any]]]:
         """
         This method is called after all `WorldNode`s has been called with `reset` (e.g. the environment reset is effectively done)
         Returns:

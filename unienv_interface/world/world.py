@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple
+from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple, Union
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from abc import ABC, abstractmethod
 import time
@@ -17,7 +17,7 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     batch_size : Optional[int] = None
 
     @abstractmethod
-    def step(self) -> float:
+    def step(self) -> Union[float, BArrayType]:
         """
         Step the world by one timestep.
         Returns:
@@ -26,9 +26,19 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         raise NotImplementedError
 
     @abstractmethod
-    def reset(self) -> None:
+    def reset(
+        self, 
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> None:
         raise NotImplementedError
     
+    def close(self) -> None:
+        pass
+
+    # ========== Helper Methods ==========
     def is_control_timestep_compatible(self, control_timestep : Optional[float]) -> bool:
         if control_timestep is None or self.world_timestep is None:
             return True
