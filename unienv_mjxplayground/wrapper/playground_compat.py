@@ -156,7 +156,7 @@ class FromMJXPlaygroundEnv(
             state=raw_state,
             rng=rng
         )
-        return state, None, state.obs, state.info
+        return state, None, raw_state.obs, raw_state.info
 
     def reset(
         self,
@@ -194,7 +194,7 @@ class FromMJXPlaygroundEnv(
                 return x[mask]
 
             new_state = jax.tree.map(
-                where_reset, reset_state, state
+                where_reset, reset_state, state.state
             )
             reset_obs = jax.tree.map(
                 pick_reset, reset_state.obs
