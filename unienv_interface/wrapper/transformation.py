@@ -161,7 +161,7 @@ class ActionTransformWrapper(
         target_action_space : Space[BArrayType, BDeviceType, BDtypeType, BRNGType]
     ):
         super().__init__(env)
-        self.action_transformation = action_transformation
+        self._action_transformation = action_transformation
     
     @property
     def action_transformation(self) -> DataTransformation:

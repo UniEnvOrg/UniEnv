@@ -10,7 +10,7 @@ StateType = TypeVar("StateType", covariant=True)
 RenderStateType = TypeVar("RenderStateType", covariant=True)
 
 @dataclass(frozen=True)
-class FuncEnvCommonRenderState:
+class FuncEnvCommonRenderInfo:
     render_mode : Optional[str] = None
     render_fps : Optional[int] = None
 
@@ -82,22 +82,6 @@ class FuncEnv(
         """Close the environment."""
         return
 
-    def render_image(
-        self, 
-        state : StateType,
-        rng : BRNGType,
-        render_state : RenderStateType,
-        render_common_state : FuncEnvCommonRenderState
-    ) -> Tuple[
-        RenderFrame | Sequence[RenderFrame] | None, 
-        StateType,
-        BRNGType,
-        RenderStateType,
-        FuncEnvCommonRenderState
-    ]:
-        """Show the state."""
-        raise NotImplementedError
-
     def render_init(
         self, 
         state : StateType, 
@@ -106,25 +90,59 @@ class FuncEnv(
         render_mode : Optional[str] = None, 
     ) -> Tuple[
         StateType,
-        BRNGType,
         RenderStateType,
-        FuncEnvCommonRenderState
+        BRNGType,
+        FuncEnvCommonRenderInfo
     ]:
         """Initialize the render state."""
+        raise NotImplementedError
+
+    def render_image(
+        self, 
+        state : StateType,
+        render_state : RenderStateType,
+        rng : BRNGType
+    ) -> Tuple[
+        RenderFrame | Sequence[RenderFrame] | None, 
+        StateType,
+        RenderStateType,
+        BRNGType,
+    ]:
+        """Render the environment."""
         raise NotImplementedError
 
     def render_close(
         self, 
         state : StateType,
-        rng : BRNGType,
         render_state : RenderStateType,
-        render_common_state : FuncEnvCommonRenderState
+        rng : BRNGType
     ) -> Tuple[
         StateType,
         BRNGType
     ]:
         """Close the render state."""
         raise NotImplementedError
+
+    # ========== Wrapper methods ==========
+    @property
+    def unwrapped(self) -> "FuncEnv":
+        return self
+    
+    @property
+    def prev_wrapper_layer(self) -> Optional["FuncEnv"]:
+        return None
+
+    def has_wrapper_attr(self, name: str) -> bool:
+        """Checks if the attribute `name` exists in the environment."""
+        return hasattr(self, name)
+
+    def get_wrapper_attr(self, name: str) -> Any:
+        """Gets the attribute `name` from the environment."""
+        return getattr(self, name)
+
+    def set_wrapper_attr(self, name: str, value: Any):
+        """Sets the attribute `name` on the environment with `value`."""
+        setattr(self, name, value)
 
 class FuncEnvBasedEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
@@ -148,32 +166,38 @@ class FuncEnvBasedEnv(Env[
         )
 
         self.render_state : Optional[RenderStateType] = None
-        self.render_common_state : Optional[FuncEnvCommonRenderState] = None
 
         self._metadata : Optional[Dict[str, Any]] = None
 
         # Construction Metadata
         self._render_mode = render_mode
+        self._render_fps = None
+        self._render_inited = False
         if self._render_mode is None and hasattr(self.func_env, "render_mode"):
             self._render_mode = self.func_env.render_mode
+        if hasattr(self.func_env, "render_fps"):
+            self._render_fps = self.func_env.render_fps
         
         self._render_kwargs = render_kwargs
 
     def _init_render(self) -> None:
-        if self.render_common_state is not None:
+        if self._render_inited:
             return
         
         (
             self.state,
-            self.rng,
             self.render_state,
-            self.render_common_state
+            self.rng,
+            render_info
         ) = self.func_env.render_init(
             self.state,
             self.rng,
             render_mode=self._render_mode,
             **self._render_kwargs
         )
+        self._render_mode = render_info.render_mode or self._render_mode
+        self._render_fps = render_info.render_fps or self._render_fps
+        self._render_inited = True
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -188,12 +212,12 @@ class FuncEnvBasedEnv(Env[
 
     @property
     def render_mode(self) -> Optional[str]:
-        return self._render_mode if self.render_common_state is None else self.render_common_state.render_mode
+        return self._render_mode
 
     @property
     def render_fps(self) -> Optional[int]:
         self._init_render()
-        return self.render_common_state.render_fps
+        return self._render_fps
     
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -247,17 +271,20 @@ class FuncEnvBasedEnv(Env[
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
         self._init_render()
-        image, self.state, self.rng, self.render_state, self.render_common_state = self.func_env.render_image(
-            self.state, self.rng, self.render_state, self.render_common_state
+        image, self.state, self.render_state, self.rng = self.func_env.render_image(
+            self.state, self.render_state, self.rng
         )
         return image
     
     def close(self) -> None:
         if self.render_state is not None:
             self.state, self.rng = self.func_env.render_close(
-                self.state, self.rng, self.render_state, self.render_common_state
+                self.state, self.render_state, self.rng
             )
+            self._render_inited = False
+            self.render_state = None
         self.func_env.close(self.state, self.rng)
+        self.state = None
     
     # ========== Wrapper methods ==========
 

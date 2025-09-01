@@ -7,7 +7,7 @@ from unienv_interface.env_base import FuncEnv
 from unienv_interface.space import Space, BoxSpace, DictSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.backends.jax import JaxComputeBackend
+from unienv_interface.backends.jax import JaxComputeBackend, JaxArrayType, JaxDeviceType, JaxDtypeType, JaxRNGType
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.wrapper import backend_compat
 
@@ -18,7 +18,7 @@ from brax.envs.wrappers import training as brax_training
 
 AxisMapSingleT = Union[Mapping[str, "AxisMapSingleT"], int, None]
 AxisMapT = Union[AxisMapSingleT, Tuple[AxisMapSingleT, ...]]
-JaxTreeOrArrayT = Union[JaxComputeBackend.ARRAY_TYPE, Dict[str, Any]]
+JaxTreeOrArrayT = Union[JaxArrayType, Dict[str, Any]]
 RandomizationFnT = Callable[[mjx.Model], Tuple[mjx.Model, AxisMapSingleT]]
 
 def is_mjx_env_vision(
@@ -50,10 +50,10 @@ def wrap_mjx_env(
 
 def space_from_size(
     size : AxisMapSingleT,
-    device : Optional[JaxComputeBackend.DEVICE_TYPE] = None,
+    device : Optional[JaxDeviceType] = None,
 ) -> Union[
-    BoxSpace[JaxComputeBackend.ARRAY_TYPE, JaxComputeBackend.DEVICE_TYPE, JaxComputeBackend.DTYPE_TYPE, JaxComputeBackend.RNG_TYPE],
-    DictSpace[JaxComputeBackend.DEVICE_TYPE, JaxComputeBackend.DTYPE_TYPE, JaxComputeBackend.RNG_TYPE]
+    BoxSpace[JaxArrayType, JaxDeviceType, JaxDtypeType, JaxRNGType],
+    DictSpace[JaxDeviceType, JaxDtypeType, JaxRNGType]
 ]:
     if isinstance(size, Mapping):
         return DictSpace(
@@ -78,14 +78,14 @@ class FromMJXPlaygroundEnv(
     FuncEnv[
         MjxState,
         None,
-        JaxComputeBackend.ARRAY_TYPE,
+        JaxArrayType,
         None,
         JaxTreeOrArrayT,
         JaxTreeOrArrayT,
         None,
-        JaxComputeBackend.DEVICE_TYPE,
-        JaxComputeBackend.DTYPE_TYPE,
-        JaxComputeBackend.RNG_TYPE
+        JaxDeviceType,
+        JaxDtypeType,
+        JaxRNGType
     ]
 ):
     metadata = {
@@ -99,7 +99,7 @@ class FromMJXPlaygroundEnv(
         randomization_fn : Optional[
             RandomizationFnT
         ] = None,
-        device : Optional[JaxComputeBackend.DEVICE_TYPE] = None,
+        device : Optional[JaxDeviceType] = None,
         jit : bool = True
     ) -> None:
         self.single_env = single_env
@@ -136,9 +136,9 @@ class FromMJXPlaygroundEnv(
         
         self.context_space = None
 
-    def initial(self, rng : JaxComputeBackend.RNG_TYPE) -> Tuple[
+    def initial(self, rng : JaxRNGType) -> Tuple[
         MjxState,
-        JaxComputeBackend.RNG_TYPE,
+        JaxRNGType,
         None,
         JaxTreeOrArrayT,
         Dict[str, Any]
@@ -151,11 +151,11 @@ class FromMJXPlaygroundEnv(
     def reset(
         self,
         state : MjxState,
-        rng : JaxComputeBackend.RNG_TYPE,
-        mask : Optional[JaxComputeBackend.ARRAY_TYPE] = None
+        rng : JaxRNGType,
+        mask : Optional[JaxArrayType] = None
     ) -> Tuple[
         MjxState,
-        JaxComputeBackend.RNG_TYPE,
+        JaxRNGType,
         None,
         JaxTreeOrArrayT,
         Dict[str, Any]
@@ -190,15 +190,15 @@ class FromMJXPlaygroundEnv(
     def step(
         self,
         state : MjxState,
-        rng : JaxComputeBackend.RNG_TYPE,
+        rng : JaxRNGType,
         action : JaxTreeOrArrayT
     ) -> Tuple[
         MjxState,
-        JaxComputeBackend.RNG_TYPE,
+        JaxRNGType,
         JaxTreeOrArrayT,
-        JaxComputeBackend.ARRAY_TYPE,
-        JaxComputeBackend.ARRAY_TYPE,
-        JaxComputeBackend.ARRAY_TYPE,
+        JaxArrayType,
+        JaxArrayType,
+        JaxArrayType,
         Dict[str, Any]
     ]:
         step_state = self.vanilla_step_fn(
