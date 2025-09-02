@@ -68,7 +68,9 @@ class SliceStackedBatch(BatchBase[
         if self.device is not None:
             fixed_offset = self.backend.to_device(fixed_offset, self.device)
         self.fixed_offset = fixed_offset
-        self._idx_zero = int(batch.backend.argmax(fixed_offset == 0))
+        self._idx_zero = int(batch.backend.argmax(
+            batch.backend.astype(fixed_offset == 0, batch.backend.default_integer_dtype)
+        ))
 
         self.fill_invalid_data = fill_invalid_data
         self.get_valid_mask_function = get_valid_mask_function
