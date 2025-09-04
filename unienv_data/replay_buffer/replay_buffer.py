@@ -74,7 +74,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             storage,
             storage_path_relative,
             0,
-            0
+            0,
+            cache_path=cache_path
         )
     
     @staticmethod
@@ -115,7 +116,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             capacity=capacity,
             **storage_kwargs
         )
-        return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset)
+        return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset, cache_path=path)
 
     # =========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
@@ -140,15 +141,21 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         storage_path_relative : Union[str, os.PathLike],
         count : int = 0,
         offset : int = 0,
+        cache_path : Optional[Union[str, os.PathLike]] = None,
     ):
         self.storage = storage
         self.count = count
         self.offset = offset
         self.storage_path_relative = storage_path_relative
+        self._cache_path = cache_path
         super().__init__(
             storage.single_instance_space,
             None
         )
+
+    @property
+    def cache_path(self) -> Optional[Union[str, os.PathLike]]:
+        return self._cache_path
 
     def __len__(self) -> int:
         return self.count
@@ -234,7 +241,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         
         # We have a fixed capacity, only keep the last `capacity` elements
         if B >= self.capacity:
-            self.storage.set(None, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
+            self.storage.set(Ellipsis, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
             self.count = self.capacity
             self.offset = 0
             return

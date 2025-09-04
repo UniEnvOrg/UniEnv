@@ -1,6 +1,7 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tuple as TupleT, Sequence as SequenceT, Union as UnionT, List
 from unienv_data import *
 from unienv_data.storages.common import FlattenedStorage
+from unienv_data.storages.hdf5 import HDF5Storage
 from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *
 from unienv_data.batches import *
@@ -53,37 +54,23 @@ def perform_rb_fill_test(
     assert space.backend.all(flat_sampled_slice == flat_ref_slice)
     return slice(-check_size, None), flat_ref_slice
 
-
-def perform_torch_replay_buffer_with_space_test(
-    space: Space[Any, BDeviceType, BDtypeType, BRNGType],
-    capacity: int,
-    use_mmap : bool = False,
-    seed : Optional[int] = None
+def test_fixed_capacity_replay_buffer(
+    rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],
+    seed : Optional[int] = None,
+    load_kwargs : DictT[str, Any] = {},
 ):
-    tempdumpdir = tempfile.mkdtemp()
-    rb = ReplayBuffer.create(
-        FlattenedStorage,
-        space,
-        inner_storage_cls=PytorchTensorStorage,
-        cache_path=tempdumpdir if use_mmap else None,
-        capacity=capacity,
-        is_memmap=use_mmap,
-    )
-    
-    rng = torch.Generator(space.device)
-    if seed is not None:
-        rng.manual_seed(seed)
-    
+    tempdumpdir = rb.cache_path if rb.cache_path is not None else tempfile.mkdtemp()
+    rng = rb.backend.random.random_number_generator(seed, device=rb.device)
     perform_rb_fill_test(
         rb,
-        space,
-        capacity - 1,
+        rb.single_space,
+        rb.capacity - 1,
         rng
     )
-    assert len(rb) == capacity - 1
+    assert len(rb) == rb.capacity - 1
     perform_rb_fill_test(
         rb,
-        space,
+        rb.single_space,
         1,
         rng
     )
@@ -92,32 +79,37 @@ def perform_torch_replay_buffer_with_space_test(
 
     ref_idx, flat_ref_slice = perform_rb_fill_test(
         rb,
-        space,
-        capacity,
+        rb.single_space,
+        rb.capacity,
         rng
     )
     rb.dumps(tempdumpdir)
     new_rb = ReplayBuffer.load_from(
-        tempdumpdir, 
-        backend=space.backend,
-        device=space.device,
-        is_memmap=use_mmap
+        tempdumpdir,
+        backend=rb.backend,
+        device=rb.device,
+        **load_kwargs
     )
-    slice_space = sbu.batch_space(space, capacity)
+    assert new_rb.capacity == rb.capacity
+    assert new_rb.offset == rb.offset
+    assert new_rb.count == rb.count
+    assert new_rb.single_space == rb.single_space
+
+    slice_space = sbu.batch_space(new_rb.single_space, new_rb.capacity)
     new_slice = new_rb.get_at(ref_idx)
     new_flat_slice = sfu.flatten_data(slice_space, new_slice)
-    assert torch.allclose(flat_ref_slice, new_flat_slice)
+    assert new_rb.backend.all(flat_ref_slice==new_flat_slice)
 
     perform_rb_fill_test(
         rb,
-        space,
-        capacity * 3,
+        rb.single_space,
+        rb.capacity * 3,
         rng
     )
     perform_rb_fill_test(
         rb,
-        space,
-        capacity // 2,
+        rb.single_space,
+        rb.capacity // 2,
         rng
     )
 
@@ -125,13 +117,12 @@ def perform_torch_replay_buffer_with_space_test(
 
     perform_rb_fill_test(
         rb,
-        space,
-        capacity*2,
+        rb.single_space,
+        rb.capacity * 2,
         rng
     )
 
     return rb
-
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("use_mmap", [False, True])
@@ -153,10 +144,45 @@ def test_torch_replay_buffer(
         device=device,
         shape=(3, 5, 2)
     )
-    perform_torch_replay_buffer_with_space_test(
+    tempdumpdir = tempfile.mkdtemp()
+    rb = ReplayBuffer.create(
+        FlattenedStorage,
         space,
-        capacity,
-        use_mmap,
-        seed
+        inner_storage_cls=PytorchTensorStorage,
+        cache_path=tempdumpdir if use_mmap else None,
+        capacity=capacity,
+        is_memmap=use_mmap,
+    )
+    test_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed,
+        load_kwargs=dict(
+            is_memmap=use_mmap,
+        )
     )
 
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024, 2048])
+def test_hdf5_replay_buffer(
+    capacity : int,
+    seed : int
+):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        0.0,
+        100.0,
+        np.float32,
+        shape=(3, 5, 2)
+    )
+    tempdumpdir = tempfile.mkdtemp()
+    rb = ReplayBuffer.create(
+        HDF5Storage,
+        space,
+        cache_path=tempdumpdir,
+        capacity=capacity,
+    )
+    test_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed,
+        load_kwargs={}
+    )

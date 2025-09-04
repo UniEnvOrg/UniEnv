@@ -109,7 +109,6 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     def set(self, index : Union[IndexableType, BArrayType], value : BatchT) -> None:
         raise NotImplementedError
     
-    @abc.abstractmethod
     def clear(self) -> None:
         """
         Clear all data inside the storage and set the length to 0 if the storage has unlimited capacity.
