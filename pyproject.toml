@@ -1,6 +1,9 @@
 [project]
 name = "unienv"
-version = "0.0.1b1"
+description = "Unified robot environment framework supporting multiple tensor and simulation backends"
+readme = "README.md"
+license = "MIT"
+version = "0.0.1b2"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
@@ -8,6 +11,13 @@ dependencies = [
     "pillow",
     "h5py",
 ]
+
+[project.urls]
+Homepage = "https://www.quantumcookie.xyz/project/unienv/"
+Documentation = "https://readthedocs.org"
+Repository = "https://github.com/UniEnvOrg/UniEnvPy"
+Issues = "https://github.com/UniEnvOrg/UniEnvPy/issues"
+Changelog = "https://github.com/UniEnvOrg/UniEnvPy/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

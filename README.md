@@ -26,21 +26,19 @@ Current supported real robots:
 
 ## Installation
 
-Clone down this repo
-
-```bash
-git clone https://github.com/realquantumcookie/UniEnvPy
-cd UniEnvPy
-```
-
 Install the package with pip
 
 ```bash
-pip install -e .
+pip install unienv
 ```
 
 You can install optional dependencies such as `gymnasium`, `mjx`, `maniskill`, `video` by running
 
 ```bash
-pip install -e .[gymnasium,mjx,maniskill,video]
+pip install unienv[gymnasium,mjx,maniskill,video]
 ```
+
+## Acknowledgements
+
+The idea of this project is inspired by [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) and its predecessor [OpenAI Gym](https://github.com/openai/gym). 
+This library is impossible without the great work of DataAPIs Consortium and their work on the [Array API Standard](https://data-apis.org/array-api/latest/). The zero-copy translation layers are powered by the [DLPack](https://github.com/dmlc/dlpack) project.
