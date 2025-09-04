@@ -54,7 +54,7 @@ def perform_rb_fill_test(
     assert space.backend.all(flat_sampled_slice == flat_ref_slice)
     return slice(-check_size, None), flat_ref_slice
 
-def test_fixed_capacity_replay_buffer(
+def check_fixed_capacity_replay_buffer(
     rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],
     seed : Optional[int] = None,
     load_kwargs : DictT[str, Any] = {},
@@ -153,7 +153,7 @@ def test_torch_replay_buffer(
         capacity=capacity,
         is_memmap=use_mmap,
     )
-    test_fixed_capacity_replay_buffer(
+    check_fixed_capacity_replay_buffer(
         rb,
         seed=seed,
         load_kwargs=dict(
@@ -181,7 +181,7 @@ def test_hdf5_replay_buffer(
         cache_path=tempdumpdir,
         capacity=capacity,
     )
-    test_fixed_capacity_replay_buffer(
+    check_fixed_capacity_replay_buffer(
         rb,
         seed=seed,
         load_kwargs={}
