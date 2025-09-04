@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://www.quantumcookie.xyz/project/unienv/"
-Documentation = "https://readthedocs.org"
+Homepage = "https://github.com/UniEnvOrg/UniEnvPy"
+Documentation = "https://github.com/UniEnvOrg/UniEnvPy"
 Repository = "https://github.com/UniEnvOrg/UniEnvPy"
 Issues = "https://github.com/UniEnvOrg/UniEnvPy/issues"
 Changelog = "https://github.com/UniEnvOrg/UniEnvPy/blob/main/CHANGELOG.md"
