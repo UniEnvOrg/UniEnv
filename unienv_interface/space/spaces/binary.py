@@ -93,7 +93,7 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         return isinstance(other, BinarySpace) and self.backend == other.backend and self.shape == other.shape and self.dtype == other.dtype and self.device == other.device
     
     def data_to(self, data, backend = None, device = None):
-        if backend is not None:
+        if backend is not None and backend != self.backend:
             data = backend.from_other_backend(self.backend, data)
         if device is not None:
             data = (backend or self.backend).to_device(data,device)

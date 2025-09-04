@@ -1,16 +1,34 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tuple as TupleT, Sequence as SequenceT, Union as UnionT, List
-from unienv_data import *
-from unienv_data.storages.pytorch import PytorchTensorStorage
-from unienv_data.samplers import *
-from unienv_interface.space import *
-from unienv_interface.space.space_utils import flatten_utils as sfu
-from unienv_interface.backends.pytorch import PyTorchComputeBackend
 import torch
 import numpy as np
 import pytest
-from test_replay_buffer import perform_torch_replay_buffer_with_space_test
-from unienv_interface.space.space_utils import batch_utils as sbu
+import tempfile
 
+from unienv_data import *
+from unienv_data.storages.pytorch import PytorchTensorStorage
+from unienv_data.storages.common import FlattenedStorage
+from unienv_data.samplers import *
+from unienv_interface.space import *
+from unienv_interface.space.space_utils import flatten_utils as sfu, batch_utils as sbu
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
+
+from test_replay_buffer import check_fixed_capacity_replay_buffer
+
+def construct_torch_rb(
+    space : Space,
+    capacity : int,
+    use_mmap : bool,
+    seed : Optional[int] = None
+) -> ReplayBuffer:
+    rb = ReplayBuffer.create(
+        FlattenedStorage,
+        space,
+        inner_storage_cls=PytorchTensorStorage,
+        cache_path=tempfile.mkdtemp() if use_mmap else None,
+        capacity=capacity,
+        is_memmap=use_mmap,
+    )
+    return rb
 
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024])
@@ -27,11 +45,10 @@ def test_step_sampler(
         device=device,
         shape=(3, 5, 2)
     )
-    rb = perform_torch_replay_buffer_with_space_test(
-        space,
-        capacity,
-        False,
-        seed
+    rb = construct_torch_rb(space, capacity, False, seed)
+    rb = check_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed
     )
     sampler = StepSampler(
         rb,
@@ -60,11 +77,13 @@ def test_multiprocessing_sampler(
         device=device,
         shape=(3, 5, 2)
     )
-    rb = perform_torch_replay_buffer_with_space_test(
-        space,
-        capacity,
-        use_mmap,
-        seed
+    rb = construct_torch_rb(space, capacity, use_mmap, seed)
+    rb = check_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed,
+        load_kwargs={
+            "is_memmap": use_mmap
+        }
     )
     sampler = StepSampler(
         rb,
@@ -120,13 +139,11 @@ def test_slice_sampler(
         },
         device=device
     )
-    rb = perform_torch_replay_buffer_with_space_test(
-        space,
-        capacity,
-        False,
-        seed
+    rb = construct_torch_rb(space, capacity, False, seed)
+    rb = check_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed
     )
-    
     sampler = SliceSampler(
         rb,
         batch_size=capacity//2,

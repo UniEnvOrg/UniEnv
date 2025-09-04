@@ -1,5 +1,5 @@
 from .transformation import ContextObservationTransformWrapper, ActionTransformWrapper
-from .backend_compat import ToBackendWrapper, ToDeviceWrapper
+from .backend_compat import ToBackendOrDeviceWrapper, ToBackendWrapper, ToDeviceWrapper
 from .video_record import EpisodeRenderStackWrapper, EpisodeVideoWrapper, EpisodeWandbVideoWrapper
 from .time_limit import TimeLimitWrapper
 from .control_frequency_limit import ControlFrequencyLimitWrapper

@@ -103,7 +103,7 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
 
     def __eq__(self, other: Any) -> bool:
         """Check whether ``other`` is equivalent to this instance."""
-        return isinstance(other, Union) and self.spaces == other.spaces
+        return isinstance(other, UnionSpace) and self.spaces == other.spaces
 
     def data_to(self, data, backend = None, device = None):
         if (backend is None or backend==self.backend) and (device is None or device==self.device):

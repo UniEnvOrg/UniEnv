@@ -317,7 +317,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         device : Optional[Union[BDeviceType, Any]] = None
     ) -> Union[BArrayType, Any]:
         """Convert data to another backend."""
-        if backend is not None:
+        if backend is not None and backend != self.backend:
             data = backend.from_other_backend(self.backend, data)
         if device is not None:
             data = (backend or self.backend).to_device(data, device)

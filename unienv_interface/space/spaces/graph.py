@@ -302,7 +302,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         )
     
     def data_to(self, data, backend = None, device = None):
-        if backend is not None:
+        if backend is not None and backend != self.backend:
             data = backend.from_other_backend(self.backend, data)
         if device is not None:
             data = (backend or self.backend).to_device(data,device)

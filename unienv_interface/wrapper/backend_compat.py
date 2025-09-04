@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Type, Sequence, Mapping, List, NamedTuple
+from typing_extensions import deprecated
 import numpy as np
 import copy
 
@@ -10,12 +11,12 @@ from unienv_interface.space import Space
 
 def data_to(
     data : Any,
-    source_backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    source_backend : Optional[ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]] = None,
     target_backend : Optional[ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None,
     target_device : Optional[WrapperBDeviceT] = None,
 ):
     if source_backend.is_backendarray(data):
-        if target_backend is not None:
+        if source_backend is not None and target_backend is not None and target_backend != source_backend:
             data = target_backend.from_other_backend(
                 source_backend,
                 data
@@ -41,7 +42,7 @@ def data_to(
             pass
     return data
 
-class ToBackendWrapper(
+class ToBackendOrDeviceWrapper(
     Wrapper[
         WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
@@ -50,18 +51,20 @@ class ToBackendWrapper(
     def __init__(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        backend : ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT],
+        backend : Optional[ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None,
         device : Optional[WrapperBDeviceT] = None,
     ) -> None:
         super().__init__(env)
         self._backend = backend
         self._device = device
 
+        # Set new rng compatible with the new backend and device
         env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
         self._rng = backend.random.random_number_generator(
             seed=seed,
             device=device
         )
+
         self.action_space = env.action_space.to(
             backend,
             device
@@ -83,10 +86,6 @@ class ToBackendWrapper(
     def device(self) -> Optional[WrapperBDeviceT]:
         return self._device
 
-    @property
-    def rng(self) -> WrapperBRngT:
-        return self._rng
-
     def step(
         self, 
         action: WrapperActT
@@ -97,23 +96,26 @@ class ToBackendWrapper(
         Union[bool, WrapperBArrayT], 
         Dict[str, Any]
     ]:
-        c_action = self.action_space.data_to(
+        o_action = self.action_space.data_to(
             action, backend=self.env.action_space.backend, device=self.env.action_space.device
         )
-        obs, reward, terminated, truncated, info = self.env.step(c_action)
-        c_obs = self.env.observation_space.data_to(
-            obs, backend=self.observation_space.backend, device=self.observation_space.device
+        c_obs, c_reward, c_terminated, c_truncated, c_info = self.env.step(o_action)
+        obs = self.env.observation_space.data_to(
+            c_obs, backend=self.backend, device=self.observation_space.device
         )
-        c_reward = float(reward) if not self.env.backend.is_backendarray(reward) else self.backend.from_other_backend(reward, self.env.backend)
-        c_terminated = bool(terminated) if not self.env.backend.is_backendarray(terminated) else self.backend.from_other_backend(terminated, self.env.backend)
-        c_truncated = bool(truncated) if not self.env.backend.is_backendarray(truncated) else self.backend.from_other_backend(truncated, self.env.backend)
-        c_info = data_to(
-            info,
-            self.env.backend,
-            self.backend,
-            self.device,
+        reward = data_to(
+            c_reward, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
         )
-        return c_obs, c_reward, c_terminated, c_truncated, c_info
+        terminated = data_to(
+            c_terminated, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+        )
+        truncated = data_to(
+            c_truncated, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+        )
+        info = data_to(
+            c_info, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+        )
+        return obs, reward, terminated, truncated, info
     
     def reset(
         self,
@@ -125,176 +127,61 @@ class ToBackendWrapper(
         if seed is not None:
             self._rng = self.backend.random.random_number_generator(
                 seed=seed,
-                device=self._device
+                device=self.device
             )
         
-        context, obs, info = self.env.reset(
+        c_context, c_obs, c_info = self.env.reset(
             *args,
             mask=None if mask is None else data_to(
-                mask,
-                self.backend,
-                self.env.backend,
-                self.env.device,
+                mask, source_backend=self.backend, target_backend=self.env.backend, target_device=self.env.device
             ),
             seed=seed,
             **kwargs
         )
 
-        c_context = None if self.context_space is None else self.env.context_space.data_to(
-            context,
+        context = None if self.context_space is None else self.env.context_space.data_to(
+            c_context,
             backend=self.context_space.backend,
             device=self.context_space.device
         )
-        c_obs = self.env.observation_space.data_to(
-            obs,
+        obs = self.env.observation_space.data_to(
+            c_obs,
             self.observation_space.backend,
             self.observation_space.device
         )
-        c_info = data_to(
-            info,
-            self.env.backend,
-            self.backend,
-            self.device,
+        info = data_to(
+            c_info, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
         )
-        return c_context, c_obs, c_info
-    
+        return context, obs, info
+
     def render(self) -> WrapperRenderFrame | Sequence[WrapperRenderFrame] | None:
         frame = self.env.render()
         return data_to(
             frame,
-            self.env.backend,
-            self.backend,
-            self.device
+            source_backend=self.env.backend,
+            target_backend=self.backend,
+            target_device=self.device
         ) if frame is not None else None
 
-class ToDeviceWrapper(
-    Wrapper[
-        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
-        BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
-    ]
+@deprecated("Use ToBackendOrDeviceWrapper instead")
+def ToBackendWrapper(
+    env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+    backend : ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT],
+    device : Optional[WrapperBDeviceT] = None,
 ):
-    def __init__(
-        self,
-        env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        device : BDeviceType,
-        original_device : Optional[BDeviceType] = None
-    ) -> None:
-        assert device is not None
-        super().__init__(env)
-        self._action_space = env.action_space.to(
-            device=device
-        )
-        self._observation_space = env.observation_space.to(
-            device=device
-        )
-        self._context_space = None if env.context_space is None else env.context_space.to(
-            device=device
-        )
-        self.original_device = original_device if original_device is not None else env.device
+    return ToBackendOrDeviceWrapper(
+        env, 
+        backend=backend, 
+        device=device
+    )
 
-        env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
-        self._rng : BRNGType = env.backend.random.random_number_generator(
-            seed=seed,
-            device=device
-        )
-
-        self._device = device
-
-    @property
-    def device(self) -> BDeviceType:
-        return self._device
-
-    @property
-    def rng(self) -> BRNGType:
-        return self._rng
-
-    def step(self, action: ActType) -> Tuple[
-        ObsType, 
-        Union[SupportsFloat, BArrayType], 
-        Union[bool, BArrayType],
-        Union[bool, BArrayType], 
-        Dict[str, Any]
-    ]:
-        c_action = self.action_space.data_to(
-            action,
-            device=self.env.action_space.device or self.original_device
-        )
-        obs, reward, terminated, truncated, info = self.env.step(c_action)
-        c_obs = self.env.observation_space.data_to(
-            obs,
-            device=self.observation_space.device
-        )
-        c_reward = data_to(
-            reward,
-            self.backend,
-            target_device=self.device
-        )
-        c_terminated = data_to(
-            terminated,
-            self.backend,
-            target_device=self.device
-        )
-        c_truncated = data_to(
-            truncated,
-            self.backend,
-            target_device=self.device
-        )
-        c_info = data_to(
-            info,
-            self.backend,
-            target_device=self.device,
-        )
-        return c_obs, c_reward, c_terminated, c_truncated, c_info
-
-    def reset(
-        self,
-        *args,
-        mask : Optional[BArrayType] = None,
-        seed : Optional[int] = None,
-        **kwargs
-    ) -> Tuple[
-        ContextType,
-        ObsType,
-        Dict[str, Any]
-    ]:
-        if seed is not None:
-            self._rng = self.backend.random.random_number_generator(
-                seed=seed,
-                device=self._device
-            )
-        
-        context, obs, info = self.env.reset(
-            *args,
-            mask=None if mask is None else data_to(
-                mask,
-                self.backend,
-                target_device=self.env.device,
-            ),
-            seed=seed,
-            **kwargs
-        )
-
-        c_context = None if self.context_space is None else self.env.context_space.data_to(
-            context,
-            self.backend,
-            target_device=self.device
-        )
-        c_obs = self.env.observation_space.data_to(
-            obs,
-            self.observation_space.backend,
-            device=self.observation_space.device
-        )
-        c_info = data_to(
-            info,
-            self.backend,
-            target_device=self.device,
-        )
-        return c_context, c_obs, c_info
-
-    def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
-        frame = self.env.render()
-        frame = data_to(
-            frame,
-            self.backend,
-            target_device=self.device
-        )
+@deprecated("Use ToBackendOrDeviceWrapper instead")
+def ToDeviceWrapper(
+    env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
+    device : BDeviceType,
+    original_device : Optional[BDeviceType] = None
+):
+    return ToBackendOrDeviceWrapper(
+        env,
+        device=device
+    )

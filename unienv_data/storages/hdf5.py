@@ -200,9 +200,9 @@ class HDF5Storage(SpaceStorage[
             for key, space in single_instance_space.spaces.items():
                 sub_root = root[key]
                 result[key] = __class__.get_from(sub_root, space, index)
-            return result
         else:
             result = root[index]
+        return result
 
     @staticmethod
     def set_to(

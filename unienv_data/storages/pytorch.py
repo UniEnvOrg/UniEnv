@@ -63,7 +63,7 @@ class PytorchTensorStorage(SpaceStorage[
         path: Union[str, os.PathLike],
         single_instance_space: BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
         *,
-        is_memmap : bool = True,
+        is_memmap : bool = False,
         capacity : Optional[int] = None,
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, "PytorchTensorStorage only supports PyTorch backend"
