@@ -5,6 +5,8 @@ from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.utils.seed_util import next_seed_rng
 import multiprocessing as mp
+from multiprocessing.context import BaseContext as MPContext
+from multiprocessing.synchronize import Event as MPEvent
 import queue
 import time
 
@@ -20,7 +22,7 @@ def worker_loop(
     ], Any], Any],
     workid_queue : mp.Queue,
     result_queue : mp.Queue,
-    done_event,
+    done_event : MPEvent,
     doze_time : float = 0.005,
 ):
     # if seed is not None:
@@ -49,8 +51,7 @@ def worker_loop(
         #     del sampler.data_rng
         #     sampler.rng = None
         #     sampler.data_rng = None
-        result_queue.cancel_join_thread()
-        result_queue.close()
+        pass
 
 TaskInfoT = TypeVar('TaskInfoT')
 ResultT = TypeVar('ResultT')
@@ -59,14 +60,14 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         self,
         target_fn : Callable[[TaskInfoT], ResultT],
         n_workers : int = 4,
-        ctx : Optional[mp.context.BaseContext] = None,
+        ctx : Optional[MPContext] = None,
         done_event = None,
         doze_time : float = 0.001,
         daemon : Optional[bool] = None,
     ):
         assert n_workers > 0
         if ctx is None:
-            ctx = mp
+            ctx = mp.get_context()
 
         self.sampler_result_queue : mp.Queue = ctx.Queue()
         self.sampler_work_queue : mp.Queue = ctx.Queue()

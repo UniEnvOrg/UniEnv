@@ -2,7 +2,7 @@ from typing import Any, Callable, Generic, TypeVar, Tuple, Dict, Optional, Suppo
 import abc
 import numpy as np
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space
+from unienv_interface.space import Space, batch_utils as sbu
 from dataclasses import dataclass, replace as dataclass_replace
 from .env import Env, ContextType, ObsType, ActType, RenderFrame
 
@@ -120,6 +120,37 @@ class FuncEnv(
     ) -> StateType:
         """Close the render state."""
         raise NotImplementedError
+
+    # ========== Convenience methods ==========
+    def update_observation_post_reset(
+        self,
+        old_obs: ObsType,
+        newobs_masked: ObsType,
+        mask: BArrayType
+    ) -> ObsType:
+        assert self.batch_size is not None, "This method is used by batched environment after reset"
+        return sbu.set_at(
+            self.observation_space,
+            old_obs,
+            mask,
+            newobs_masked
+        )
+    
+    def update_context_post_reset(
+        self,
+        old_context: ContextType,
+        new_context: ContextType,
+        mask: BArrayType
+    ) -> ContextType:
+        assert self.batch_size is not None, "This method is used by batched environment after reset"
+        if self.context_space is None:
+            return None
+        return sbu.set_at(
+            self.context_space,
+            old_context,
+            mask,
+            new_context
+        )
 
     # ========== Wrapper methods ==========
     @property
