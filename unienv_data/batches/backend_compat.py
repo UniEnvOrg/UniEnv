@@ -66,7 +66,7 @@ class ToBackendOrDeviceBatch(
         )
         self.batch = batch
         self.target_backend = backend
-        self.device = device
+        self.target_device = device
     
     def __len__(self) -> int:
         return len(self.batch)
@@ -78,6 +78,10 @@ class ToBackendOrDeviceBatch(
     @property
     def backend(self) -> ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]:
         return self.target_backend if self.target_backend is not None else self.batch.backend
+
+    @property
+    def device(self) -> Optional[WrapperBDeviceT]:
+        return self.target_device if self.target_device is not None else self.batch.device
 
     def get_flattened_at(self, idx):
         o_data = self.batch.get_flattened_at(idx)
