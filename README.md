@@ -38,6 +38,22 @@ You can install optional dependencies such as `gymnasium`, `mjx`, `maniskill`, `
 pip install unienv[gymnasium,mjx,maniskill,video]
 ```
 
+## Cite
+
+If you use UniEnv in your research, please cite it as follows:
+
+```bibtex
+@software{cao_unienv,
+  author = {Cao, Yunhao},
+  title = {{UniEnv: Universal Robot Environment Framework}},
+  year = {2025},
+  month = sep,
+  version = {0.0.1b2},
+  url = {https://github.com/UniEnvOrg/UniEnvPy},
+  license = {MIT}
+}
+```
+
 ## Acknowledgements
 
 The idea of this project is inspired by [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) and its predecessor [OpenAI Gym](https://github.com/openai/gym). 
