@@ -60,7 +60,7 @@ class ToBackendOrDeviceWrapper(
 
         # Set new rng compatible with the new backend and device
         env.rng, seed = seed_util.next_seed_rng(env.rng, env.backend)
-        self._rng = backend.random.random_number_generator(
+        self._rng = (backend or env.backend).random.random_number_generator(
             seed=seed,
             device=device
         )
@@ -80,7 +80,7 @@ class ToBackendOrDeviceWrapper(
 
     @property
     def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
-        return self._backend
+        return self._backend or self.env.backend
     
     @property
     def device(self) -> Optional[WrapperBDeviceT]:
