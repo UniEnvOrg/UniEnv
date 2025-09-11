@@ -44,7 +44,7 @@ If you use UniEnv in your research, please cite it as follows:
 
 ```bibtex
 @software{cao_unienv,
-  author = {Cao, Yunhao},
+  author = {Cao, Yunhao AND Fang, Kuan},
   title = {{UniEnv: Universal Robot Environment Framework}},
   year = {2025},
   month = sep,
