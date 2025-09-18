@@ -110,7 +110,7 @@ class FuncEnvWrapper(
     def reset(
         self, 
         state : WrapperStateT, 
-        *,
+        *args,
         seed : Optional[int] = None,
         mask : Optional[WrapperBArrayT] = None,
         **kwargs
@@ -120,7 +120,7 @@ class FuncEnvWrapper(
         WrapperObsT,
         Dict[str, Any]
     ]:
-        return self.func_env.reset(state, seed=seed, mask=mask, **kwargs)
+        return self.func_env.reset(state, *args, seed=seed, mask=mask, **kwargs)
 
     def step(
         self, 
