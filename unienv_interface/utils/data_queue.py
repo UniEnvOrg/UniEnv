@@ -46,11 +46,11 @@ class FuncSpaceDataQueue(
 
     @property
     def backend(self) -> ComputeBackend:
-        return self.space.backend
+        return self.single_space.backend
     
     @property
     def device(self) -> Optional[BDeviceType]:
-        return self.space.device
+        return self.single_space.device
     
     def init(
         self,
@@ -74,7 +74,7 @@ class FuncSpaceDataQueue(
         ) if mask is not None else slice(None)
         
         expanded_data = sbu.get_at( # Add a singleton horizon dimension to the data
-            self.space,
+            self.single_space,
             initial_data,
             None
         )
