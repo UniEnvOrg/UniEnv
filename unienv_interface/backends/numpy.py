@@ -1,4 +1,7 @@
-from xbarray.numpy import NumpyComputeBackend as XBNumpyBackend
+try:
+    from xbarray.backends.numpy import NumpyComputeBackend as XBNumpyBackend
+except ImportError:
+    from xbarray.numpy import NumpyComputeBackend as XBNumpyBackend
 from xbarray import ComputeBackend
 
 import numpy as np

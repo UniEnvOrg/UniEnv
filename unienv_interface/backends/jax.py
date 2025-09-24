@@ -1,4 +1,7 @@
-from xbarray.jax import JaxComputeBackend as XBJaxBackend
+try:
+    from xbarray.backends.jax import JaxComputeBackend as XBJaxBackend
+except ImportError:
+    from xbarray.jax import JaxComputeBackend as XBJaxBackend
 from xbarray import ComputeBackend
 from typing import Union
 import jax
