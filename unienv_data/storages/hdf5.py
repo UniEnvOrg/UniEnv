@@ -1,4 +1,3 @@
-from importlib import metadata
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, Mapping, Callable
 
 from unienv_interface.space import Space, BoxSpace, DictSpace, TextSpace, BinarySpace
@@ -50,7 +49,7 @@ class HDF5Storage(SpaceStorage[
                     dtype=root.dtype,
                     device=None,
                 )
-            elif NumpyComputeBackend.dtype_is_real_floating(root.dtype) or NumpyComputeBackend.dtype_is_integer(root.dtype):
+            elif NumpyComputeBackend.dtype_is_real_floating(root.dtype) or NumpyComputeBackend.dtype_is_real_integer(root.dtype):
                 space = BoxSpace(
                     NumpyComputeBackend,
                     low=-np.inf,
@@ -294,6 +293,9 @@ class HDF5Storage(SpaceStorage[
                 result[key] = __class__.get_from(sub_root, space, index)
         else:
             result = root[index]
+            # Convert to numpy array if it's a scalar
+            if isinstance(result, (int, float)):
+                result = np.array(result)
         return result
 
     @staticmethod

@@ -10,6 +10,7 @@ dependencies = [
     "xbarray>=0.0.1a8",
     "pillow",
     "h5py",
+    "cloudpickle",
 ]
 
 [project.urls]

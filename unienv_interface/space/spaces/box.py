@@ -53,31 +53,20 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             dttype_iinfo = backend.iinfo(dtype)
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
-            if isinstance(low, int):
-                if low == backend.inf or low == -backend.inf:
-                    _low = dtype_min if low == -backend.inf else dtype_max
-                else:
-                    _low = low
-                _low = backend.full([1] * len(shape), _low, dtype=dtype, device=device)
-            else:
-                _low = backend.astype(low, dtype)
-            if isinstance(high, int):
-                if high == backend.inf or high == -backend.inf:
-                    _high = dtype_max if high == backend.inf else dtype_min
-                else:
-                    _high = high
-                _high = backend.full([1] * len(shape), _high, dtype=dtype, device=device)
-            else:
-                _high = backend.astype(high, dtype)
+
+            if low == backend.inf or low == -backend.inf:
+                low = dtype_min if low == -backend.inf else dtype_max
+            if high == backend.inf or high == -backend.inf:
+                high = dtype_max if high == backend.inf else dtype_min
+            
+        if isinstance(low, (int, float)):
+            _low = backend.full([1] * len(shape), low, dtype=dtype, device=device)
         else:
-            if isinstance(low, (int, float)):
-                _low = backend.full([1] * len(shape), low, dtype=dtype, device=device)
-            else:
-                _low = backend.astype(low, dtype)
-            if isinstance(high, (int, float)):
-                _high = backend.full([1] * len(shape), high, dtype=dtype, device=device)
-            else:
-                _high = backend.astype(high, dtype)
+            _low = backend.astype(low, dtype)
+        if isinstance(high, (int, float)):
+            _high = backend.full([1] * len(shape), high, dtype=dtype, device=device)
+        else:
+            _high = backend.astype(high, dtype)
         
         _low = backend.abbreviate_array(
             _low,
