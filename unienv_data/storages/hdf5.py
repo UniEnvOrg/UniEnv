@@ -9,6 +9,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend, NumpyArrayType,
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT
+from unienv_data.replay_buffer import ReplayBuffer
 
 import h5py
 import numpy as np
@@ -27,6 +28,97 @@ class HDF5Storage(SpaceStorage[
     # ========== Class Attributes ==========
     single_file_ext : Optional[str] = ".hdf5"
     DEFAULT_KEY : str = "data"
+
+    @staticmethod
+    def build_space_from_hdf5_file(
+        root : Union[h5py.Group, h5py.Dataset],
+    ) -> Tuple[int, Optional[int], HDF5SpaceType]:
+        if isinstance(root, h5py.Dataset):
+            capacity = root.maxshape[0]
+            count = root.shape[0]
+            if root.dtype.kind == 'O' or root.dtype.kind == 'S':
+                space = TextSpace(
+                    NumpyComputeBackend,
+                    max_length=root.dtype.itemsize if root.dtype.itemsize is not None else 4096,
+                    dtype=str,
+                    device=None,
+                )
+            elif NumpyComputeBackend.dtype_is_boolean(root.dtype):
+                space = BinarySpace(
+                    NumpyComputeBackend,
+                    shape=root.shape[1:],
+                    dtype=root.dtype,
+                    device=None,
+                )
+            elif NumpyComputeBackend.dtype_is_real_floating(root.dtype) or NumpyComputeBackend.dtype_is_integer(root.dtype):
+                space = BoxSpace(
+                    NumpyComputeBackend,
+                    low=-np.inf,
+                    high=np.inf,
+                    shape=root.shape[1:],
+                    dtype=root.dtype,
+                    device=None,
+                )
+            else:
+                raise ValueError(f"Unsupported dataset dtype: {root.dtype}")
+        elif isinstance(root, h5py.Group):
+            if __class__.DEFAULT_KEY in root:
+                assert len(root) == 1, \
+                    f"If key '{__class__.DEFAULT_KEY}' is present in a group, it must be the only key. Found keys: {list(root.keys())}"
+                return __class__.build_space_from_hdf5_file(root[__class__.DEFAULT_KEY])
+            
+            capacity = None
+            count = 0
+            capacity_determined = False
+            spaces = {}
+            for key, item in root.items():
+                if key.startswith('.') or key.startswith('_'):
+                    continue
+                sub_count, sub_capacity, sub_space = __class__.build_space_from_hdf5_file(item)
+                if not capacity_determined:
+                    capacity = sub_capacity
+                    count = sub_count
+                    capacity_determined = True
+                else:
+                    assert capacity == sub_capacity, \
+                        f"All datasets in a group must have the same capacity. Expected {capacity}, got {sub_capacity} in key '{key}'"
+                    assert count == sub_count, \
+                        f"All datasets in a group must have the same count. Expected {count}, got {sub_count} in key '{key}'"
+                spaces[key] = sub_space
+            space = DictSpace(
+                NumpyComputeBackend,
+                spaces,
+                device=None,
+            )
+        else:
+            raise ValueError(f"Unsupported HDF5 item type: {type(root)}")
+        return count, capacity, space
+
+    @staticmethod
+    def load_replay_buffer_from_raw_hdf5(
+        path : Union[str, os.PathLike],
+    ) -> ReplayBuffer[HDF5BatchType, NumpyArrayType, NumpyDeviceType, NumpyDtypeType, NumpyRNGType]:
+        assert os.path.exists(path), \
+            f"Path {path} does not exist"
+        assert os.access(path, os.R_OK), \
+            f"Path {path} is not readable"
+        root = h5py.File(
+            path,
+            "r"
+        )
+        count, capacity, single_instance_space = __class__.build_space_from_hdf5_file(root)
+        storage = __class__(
+            single_instance_space,
+            root,
+            capacity=capacity,
+        )
+        return ReplayBuffer(
+            storage,
+            storage_path_relative="storage" + (__class__.single_file_ext or ""),
+            count=count,
+            offset=0,
+            cache_path=None
+        )
 
     @staticmethod
     def _check_hdf5_file(
