@@ -5,6 +5,7 @@ import copy
 from functools import singledispatch
 from typing import Optional, Any, Iterable, Iterator
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIGetIndex, ArrayAPISetIndex
+from unienv_interface.backends.numpy import NumpyComputeBackend
 import numpy as np
 
 from ..spaces import *
@@ -178,6 +179,19 @@ def _reshape_batch_size_tuple(
         device=space.device,
     )
 
+@reshape_batch_size.register(BatchedSpace)
+def _reshape_batch_size_batched(
+    space: BatchedSpace,
+    old_batch_shape: typing.Tuple[int],
+    new_batch_shape: typing.Tuple[int]
+) -> BatchedSpace:
+    assert len(old_batch_shape) <= len(space.batch_shape) and old_batch_shape == space.batch_shape[:len(old_batch_shape)], \
+        f"Expected the old batch shape to be a prefix of the current batch shape, but got old {old_batch_shape} != current {space.batch_shape}"
+    return BatchedSpace(
+        single_space=space.single_space,
+        batch_shape=new_batch_shape + space.batch_shape[len(old_batch_shape):]
+    )
+
 def reshape_batch_size_in_data(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     data : Any, 
@@ -191,6 +205,10 @@ def reshape_batch_size_in_data(
         return None
     
     if backend.is_backendarray(data):
+        assert data.shape[:len(old_batch_shape)] == old_batch_shape, \
+            f"Expected the beginning of the shape to match the old batch shape, but got {data.shape[:len(old_batch_shape)]} != {old_batch_shape}"
+        data = data.reshape(new_batch_shape + data.shape[len(old_batch_shape):])
+    elif isinstance(data, np.ndarray) and data.dtype == object:
         assert data.shape[:len(old_batch_shape)] == old_batch_shape, \
             f"Expected the beginning of the shape to match the old batch shape, but got {data.shape[:len(old_batch_shape)]} != {old_batch_shape}"
         data = data.reshape(new_batch_shape + data.shape[len(old_batch_shape):])
@@ -301,6 +319,12 @@ def _swap_batch_dims_tuple(space: TupleSpace, dim1: int, dim2: int):
         device=space.device,
     )
 
+@swap_batch_dims.register(BatchedSpace)
+def _swap_batch_dims_batched(space: BatchedSpace, dim1: int, dim2: int):
+    return BatchedSpace(
+        single_space=space.single_space,
+        batch_shape=_shape_transpose(space.batch_shape, dim1, dim2)
+    )
 
 def swap_batch_dims_in_data(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], 
@@ -310,6 +334,8 @@ def swap_batch_dims_in_data(
 ) -> Any:
     if backend.is_backendarray(data):
         return _tensor_transpose(backend, data, dim1, dim2)
+    elif isinstance(data, np.ndarray) and data.dtype != object:
+        return _tensor_transpose(NumpyComputeBackend, data, dim1, dim2)
     elif isinstance(data, GraphInstance):
         return GraphInstance(
             n_nodes=_tensor_transpose(backend, data.n_nodes, dim1, dim2),
@@ -366,6 +392,10 @@ def _batch_size_tuple(space: TupleSpace):
                 continue
 
     return len(space.spaces)
+
+@batch_size.register(BatchedSpace)
+def _batch_size_batched(space: BatchedSpace):
+    return space.batch_shape[0] if len(space.batch_shape) > 0 else None
 
 def batch_size_data(data: Any) -> Optional[int]:
     if hasattr(data, "shape"):
@@ -449,6 +479,21 @@ def _batch_space_tuple(space: TupleSpace, n: int = 1):
         backend=space.backend,
         spaces=[batch_space(subspace, n=n) for subspace in space.spaces],
         device=space.device,
+    )
+
+@batch_space.register(BatchedSpace)
+def _batch_space_batched(space: BatchedSpace, n: int = 1):
+    return BatchedSpace(
+        single_space=space.single_space,
+        batch_shape=(n,) + space.batch_shape,
+    )
+
+@batch_space.register(TextSpace)
+@batch_space.register(UnionSpace)
+def _batch_space_text(space: typing.Union[TextSpace, UnionSpace], n: int = 1):
+    return BatchedSpace(
+        space,
+        batch_shape=(n,),
     )
 
 @singledispatch
@@ -642,6 +687,16 @@ def _unbatch_spaces_tuple(space: TupleSpace):
             device=space.device,
         )
 
+@unbatch_spaces.register(BatchedSpace)
+def _unbatch_spaces_batched(space: BatchedSpace):
+    assert len(space.batch_shape) > 0, "Expected BatchedSpace to be batched, but it is not."
+    unbatched_space = space.single_space if len(space.batch_shape) == 1 else BatchedSpace(
+        single_space=space.single_space,
+        batch_shape=space.batch_shape[1:],
+    )
+    for i in range(space.batch_shape[0]):
+        yield unbatched_space
+
 def iterate(space: Space, items: Any) -> Iterator:
     for i in range(batch_size_data(items)):
         yield get_at(space, items, i)
@@ -676,6 +731,10 @@ def _get_at_dict(space: DictSpace, items: typing.Mapping[str, Any], index : Arra
 @get_at.register(TupleSpace)
 def _get_at_tuple(space: TupleSpace, items: typing.Tuple[Any, ...], index : ArrayAPIGetIndex):    
     return tuple(get_at(subspace, item, index) for (subspace, item) in zip(space.spaces, items))
+
+@get_at.register(BatchedSpace)
+def _get_at_batched(space: BatchedSpace, items: np.ndarray, index: ArrayAPIGetIndex) -> typing.Union[np.ndarray, Any]:
+    return items[index]
 
 @singledispatch
 def set_at(
@@ -762,6 +821,17 @@ def _set_at_tuple(
         set_at(subspace, items[i], index, value[i]) if not isinstance(value, (float, int)) else set_at(subspace, items[i], index, value)
         for i, subspace in enumerate(space.spaces)
     )
+
+@set_at.register(BatchedSpace)
+def _set_at_batched(
+    space: BatchedSpace,
+    items: np.ndarray,
+    index: ArrayAPISetIndex,
+    value: typing.Union[np.ndarray, Any],
+) -> np.ndarray:
+    new_data = items.copy()
+    new_data[index] = value
+    return new_data
 
 @singledispatch
 def concatenate(
@@ -865,3 +935,16 @@ def _concatenate_tuple(
         )
     
     return tuple(items)
+
+@concatenate.register(BatchedSpace)
+def _concatenate_batched(
+    space: BatchedSpace, items: Iterable, axis: int = 0
+) -> Any:
+    items = list(items)
+    if len(items) == 0:
+        return np.array([], dtype=object)
+    if isinstance(items[0], np.ndarray) and items[0].dtype == object:
+        return np.concatenate(items, axis=axis)
+    else:
+        assert axis == 0, "Expected axis to be 0 when concatenating non-numpy arrays"
+        return np.asarray(items, dtype=object)

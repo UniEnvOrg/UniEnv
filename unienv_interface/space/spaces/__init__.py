@@ -7,6 +7,7 @@ from .graph import GraphSpace, GraphInstance
 from .text import TextSpace
 from .tuple import TupleSpace
 from .union import UnionSpace
+from .batched import BatchedSpace
 
 __all__ = [
     "Space",
@@ -18,5 +19,6 @@ __all__ = [
     "GraphInstance",
     "TextSpace",
     "TupleSpace",
-    "UnionSpace"
+    "UnionSpace",
+    "BatchedSpace",
 ]
