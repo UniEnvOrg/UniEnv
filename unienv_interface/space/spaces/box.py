@@ -54,9 +54,9 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
 
-            if low == backend.inf or low == -backend.inf:
+            if isinstance(low, (int, float)) and (low == backend.inf or low == -backend.inf):
                 low = dtype_min if low == -backend.inf else dtype_max
-            if high == backend.inf or high == -backend.inf:
+            if isinstance(high, (int, float)) and (high == backend.inf or high == -backend.inf):
                 high = dtype_max if high == backend.inf else dtype_min
             
         if isinstance(low, (int, float)):
