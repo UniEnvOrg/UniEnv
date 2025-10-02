@@ -288,7 +288,11 @@ class MultiprocessingSampler(
         daemon : Optional[bool] = None,
     ):
         #TODO: Implement metadata space for this sampler
-        super().__init__()
+        super().__init__(
+            sampler.single_space,
+            sampler.single_metadata_space,
+            sampler.batch_size
+        )
         assert n_workers > 0
         assert n_buffers > 0
         
@@ -317,8 +321,8 @@ class MultiprocessingSampler(
                 )
                 setattr(self, new_name, wrapped_fn)
                 self.functions_to_close.append(wrapped_fn)
-            elif callable(attr) and name.startswith("get_flat_at"):
-                new_name = "epoch_flat_iter" + name[len("get_flat_at"):]
+            elif callable(attr) and name.startswith("get_flattened_at"):
+                new_name = "epoch_flat_iter" + name[len("get_flattened_at"):]
                 wrapped_fn = wrap_epoch_iter_function(
                     sampler, self.n_workers, self.n_buffers, attr,
                     ctx=self.mp_ctx, doze_time=doze_time, daemon=daemon,
@@ -328,16 +332,12 @@ class MultiprocessingSampler(
         assert hasattr(self.sample, "close")
 
     @property
-    def batch_size(self):
-        return self.sampler.batch_size
-    
-    @property
     def sampled_space(self):
         return self.sampler.sampled_space
     
     @property
-    def sampled_space_flat(self):
-        return self.sampler.sampled_space_flat
+    def sampled_metadata_space(self):
+        return self.sampler.sampled_metadata_space
 
     @property
     def backend(self):
@@ -373,11 +373,11 @@ class MultiprocessingSampler(
     def get_at_with_metadata(self, idx):
         return self.sampler.get_at_with_metadata(idx)
     
-    def get_flat_at(self, idx):
-        return self.sampler.get_flat_at(idx)
+    def get_flattened_at(self, idx):
+        return self.sampler.get_flattened_at(idx)
     
-    def get_flat_at_with_metadata(self, idx):
-        return self.sampler.get_flat_at_with_metadata(idx)
+    def get_flattened_at_with_metadata(self, idx):
+        return self.sampler.get_flattened_at_with_metadata(idx)
 
     def close(self):
         if self.closed:
