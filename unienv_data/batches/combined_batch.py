@@ -56,8 +56,6 @@ class CombinedBatch(BatchBase[
         )
         super().__init__(single_space, new_metadata_space)
 
-        self.backend = backend
-        self.device = device
         self.is_mutable = is_mutable
         self.batches = batches
         self._build_index_cache()
