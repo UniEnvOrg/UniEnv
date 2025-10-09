@@ -165,6 +165,12 @@ class BatchSampler(
         self._batched_space : Space[SamplerBatchT, SamplerDeviceType, SamplerDtypeType, SamplerRNGType] = space_batch_utils.batch_space(self.single_space, batch_size)
         self._batched_metadata_space : Optional[DictSpace[SamplerDeviceType, SamplerDtypeType, SamplerRNGType]] = space_batch_utils.batch_space(self.single_metadata_space, batch_size) if self.single_metadata_space is not None else None
 
+    def manual_seed(self, seed : int) -> None:
+        if self.rng is not None:
+            self.rng = self.backend.random.random_number_generator(seed, device=self.device)
+        if self.data_rng is not None:
+            self.data_rng = self.backend.random.random_number_generator(seed, device=self.data.device)
+
     @property
     def sampled_space(self) -> Space[SamplerBatchT, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]:
         return self._batched_space

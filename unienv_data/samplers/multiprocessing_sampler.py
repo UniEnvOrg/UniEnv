@@ -331,6 +331,9 @@ class MultiprocessingSampler(
                 self.functions_to_close.append(wrapped_fn)
         assert hasattr(self.sample, "close")
 
+    def manual_seed(self, seed):
+        self.sampler.manual_seed(seed)
+
     @property
     def sampled_space(self):
         return self.sampler.sampled_space
