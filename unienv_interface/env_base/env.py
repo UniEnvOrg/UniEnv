@@ -90,6 +90,11 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
     def sample_observation(self) -> ObsType:
         return self.sample_space(self.observation_space)    
     
+    def sample_context(self) -> Optional[ContextType]:
+        if self.context_space is None:
+            return None
+        return self.sample_space(self.context_space)
+
     def update_observation_post_reset(
         self,
         old_obs: ObsType,
