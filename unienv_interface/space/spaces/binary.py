@@ -13,7 +13,6 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         device : Optional[BDeviceType] = None,
     ):
         assert dtype is None or backend.dtype_is_boolean(dtype), f"Invalid dtype {dtype}"
-        assert len(shape) > 0, "Shape must be a non-empty sequence"
         
         assert all(
             np.issubdtype(type(dim), np.integer) for dim in shape

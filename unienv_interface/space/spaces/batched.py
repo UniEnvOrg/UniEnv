@@ -34,26 +34,17 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def sample(self, rng : BRNGType) -> Tuple[
         BRNGType, BArrayType
     ]:
-        def sample_func(rng):
-            return self.single_space.sample(rng)
-        for _dim in reversed(self.batch_shape):
-            def new_sample_func(rng):
-                samples = []
-                for _ in range(_dim):
-                    rng, sample = sample_func(rng)
-                    samples.append(sample)
-                return rng, np.asarray(samples, dtype=object)
-            sample_func = new_sample_func
-        return sample_func(rng)
+        flat_shape = np.prod(self.batch_shape)
+        samples = []
+        for i in range(flat_shape):
+            rng, single_sample = self.single_space.sample(rng)
+            samples.append(single_sample)
+        return rng, np.asarray(samples, dtype=object).reshape(self.batch_shape)
     
     def create_empty(self):
-        def create_empty_func():
-            return self.single_space.create_empty()
-        for _dim in reversed(self.batch_shape):
-            def new_create_empty_func():
-                return np.asarray([create_empty_func() for _ in range(_dim)], dtype=object)
-            create_empty_func = new_create_empty_func
-        return create_empty_func()
+        flat_shape = np.prod(self.batch_shape)
+        empties = [self.single_space.create_empty() for _ in range(flat_shape)]
+        return np.asarray(empties, dtype=object).reshape(self.batch_shape)
     
     def is_bounded(self, manner = "both"):
         return self.single_space.is_bounded(manner=manner)

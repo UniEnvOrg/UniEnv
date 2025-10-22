@@ -246,7 +246,7 @@ class CombinedBatch(BatchBase[
             result = result_space.create_empty()
             for batch_index, index_into_batch, mask in batch_list:
                 result = sbu.set_at(
-                    self.single_space,
+                    result_space,
                     result,
                     mask,
                     self.batches[batch_index].get_at(index_into_batch),
@@ -293,7 +293,7 @@ class CombinedBatch(BatchBase[
             for batch_index, index_into_batch, mask in batch_list:
                 batch_result, metadata_result = self.batches[batch_index].get_at_with_metadata(index_into_batch)
                 result = sbu.set_at(
-                    self.single_space,
+                    result_space,
                     result,
                     mask,
                     batch_result,

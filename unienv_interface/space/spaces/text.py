@@ -88,9 +88,7 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
         return rng, sample
 
     def create_empty(self) -> str:
-        raise NotImplementedError(
-            "TextSpace does not support create_empty method. Use an empty string instead."
-        )
+        return ""
 
     def is_bounded(self, manner = "both"):
         return manner == "below" or (
