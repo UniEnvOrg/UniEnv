@@ -153,7 +153,9 @@ class ImageDecompressTransformation(DataTransformation):
         assert isinstance(source_space, BoxSpace), "JPEGDecompressTransformation only supports BoxSpace source spaces."
         assert len(source_space.shape) >= 1, "JPEGDecompressTransformation requires source space with at least 1 dimension."
 
-    get_uint8_dtype = ImageCompressTransformation.get_uint8_dtype
+    @staticmethod
+    def get_uint8_dtype(backend):
+        return ImageCompressTransformation.get_uint8_dtype(backend)
 
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
@@ -178,7 +180,7 @@ class ImageDecompressTransformation(DataTransformation):
             img_array: np.ndarray, uint8, shape (H, W, 3)
         """
         buf = io.BytesIO(jpeg_bytes)
-        img = Image.open(buf, formats=self.format)
+        img = Image.open(buf, formats=[self.format] if self.format is not None else None)
         if mode is not None:
             img = img.convert(mode)
         img_array = np.array(img)
