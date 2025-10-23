@@ -160,7 +160,7 @@ def _text_space_to_json(space: TextSpace) -> typing.Dict[str, Any]:
         "type": "TextSpace",
         "min_length": space.min_length,
         "max_length": space.max_length,
-        "charset": "".join(space.charset)
+        "charset": "".join(space.charset) if space.charset is not None else None,
     }
 
 @json_to_space.register(TextSpace)
@@ -219,3 +219,18 @@ def _json_to_union_space(json_data: typing.Dict[str, Any], map_backend: ComputeB
     spaces = [json_to_space(s, map_backend, map_device) for s in json_data["spaces"]]
     return UnionSpace(map_backend, spaces, device=map_device)
 
+@space_to_json.register(BatchedSpace)
+def _batched_space_to_json(space: BatchedSpace) -> typing.Dict[str, Any]:
+    return {
+        "type": "BatchedSpace",
+        "single_space": space_to_json(space.single_space),
+        "batch_shape": space.batch_shape,
+    }
+
+@json_to_space.register(BatchedSpace)
+def _json_to_batched_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> BatchedSpace:
+    single_space = json_to_space(json_data["single_space"], map_backend, map_device)
+    return BatchedSpace(
+        single_space,
+        batch_shape=json_data["batch_shape"]
+    )

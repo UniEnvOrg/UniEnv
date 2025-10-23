@@ -35,6 +35,9 @@ class FlattenedStorage(SpaceStorage[
         flattened_space = sfu.flatten_space(single_instance_space)
         inner_storage_path = "inner_storage" + (inner_storage_cls.single_file_ext or "")
 
+        if cache_path is not None:
+            os.makedirs(cache_path, exist_ok=True)
+
         inner_storage = inner_storage_cls.create(
             flattened_space,
             *args,

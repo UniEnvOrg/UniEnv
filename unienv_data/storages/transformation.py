@@ -39,6 +39,9 @@ class TransformedStorage(SpaceStorage[
         transformed_space = data_transformation.get_target_space_from_source(single_instance_space)
         inner_storage_path = "transformed_inner_storage" + (inner_storage_cls.single_file_ext or "")
 
+        if cache_path is not None:
+            os.makedirs(cache_path, exist_ok=True)
+
         inner_storage = inner_storage_cls.create(
             transformed_space,
             *args,

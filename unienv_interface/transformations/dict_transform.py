@@ -7,6 +7,27 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 import copy
 from .transformation import DataTransformation, TargetDataT
 
+def get_chained_value(
+    data : Mapping[str, Any],
+    chained_key : List[str],
+    ignore_missing_keys : bool = False,
+) -> Any:
+    assert len(chained_key) >= 1, "Chained key must have at least one key"
+    if chained_key[0] not in data.keys():
+        if ignore_missing_keys:
+            return None
+        else:
+            raise KeyError(f"Key '{chained_key[0]}' not found in data")
+    
+    if len(chained_key) == 1:
+        return data[chained_key[0]]
+    else:
+        return get_chained_value(
+            data[chained_key[0]],
+            chained_key[1:],
+            ignore_missing_keys=ignore_missing_keys
+        )
+
 def call_function_on_chained_dict(
     data : Mapping[str, Any],
     chained_key : List[str],
@@ -111,11 +132,16 @@ class DictTransformation(DataTransformation):
     ) -> Optional["DictTransformation"]:
         if not self.has_inverse:
             return None
-        
-        inverse_mapping = {
-            key: transformation.direction_inverse(source_space)
-            for key, transformation in self.mapping.items()
-        }
+
+        inverse_mapping = {}
+        for key, transformation in self.mapping.items():
+            inverse_mapping[key] = transformation.direction_inverse(
+                None if source_space is None else get_chained_value(
+                    source_space,
+                    key.split('/'),
+                    ignore_missing_keys=self.ignore_missing_keys
+                )
+            )
         
         return DictTransformation(
             mapping=inverse_mapping,

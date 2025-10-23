@@ -218,7 +218,10 @@ class HDF5Storage(SpaceStorage[
                     dtype = h5py.string_dtype(encoding='utf-8', length=space.max_length)
                 else:
                     raise ValueError(f"Unsupported space type: {type(space)}")
-            
+
+                current_chunks = chunks if not isinstance(chunks, Mapping) else chunks.get(key, None)
+                if current_chunks is None and (isinstance(space, BoxSpace) or isinstance(space, BinarySpace)):
+                    current_chunks = (1, *shape[1:])
                 root.create_dataset(
                     key,
                     shape=shape,
@@ -228,7 +231,7 @@ class HDF5Storage(SpaceStorage[
                     compression_opts=compression_level if not isinstance(compression_level, Mapping) else compression_level.get(
                         key, None
                     ),
-                    chunks=chunks if not isinstance(chunks, Mapping) else chunks.get(key, None),
+                    chunks=current_chunks,
                 )
             else:
                 sub_group = root.create_group(key)
