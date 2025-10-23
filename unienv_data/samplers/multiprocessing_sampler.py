@@ -10,10 +10,10 @@ from multiprocessing.synchronize import Event as MPEvent
 import queue
 import time
 
-try:
-    import torch
-except ImportError:
-    torch = None
+# try:
+#     import torch
+# except ImportError:
+#     torch = None
 
 def worker_loop(
     fetch_fn : Callable[[BatchSampler[
