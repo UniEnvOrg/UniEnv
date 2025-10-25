@@ -15,6 +15,55 @@ import numpy as np
 import os
 import json
 
+def is_fancy_index(
+    index : Any
+) -> bool:
+    """
+    Check if the given index is fancy indexing.
+    Args:
+        index (Any): Index to check
+    Returns:
+        bool: True if fancy indexing, False otherwise
+    """
+    if not isinstance(index, np.ndarray):
+        return False
+    if index.dtype.kind not in {'i', 'u'}:
+        return False
+    return True
+
+def fancy_indexing_to_supported_indexing(
+    index : np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert fancy indexing to limited fancy indexing that h5py supports.
+    Args:
+        index (np.ndarray): Fancy indexing array of shape (N,)
+    Returns:
+        np.ndarray: Limited fancy indexing array of shape (M,)
+        np.ndarray: Indices to reconstruct the resulting data to original order from the fetched data, shape (N,)
+    """
+    unique_indices, unique_reverse_index = np.unique(index, return_inverse=True)
+    unique_indices_sorted_ids = np.argsort(unique_indices)
+    # construct reverse mapping from the sorted ids to original unique indices
+    sort_reverse_mapping = np.empty_like(unique_indices_sorted_ids)
+    sort_reverse_mapping[unique_indices_sorted_ids] = np.arange(len(unique_indices))
+    return unique_indices[unique_indices_sorted_ids], unique_reverse_index[sort_reverse_mapping]
+
+def fancy_indexing_to_supported_set_indexing(
+    index : np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert fancy indexing to limited fancy indexing that h5py supports for setting values.
+    Args:
+        index (np.ndarray): Fancy indexing array of shape (N,)
+    Returns:
+        np.ndarray: Limited fancy indexing array of shape (M,)
+        np.ndarray: Indices to read data required to construct the limited set data, shape (M,)
+    """
+    unique_indices, unique_idx = np.unique(index, return_index=True)
+    unique_indices_sorted_ids = np.argsort(unique_indices)
+    return unique_indices[unique_indices_sorted_ids], unique_idx[unique_indices_sorted_ids]
+
 HDF5BatchType = Union[Dict[str, Any], NumpyArrayType, str]
 HDF5SpaceType = Union[DictSpace, BoxSpace, TextSpace]
 class HDF5Storage(SpaceStorage[
@@ -405,6 +454,10 @@ class HDF5Storage(SpaceStorage[
         super().__init__(
             single_instance_space
         )
+        self._batched_instance_space = sbu.batch_space(
+            self.single_instance_space,
+            1
+        )
         self.root = root
         self.capacity = capacity
         self._len = self.call_function_on_first_dataset(
@@ -441,19 +494,45 @@ class HDF5Storage(SpaceStorage[
         return self._len
     
     def get(self, index):
-        return __class__.get_from(
-            self.root,
-            self.single_instance_space,
-            index
-        )
+        if not is_fancy_index(index):
+            return __class__.get_from(
+                self.root,
+                self.single_instance_space,
+                index
+            )
+        else:
+            unique_indices, reverse_mapping = fancy_indexing_to_supported_indexing(index)
+            get_result_unique = __class__.get_from(
+                self.root,
+                self.single_instance_space,
+                unique_indices
+            )
+            return sbu.get_at(
+                self._batched_instance_space,
+                get_result_unique,
+                reverse_mapping
+            )
 
     def set(self, index, value):
-        return __class__.set_to(
-            self.root,
-            self.single_instance_space,
-            index,
-            value
-        )
+        if not is_fancy_index(index):
+            return __class__.set_to(
+                self.root,
+                self.single_instance_space,
+                index,
+                value
+            )
+        else:
+            unique_indices, unique_idx = fancy_indexing_to_supported_set_indexing(index)
+            return __class__.set_to(
+                self.root,
+                self.single_instance_space,
+                unique_indices,
+                sbu.get_at(
+                    self._batched_instance_space,
+                    value,
+                    unique_idx
+                )
+            )
 
     def dumps(self, path):
         if isinstance(self.root, h5py.File) and os.path.samefile(self.root.filename, path):
