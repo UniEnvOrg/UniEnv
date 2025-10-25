@@ -77,6 +77,21 @@ def check_fixed_capacity_replay_buffer(
     assert rb.offset == 0
     rb.clear()
 
+    perform_rb_fill_test(
+        rb,
+        rb.single_space,
+        rb.capacity - 2,
+        rng
+    )
+    assert len(rb) == rb.capacity - 2
+    perform_rb_fill_test(
+        rb,
+        rb.single_space,
+        5,
+        rng
+    )
+    assert rb.offset == 3
+
     ref_idx, flat_ref_slice = perform_rb_fill_test(
         rb,
         rb.single_space,
