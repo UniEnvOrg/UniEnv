@@ -63,6 +63,7 @@ class TransformedStorage(SpaceStorage[
         single_instance_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
         *,
         capacity : Optional[int] = None,
+        read_only : bool = True,
         **kwargs
     ) -> "TransformedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         metadata_path = os.path.join(path, "transformed_metadata.json")
@@ -85,6 +86,7 @@ class TransformedStorage(SpaceStorage[
             os.path.join(path, inner_storage_path),
             transformed_space,
             capacity=capacity,
+            read_only=read_only,
             **kwargs
         )
         return TransformedStorage(

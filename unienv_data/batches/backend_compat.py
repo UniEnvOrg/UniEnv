@@ -84,6 +84,13 @@ class ToBackendOrDeviceBatch(
         return self.target_device if self.target_device is not None else self.batch.device
 
     def get_flattened_at(self, idx):
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         o_data = self.batch.get_flattened_at(idx)
         return data_to(
             o_data,
@@ -93,6 +100,13 @@ class ToBackendOrDeviceBatch(
         )
 
     def get_flattened_at_with_metadata(self, idx):
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         o_data, o_metadata = self.batch.get_flattened_at_with_metadata(idx)
         return (
             data_to(
@@ -111,6 +125,13 @@ class ToBackendOrDeviceBatch(
 
     def set_flattened_at(self, idx, value):
         assert self.is_mutable, "Batch is not mutable"
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         value = data_to(
             value,
             source_backend=self.target_backend,
@@ -130,6 +151,13 @@ class ToBackendOrDeviceBatch(
         self.batch.extend_flattened(value)
     
     def get_at(self, idx):
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         o_data = self.batch.get_at(idx)
         return (
             data_to(
@@ -141,6 +169,13 @@ class ToBackendOrDeviceBatch(
         )
     
     def get_at_with_metadata(self, idx):
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         o_data, o_metadata = self.batch.get_at_with_metadata(idx)
         return (
             data_to(
@@ -159,6 +194,13 @@ class ToBackendOrDeviceBatch(
     
     def set_at(self, idx, value):
         assert self.is_mutable, "Batch is not mutable"
+        if self.target_backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.target_backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         o_value = data_to(
             value,
             source_backend=self.target_backend,

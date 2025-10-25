@@ -58,6 +58,7 @@ class FlattenedStorage(SpaceStorage[
         single_instance_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
         *,
         capacity : Optional[int] = None,
+        read_only : bool = True,
         **kwargs
     ) -> "FlattenedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         metadata_path = os.path.join(path, "flattened_metadata.json")
@@ -73,6 +74,7 @@ class FlattenedStorage(SpaceStorage[
             os.path.join(path, inner_storage_path),
             flattened_space,
             capacity=capacity,
+            read_only=read_only,
             **kwargs
         )
         return FlattenedStorage(

@@ -44,10 +44,13 @@ def fancy_indexing_to_supported_indexing(
     """
     unique_indices, unique_reverse_index = np.unique(index, return_inverse=True)
     unique_indices_sorted_ids = np.argsort(unique_indices)
-    # construct reverse mapping from the sorted ids to original unique indices
-    sort_reverse_mapping = np.empty_like(unique_indices_sorted_ids)
-    sort_reverse_mapping[unique_indices_sorted_ids] = np.arange(len(unique_indices))
-    return unique_indices[unique_indices_sorted_ids], unique_reverse_index[sort_reverse_mapping]
+    # Construct reverse mapping from index `unique_indices[unique_indices_sorted_ids]` to original index
+    # Create inverse mapping: for each original unique index position, find its new sorted position
+    inverse_mapping = np.empty_like(unique_indices_sorted_ids)
+    inverse_mapping[unique_indices_sorted_ids] = np.arange(len(unique_indices_sorted_ids))
+    # Apply the inverse mapping to the reverse index to get sorted reverse index
+    sorted_unique_reverse_index = inverse_mapping[unique_reverse_index]
+    return unique_indices[unique_indices_sorted_ids], sorted_unique_reverse_index
 
 def fancy_indexing_to_supported_set_indexing(
     index : np.ndarray
@@ -418,6 +421,7 @@ class HDF5Storage(SpaceStorage[
         single_instance_space, 
         *, 
         capacity = None, 
+        read_only = True,
     ) -> "HDF5Storage":
         assert os.path.exists(path), \
             f"Path {path} does not exist"
@@ -430,7 +434,7 @@ class HDF5Storage(SpaceStorage[
 
         root = h5py.File(
             path,
-            "r+" if can_write else "r"
+            "r+" if can_write and not read_only else "r"
         )
         return cls(
             single_instance_space,

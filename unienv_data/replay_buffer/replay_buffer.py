@@ -94,6 +94,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         *,
         backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         device: Optional[BDeviceType] = None,
+        read_only : bool = True,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         with open(os.path.join(path, "metadata.json"), "r") as f:
@@ -114,6 +115,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             storage_path,
             single_instance_space,
             capacity=capacity,
+            read_only=read_only,
             **storage_kwargs
         )
         return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset, cache_path=path)

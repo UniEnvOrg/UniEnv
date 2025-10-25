@@ -31,6 +31,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         *,
         capacity : Optional[int] = None,
+        read_only : bool = True,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
