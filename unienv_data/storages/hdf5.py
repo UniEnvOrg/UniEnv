@@ -27,7 +27,7 @@ def is_fancy_index(
     """
     if not isinstance(index, np.ndarray):
         return False
-    if index.dtype.kind not in {'i', 'u'}:
+    if index.dtype.kind not in {'i', 'u'} or index.shape == (1,):
         return False
     return True
 
