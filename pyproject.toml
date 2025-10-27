@@ -13,13 +13,6 @@ dependencies = [
     "cloudpickle",
 ]
 
-[project.urls]
-Homepage = "https://github.com/UniEnvOrg/UniEnvPy"
-Documentation = "https://github.com/UniEnvOrg/UniEnvPy"
-Repository = "https://github.com/UniEnvOrg/UniEnvPy"
-Issues = "https://github.com/UniEnvOrg/UniEnvPy/issues"
-Changelog = "https://github.com/UniEnvOrg/UniEnvPy/blob/main/CHANGELOG.md"
-
 [project.optional-dependencies]
 dev = [
     "pytest",
@@ -36,6 +29,14 @@ mjx = [
 maniskill = [
     "mani_skill>=3.0.0b12"
 ]
+
+
+[project.urls]
+Homepage = "https://github.com/UniEnvOrg/UniEnvPy"
+Documentation = "https://github.com/UniEnvOrg/UniEnvPy"
+Repository = "https://github.com/UniEnvOrg/UniEnvPy"
+Issues = "https://github.com/UniEnvOrg/UniEnvPy/issues"
+Changelog = "https://github.com/UniEnvOrg/UniEnvPy/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["*"]
