@@ -40,11 +40,10 @@ If you use UniEnv in your research, please cite it as follows:
 ```bibtex
 @software{cao_unienv,
   author = {Cao, Yunhao AND Fang, Kuan},
-  title = {{UniEnv: Universal Robot Environment Framework}},
+  title = {{UniEnv: Unifying Robot Environments and Data APIs}},
   year = {2025},
-  month = sep,
-  version = {0.0.1b2},
-  url = {https://github.com/UniEnvOrg/UniEnvPy},
+  month = oct,
+  url = {https://github.com/UniEnvOrg/UniEnv},
   license = {MIT}
 }
 ```

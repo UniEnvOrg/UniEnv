@@ -6,5 +6,5 @@ authors:
   - family-names: Fang
     given-names: Kuan
   - name: "UniEnv Contributors"
-title: "UniEnv: Universal Robot Environment Framework"
-date-released: 2025-09-30
+title: "UniEnv: Unifying Robot Environments and Data APIs"
+date-released: 2025-10-28
