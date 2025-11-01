@@ -164,7 +164,11 @@ class EpisodeVideoWrapper(
 
         frames = []
         for frame in self.episodic_frames:
-            frame_np = self.env.backend.to_numpy(frame)
+            if self.env.backend.is_backendarray(frame):
+                frame_np = self.env.backend.to_numpy(frame)
+            else:
+                assert isinstance(frame, np.ndarray)
+                frame_np = frame
             assert frame_np.shape[2] == 3
             frames.append(frame_np)
         clip = ImageSequenceClip(frames, fps=self.env.render_fps or 30)
@@ -213,7 +217,12 @@ class EpisodeWandbVideoWrapper(
             *self.episodic_frames[0].shape
         ))
         for i, frame in enumerate(self.episodic_frames):
-            frame_np = self.env.backend.to_numpy(frame) if not isinstance(frame, np.ndarray) else frame
+            if self.env.backend.is_backendarray(frame):
+                frame_np = self.env.backend.to_numpy(frame)
+            else:
+                assert isinstance(frame, np.ndarray)
+                frame_np = frame
+            assert frame_np.shape[2] == 3
             frames[i] = frame_np
         clip = self.wandb.Video(
             frames.transpose(0, 3, 1, 2),
