@@ -85,8 +85,12 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
     def set_flattened_at(self, idx : Union[IndexableType, BArrayType], value : BArrayType) -> None:
         raise NotImplementedError
 
+    def append_flattened(self, value : BArrayType) -> None:
+        return self.extend_flattened(value[None])
+
     def extend_flattened(self, value : BArrayType) -> None:
-        raise NotImplementedError
+        unflat_data = space_flatten_utils.unflatten_data(self._batched_space, value, start_dim=1)
+        self.extend(unflat_data)
     
     def get_at(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
         flattened_data = self.get_flattened_at(idx)
@@ -122,6 +126,10 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
 
     def __delitem__(self, idx : Union[IndexableType, BArrayType]) -> None:
         self.remove_at(idx)
+
+    def append(self, value : BatchT) -> None:
+        batched_data = space_batch_utils.concatenate(self._batched_space, [value])
+        self.extend(batched_data)
 
     def extend(self, value : BatchT) -> None:
         flattened_data = space_flatten_utils.flatten_data(self._batched_space, value, start_dim=1)
