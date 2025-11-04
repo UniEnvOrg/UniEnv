@@ -63,6 +63,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         storage_path_relative = "storage" + (storage_cls.single_file_ext or "")
+        if cache_path is not None:
+            os.makedirs(cache_path, exist_ok=True)
         storage = storage_cls.create(
             single_instance_space,
             *args,
