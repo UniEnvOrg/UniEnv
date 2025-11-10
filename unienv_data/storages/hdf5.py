@@ -235,7 +235,7 @@ class HDF5Storage(SpaceStorage[
         chunks : Union[
             Dict[str, Any],
             Optional[Union[bool, Tuple[int, ...]]]
-        ] = None,
+        ] = None
     ) -> None:
         assert not (initial_capacity is None and capacity is None), \
             "If `capacity` is None, `initial_capacity` must be provided"
@@ -272,8 +272,8 @@ class HDF5Storage(SpaceStorage[
                     raise ValueError(f"Unsupported space type: {type(space)}")
 
                 current_chunks = chunks if not isinstance(chunks, Mapping) else chunks.get(key, None)
-                if current_chunks is None and (isinstance(space, BoxSpace) or isinstance(space, BinarySpace)):
-                    current_chunks = (1, *shape[1:])
+                # if current_chunks is None and (isinstance(space, BoxSpace) or isinstance(space, BinarySpace)):
+                #     current_chunks = (1, *shape[1:])
                 root.create_dataset(
                     key,
                     shape=shape,
@@ -397,7 +397,8 @@ class HDF5Storage(SpaceStorage[
             "cache_path must be provided for HDF5Storage"
         root = h5py.File(
             cache_path,
-            "w"
+            "w",
+            **kwargs
         )
         __class__._construct_hdf5_file(
             root,
@@ -407,6 +408,7 @@ class HDF5Storage(SpaceStorage[
             compression=compression,
             compression_level=compression_level,
             chunks=chunks,
+            **kwargs
         )
         return cls(
             single_instance_space,
@@ -422,6 +424,7 @@ class HDF5Storage(SpaceStorage[
         *, 
         capacity = None, 
         read_only = True,
+        **kwargs
     ) -> "HDF5Storage":
         assert os.path.exists(path), \
             f"Path {path} does not exist"
@@ -434,7 +437,8 @@ class HDF5Storage(SpaceStorage[
 
         root = h5py.File(
             path,
-            "r+" if can_write and not read_only else "r"
+            "r+" if can_write and not read_only else "r",
+            **kwargs
         )
         return cls(
             single_instance_space,
