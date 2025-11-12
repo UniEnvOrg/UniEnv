@@ -14,6 +14,7 @@ import h5py
 import numpy as np
 import os
 import json
+import copy
 
 def is_fancy_index(
     index : Any
@@ -66,6 +67,71 @@ def fancy_indexing_to_supported_set_indexing(
     unique_indices, unique_idx = np.unique(index, return_index=True)
     unique_indices_sorted_ids = np.argsort(unique_indices)
     return unique_indices[unique_indices_sorted_ids], unique_idx[unique_indices_sorted_ids]
+
+def io_reduced_indexing(
+    original_index : np.ndarray,
+    max_gap_size : int = 8
+) -> List[Union[slice, np.ndarray, int]]:
+    """
+    Convert a supported fancy-index array (sorted, unique values) to a list of slices and fancy indices to reduce IO operations.
+    Args:
+        original_index (np.ndarray): Original indexing array of shape (N,)
+    Returns:
+        List[Union[slice, np.ndarray, int]]: List of slices and fancy indices
+    """
+    if original_index.ndim != 1:
+        raise ValueError("Only 1D indexing is supported")
+    
+    if original_index.size == 0:
+        return []
+    
+    result: List[Union[slice, np.ndarray, int]] = []
+    pending: List[int] = []
+    dtype = original_index.dtype
+    n = original_index.size
+
+    def flush_pending() -> None:
+        if not pending:
+            return
+        if len(pending) == 1:
+            result.append(pending[0])
+        else:
+            result.append(np.array(pending, dtype=dtype))
+        pending.clear()
+
+    pos = 0
+    while pos < n:
+        if pos == n - 1:
+            pending.append(int(original_index[pos]))
+            break
+
+        stride = int(original_index[pos + 1] - original_index[pos])
+        if stride <= 0:
+            raise ValueError("Indices must be strictly increasing")
+        if stride > max_gap_size:
+            pending.append(int(original_index[pos]))
+            pos += 1
+            continue
+
+        end = pos + 1
+        while end + 1 < n:
+            next_gap = int(original_index[end + 1] - original_index[end])
+            if next_gap != stride or next_gap > max_gap_size:
+                break
+            end += 1
+
+        run_length = end - pos + 1
+        if run_length >= 2:
+            flush_pending()
+            start_val = int(original_index[pos])
+            stop_val = int(original_index[end] + stride)
+            result.append(slice(start_val, stop_val, stride))
+        else:
+            pending.append(int(original_index[pos]))
+        pos = end + 1
+
+    flush_pending()
+    return result
 
 HDF5BatchType = Union[Dict[str, Any], NumpyArrayType, str]
 HDF5SpaceType = Union[DictSpace, BoxSpace, TextSpace]
@@ -235,7 +301,7 @@ class HDF5Storage(SpaceStorage[
         chunks : Union[
             Dict[str, Any],
             Optional[Union[bool, Tuple[int, ...]]]
-        ] = None
+        ] = None,
     ) -> None:
         assert not (initial_capacity is None and capacity is None), \
             "If `capacity` is None, `initial_capacity` must be provided"
@@ -271,9 +337,13 @@ class HDF5Storage(SpaceStorage[
                 else:
                     raise ValueError(f"Unsupported space type: {type(space)}")
 
-                current_chunks = chunks if not isinstance(chunks, Mapping) else chunks.get(key, None)
-                # if current_chunks is None and (isinstance(space, BoxSpace) or isinstance(space, BinarySpace)):
-                #     current_chunks = (1, *shape[1:])
+                current_chunks = chunks if not isinstance(chunks, Mapping) else chunks.get(key, chunks.get("*", None))
+                if current_chunks is not None and isinstance(current_chunks, Sequence) and len(current_chunks) < len(shape):
+                    next_chunks = list(shape).copy()
+                    for i, c_size in enumerate(current_chunks):
+                        next_chunks[i] = c_size
+                    current_chunks = tuple(next_chunks)
+                    
                 root.create_dataset(
                     key,
                     shape=shape,
@@ -298,7 +368,7 @@ class HDF5Storage(SpaceStorage[
                     compression_level=compression_level if not isinstance(compression_level, Mapping) else compression_level.get(
                         key, None
                     ),
-                    chunks=chunks if not isinstance(chunks, Mapping) else chunks.get(key, None),
+                    chunks=chunks if not isinstance(chunks, Mapping) else chunks.get(key, chunks.get("*", None)),
                 )
 
     @staticmethod
@@ -335,6 +405,7 @@ class HDF5Storage(SpaceStorage[
         root : Union[h5py.Group, h5py.Dataset],
         single_instance_space : HDF5SpaceType,
         index : Union[int, slice, Sequence[int], BArrayType],
+        reduce_io : bool = True,
     ) -> Any:
         if not isinstance(single_instance_space, DictSpace) and isinstance(root, h5py.Group):
             assert __class__.DEFAULT_KEY in root, \
@@ -345,9 +416,19 @@ class HDF5Storage(SpaceStorage[
             result = {}
             for key, space in single_instance_space.spaces.items():
                 sub_root = root[key]
-                result[key] = __class__.get_from(sub_root, space, index)
+                result[key] = __class__.get_from(sub_root, space, index, reduce_io=reduce_io)
         else:
-            result = root[index]
+            if reduce_io and is_fancy_index(index):
+                indexes = io_reduced_indexing(index)
+                result_parts = []
+                for idx in indexes:
+                    if isinstance(idx, int):
+                        result_parts.append(root[idx][None])
+                    else:
+                        result_parts.append(root[idx])
+                result = np.concatenate(result_parts, axis=0)
+            else:
+                result = root[index]
             # Convert to numpy array if it's a scalar
             if isinstance(result, (int, float)):
                 result = np.array(result)
@@ -391,6 +472,7 @@ class HDF5Storage(SpaceStorage[
             Dict[str, Any],
             Optional[Union[bool, Tuple[int, ...]]]
         ] = None,
+        reduce_io : bool = True,
         **kwargs
     ) -> "HDF5Storage":
         assert cache_path is not None, \
@@ -414,6 +496,7 @@ class HDF5Storage(SpaceStorage[
             single_instance_space,
             root,
             capacity=capacity,
+            reduce_io=reduce_io,
         )
     
     @classmethod
@@ -424,6 +507,7 @@ class HDF5Storage(SpaceStorage[
         *, 
         capacity = None, 
         read_only = True,
+        reduce_io : bool = True,
         **kwargs
     ) -> "HDF5Storage":
         assert os.path.exists(path), \
@@ -443,7 +527,8 @@ class HDF5Storage(SpaceStorage[
         return cls(
             single_instance_space,
             root,
-            capacity=capacity
+            capacity=capacity,
+            reduce_io=reduce_io,
         )
 
     # ========== Instance Methods ==========
@@ -453,6 +538,7 @@ class HDF5Storage(SpaceStorage[
         single_instance_space : HDF5SpaceType,
         root : h5py.Group,
         capacity : Optional[int] = None,
+        reduce_io : bool = True,
     ):
         __class__._check_hdf5_file(
             root,
@@ -472,6 +558,7 @@ class HDF5Storage(SpaceStorage[
             root,
             lambda dataset: dataset.shape[0]
         )
+        self.reduce_io = reduce_io
         assert self.capacity is None or self._len == self.capacity, \
             f"If the storage has a fixed capacity, the length must match the capacity. Expected {self.capacity}, got {self._len}"
     
