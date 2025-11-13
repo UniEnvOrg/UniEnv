@@ -21,7 +21,6 @@ class FuncWorldNode(ABC, Generic[
     """
 
     name : str
-    world : FuncWorld[WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]
     control_timestep : Optional[float] = None
     context_space : Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
     observation_space : Optional[Space[ObsType, BDeviceType, BDtypeType, BRNGType]] = None
@@ -29,6 +28,7 @@ class FuncWorldNode(ABC, Generic[
     has_reward : bool = False
     has_termination_signal : bool = False
     has_truncation_signal : bool = False
+    world : Optional[FuncWorld[WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
