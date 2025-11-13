@@ -3,13 +3,12 @@ name = "unienv"
 description = "Unified robot environment framework supporting multiple tensor and simulation backends"
 readme = "README.md"
 license = "MIT"
-version = "0.0.1b2"
+version = "0.0.1b3"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
     "xbarray>=0.0.1a8",
     "pillow",
-    "h5py",
     "cloudpickle",
 ]
 
@@ -23,20 +22,13 @@ gymnasium = [
 video = [
     "moviepy>=2.1"
 ]
-mjx = [
-    "playground",
-]
-maniskill = [
-    "mani_skill>=3.0.0b12"
-]
-
 
 [project.urls]
-Homepage = "https://github.com/UniEnvOrg/UniEnvPy"
-Documentation = "https://github.com/UniEnvOrg/UniEnvPy"
-Repository = "https://github.com/UniEnvOrg/UniEnvPy"
-Issues = "https://github.com/UniEnvOrg/UniEnvPy/issues"
-Changelog = "https://github.com/UniEnvOrg/UniEnvPy/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/UniEnvOrg/UniEnv"
+Documentation = "https://github.com/UniEnvOrg/UniEnv"
+Repository = "https://github.com/UniEnvOrg/UniEnv"
+Issues = "https://github.com/UniEnvOrg/UniEnv/issues"
+Changelog = "https://github.com/UniEnvOrg/UniEnv/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["*"]

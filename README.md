@@ -10,11 +10,6 @@ UniEnv supports multiple tensor backends with zero-copy translation layers throu
 
 UniEnv supports diverse simulation environments and real robots, built on top of the abstract environment / world interface. This allows you to reuse code across different sim and real robots.
 
-Current supported simulation environments:
-- Any Environment defined in Gymnasium interface
-- [Mujoco-Playground](https://github.com/google-deepmind/mujoco_playground)
-- [ManiSkill 3](https://github.com/haosulab/ManiSkill/)
-
 ## Universal Robot Data Interface
 
 UniEnv provides a universal data interface for accessing robot data through the abstract `BatchBase` interface. We also provide a utility `ReplayBuffer` for saving data from various environments with diverse data format support, including `hdf5`, memory-mapped torch tensors, and others.
@@ -27,10 +22,10 @@ Install the package with pip
 pip install unienv
 ```
 
-You can install optional dependencies such as `gymnasium`, `mjx`, `maniskill`, `video` by running
+You can install optional dependencies such as `gymnasium` (for Gymnasium-compatible environments), `dev`, or `video` by running
 
 ```bash
-pip install unienv[gymnasium,mjx,maniskill,video]
+pip install unienv[gymnasium,video]
 ```
 
 ## Cite
