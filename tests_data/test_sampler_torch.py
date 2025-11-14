@@ -6,7 +6,7 @@ import tempfile
 
 from unienv_data import *
 from unienv_data.storages.pytorch import PytorchTensorStorage
-from unienv_data.storages.common import FlattenedStorage
+from unienv_data.storages.flattened import FlattenedStorage
 from unienv_data.samplers import *
 from unienv_interface.space import *
 from unienv_interface.space.space_utils import flatten_utils as sfu, batch_utils as sbu

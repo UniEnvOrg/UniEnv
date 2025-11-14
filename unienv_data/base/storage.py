@@ -57,6 +57,17 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     """
     cache_filename : Optional[Union[str, os.PathLike]] = None
 
+    """
+    Can the storage instance be safely used in multiprocessing environments after creation?
+    If True, the storage can be used in multiprocessing environments.
+    """
+    is_multiprocessing_safe : bool = False
+
+    """
+    Is the storage mutable? If False, the storage is read-only.
+    """
+    is_mutable : bool = True
+
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.single_instance_space.backend

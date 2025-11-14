@@ -111,6 +111,18 @@ class FlattenedStorage(SpaceStorage[
         self.inner_storage_path = inner_storage_path
         
     @property
+    def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
+        return self.inner_storage.cache_filename
+    
+    @property
+    def is_mutable(self) -> bool:
+        return self.inner_storage.is_mutable
+
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return self.inner_storage.is_multiprocessing_safe
+
+    @property
     def capacity(self) -> Optional[int]:
         return self.inner_storage.capacity
     

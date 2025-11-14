@@ -1,6 +1,6 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tuple as TupleT, Sequence as SequenceT, Union as UnionT, List
 from unienv_data import *
-from unienv_data.storages.common import FlattenedStorage
+from unienv_data.storages.flattened import FlattenedStorage
 from unienv_data.storages.hdf5 import HDF5Storage
 from unienv_data.storages.pytorch import PytorchTensorStorage
 from unienv_data.samplers import *

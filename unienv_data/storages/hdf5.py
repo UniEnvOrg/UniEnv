@@ -498,7 +498,7 @@ class HDF5Storage(SpaceStorage[
             capacity=capacity,
             reduce_io=reduce_io,
         )
-    
+
     @classmethod
     def load_from(
         cls, 
@@ -562,6 +562,20 @@ class HDF5Storage(SpaceStorage[
         assert self.capacity is None or self._len == self.capacity, \
             f"If the storage has a fixed capacity, the length must match the capacity. Expected {self.capacity}, got {self._len}"
     
+    @property
+    def is_mutable(self) -> bool:
+        return self.root.file.mode != 'r'
+
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return not self.is_mutable
+
+    @property
+    def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
+        if isinstance(self.root, h5py.File):
+            return self.root.filename
+        return None
+
     def extend_length(self, length):
         assert self.capacity is None, \
             "Cannot extend length of a storage with fixed capacity"
@@ -645,3 +659,29 @@ class HDF5Storage(SpaceStorage[
         if isinstance(self.root, h5py.File):
             self.root.close()
         self.root = None
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if (self.root, h5py.File):
+            state['filename'] = self.root.filename
+            state['mode'] = self.root.file.mode
+        else:
+            state['filename'] = self.root.file.filename
+            state['mode'] = self.root.file.mode
+            state['full_name'] = self.root.name
+        del state['root']
+        return state
+    
+    def __setstate__(self, state):
+        if 'filename' and 'mode' in state:
+            self.root = h5py.File(
+                state['filename'],
+                mode=state['mode']
+            )
+            if 'full_name' in state:
+                self.root = self.root[state['full_name']]
+                del state['full_name']
+            
+            del state['filename']
+            del state['mode']
+        self.__dict__.update(state)

@@ -135,6 +135,22 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         flattened_data = space_flatten_utils.flatten_data(self._batched_space, value, start_dim=1)
         self.extend_flattened(flattened_data)
 
+    def extend_from(
+        self, 
+        other : 'BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]',
+        chunk_size : int = 8,
+        tqdm : bool = False,
+    ) -> None:
+        n_total = len(other)
+        iterable_start = range(0, n_total, chunk_size)
+        if tqdm:
+            from tqdm import tqdm
+            iterable_start = tqdm(iterable_start, desc="Extending Batch")
+        for start_idx in range(0, n_total, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_total)
+            data_chunk = other.get_at(slice(start_idx, end_idx))
+            self.extend(data_chunk)
+
     def close(self) -> None:
         pass
 

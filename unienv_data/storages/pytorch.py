@@ -24,6 +24,7 @@ class PytorchTensorStorage(SpaceStorage[
         is_memmap : bool = False,
         cache_path : Optional[str] = None,
         memmap_existok : bool = True,
+        multiprocessing : bool = False,
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, \
             f"Single instance space must be of type PyTorchComputeBackend, got {single_instance_space.backend}"
@@ -54,8 +55,10 @@ class PytorchTensorStorage(SpaceStorage[
                 dtype=single_instance_space.dtype,
                 device=single_instance_space.device
             )
-        
-        return PytorchTensorStorage(single_instance_space, data)
+            if multiprocessing:
+                data = data.share_memory_()
+
+        return PytorchTensorStorage(single_instance_space, data, mutable=True)
 
     @classmethod
     def load_from(
@@ -66,10 +69,14 @@ class PytorchTensorStorage(SpaceStorage[
         is_memmap : bool = False,
         capacity : Optional[int] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, "PytorchTensorStorage only supports PyTorch backend"
         assert capacity is not None, "Capacity must be specified when creating a new tensor"
         assert os.path.exists(path), "File does not exist"
+
+        if is_memmap and not read_only:
+            assert os.access(path, os.W_OK), "File is not writable, cannot open in read-write mode"
 
         target_shape = (capacity, *single_instance_space.shape)
         target_data = MemoryMappedTensor.from_filename(
@@ -88,11 +95,14 @@ class PytorchTensorStorage(SpaceStorage[
                 dtype=single_instance_space.dtype,
                 device=single_instance_space.device
             )
-            data.copy_(target_data)
+            if multiprocessing:
+                data = data.share_memory_()
+            data = data.copy_(target_data)
 
         return PytorchTensorStorage(
             single_instance_space,
-            data
+            data,
+            mutable=not read_only
         )
 
     # ========== Instance Implementations ==========
@@ -104,6 +114,7 @@ class PytorchTensorStorage(SpaceStorage[
         self,
         single_instance_space : BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
         data : Union[torch.Tensor, MemoryMappedTensor],
+        mutable : bool = True,
     ):
         assert single_instance_space.shape == data.shape[1:], \
             f"Single instance space shape {single_instance_space.shape} does not match data shape {data.shape[1:]}"
@@ -111,6 +122,7 @@ class PytorchTensorStorage(SpaceStorage[
             single_instance_space
         )
         self.data = data
+        self._mutable = mutable
 
     @property
     def device(self) -> Optional[PyTorchDeviceType]:
@@ -121,6 +133,14 @@ class PytorchTensorStorage(SpaceStorage[
         if isinstance(self.data, MemoryMappedTensor):
             return self.data.filename
         return None
+    
+    @property
+    def is_mutable(self) -> bool:
+        return self._mutable
+
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return self.data.is_shared()
     
     @property
     def capacity(self) -> int:
@@ -134,9 +154,11 @@ class PytorchTensorStorage(SpaceStorage[
         return self.data[index]
 
     def set(self, index : Union[int, slice, torch.Tensor], value : torch.Tensor) -> None:
+        assert self.is_mutable, "Storage is not mutable"
         self.data[index] = value
 
     def clear(self) -> None:
+        assert self.is_mutable, "Storage is not mutable"
         pass
     
     def dumps(self, path: Union[str, os.PathLike]) -> None:
