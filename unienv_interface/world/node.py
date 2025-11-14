@@ -8,7 +8,7 @@ from .world import World
 
 class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """
-    Each `WorldNode` in the simulated / real world will manage some aspect of the environment.
+    Each `WorldNode` in the simulated / real world will manage some aspect of the environment. This can include sensors, robots, or other entities that interact with the world.
     How the methods in this class will be called once environment resets:
     `World.reset(...)` -> `WorldNode.reset(...)` -> `WorldNode.after_reset(...)` -> `WorldNode.get_observation(...)` -> World can start stepping normally
     How the methods in this class will be called during a environment step:
@@ -16,7 +16,6 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     """
 
     name : str
-    world : World[BArrayType, BDeviceType, BDtypeType, BRNGType]
     control_timestep : Optional[float] = None
     context_space : Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
     observation_space : Optional[Space[ObsType, BDeviceType, BDtypeType, BRNGType]] = None
@@ -24,6 +23,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     has_reward : bool = False
     has_termination_signal : bool = False
     has_truncation_signal : bool = False
+    world : Optional[World[BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
