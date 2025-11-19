@@ -1,7 +1,6 @@
 import os
 import torch
 from unienv_interface.space import Space, BoxSpace
-from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend, PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType
 from unienv_data.base import SpaceStorage

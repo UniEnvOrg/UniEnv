@@ -3,9 +3,7 @@ from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequen
 
 from unienv_interface.space import Space, BoxSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
-from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT
@@ -31,7 +29,7 @@ class FlattenedStorage(SpaceStorage[
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
         **kwargs
-    ) -> "FlattenedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+    ) -> "FlattenedStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         flattened_space = sfu.flatten_space(single_instance_space)
         inner_storage_path = "inner_storage" + (inner_storage_cls.single_file_ext or "")
 
@@ -49,6 +47,7 @@ class FlattenedStorage(SpaceStorage[
             single_instance_space,
             inner_storage,
             inner_storage_path,
+            cache_filename=cache_path,
         )
 
     @classmethod
@@ -60,7 +59,7 @@ class FlattenedStorage(SpaceStorage[
         capacity : Optional[int] = None,
         read_only : bool = True,
         **kwargs
-    ) -> "FlattenedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+    ) -> "FlattenedStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         metadata_path = os.path.join(path, "flattened_metadata.json")
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
@@ -81,6 +80,7 @@ class FlattenedStorage(SpaceStorage[
             single_instance_space,
             inner_storage,
             inner_storage_path,
+            cache_filename=path,
         )
 
     # ========== Instance Implementations ==========
@@ -97,6 +97,7 @@ class FlattenedStorage(SpaceStorage[
             BRNGType,
         ],
         inner_storage_path : Union[str, os.PathLike],
+        cache_filename : Optional[Union[str, os.PathLike]] = None,
     ):
         super().__init__(single_instance_space)
         assert inner_storage.backend == single_instance_space.backend, \
@@ -109,11 +110,12 @@ class FlattenedStorage(SpaceStorage[
         self._batched_instance_space = sbu.batch_space(single_instance_space, 1)
         self.inner_storage = inner_storage
         self.inner_storage_path = inner_storage_path
-        
+        self._cache_filename = cache_filename
+
     @property
     def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
-        return self.inner_storage.cache_filename
-    
+        return self._cache_filename if self.inner_storage.cache_filename is not None else None
+
     @property
     def is_mutable(self) -> bool:
         return self.inner_storage.is_mutable

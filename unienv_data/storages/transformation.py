@@ -3,9 +3,7 @@ from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequen
 
 from unienv_interface.space import Space, BoxSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
-from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.utils.symbol_util import *
 from unienv_interface.transformations import DataTransformation
 
