@@ -23,7 +23,7 @@ def map_transform(
 ]:
     transformed_data = {}
     residual_data = {}
-    for key, value in data.items():
+    for key, value in data.items() if isinstance(data, Mapping) else data.spaces.items():
         full_key = prefix + key
         if full_key in value_map:
             transformed_data[key] = fn(full_key, value, value_map[full_key])
@@ -42,7 +42,9 @@ def map_transform(
             residual_data[key] = value
     if len(residual_data) > 0 and (prefix + "*") in value_map:
         residual_transformed = fn(prefix + "*", residual_data, value_map[prefix + "*"])
-        transformed_data.update(residual_transformed)
+        if isinstance(residual_transformed, Mapping) or isinstance(residual_transformed, DictSpace):
+            for key, value in residual_transformed.items():
+                transformed_data[key] = value
         residual_data = {}
     return transformed_data, residual_data
 
@@ -221,7 +223,6 @@ class DictStorage(SpaceStorage[
         init_capacity = first_storage.capacity
         init_len = len(first_storage)
         for key, storage in storage_map.items():
-            assert key in single_instance_space.spaces, f"Storage key {key} not in single instance space"
             assert storage.capacity == init_capacity, \
                 f"All storages must have the same capacity, but storage {key} has capacity {storage.capacity} while first storage has capacity {init_capacity}"
             assert len(storage) == init_len, \
@@ -273,7 +274,7 @@ class DictStorage(SpaceStorage[
         result, residual = map_transform(
             self.single_instance_space,
             self.storage_map,
-            lambda space, storage: storage.get(index)
+            lambda key, space, storage: storage.get(index)
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
         return result
@@ -289,7 +290,7 @@ class DictStorage(SpaceStorage[
         _, residual = map_transform(
             value,
             self.storage_map,
-            lambda data, storage: storage.set(index, data)
+            lambda key, data, storage: storage.set(index, data)
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
 
