@@ -23,7 +23,7 @@ def map_transform(
 ]:
     transformed_data = {}
     residual_data = {}
-    for key, value in data.items():
+    for key, value in data.items() if isinstance(data, Mapping) else data.spaces.items():
         full_key = prefix + key
         if full_key in value_map:
             transformed_data[key] = fn(full_key, value, value_map[full_key])
@@ -42,7 +42,9 @@ def map_transform(
             residual_data[key] = value
     if len(residual_data) > 0 and (prefix + "*") in value_map:
         residual_transformed = fn(prefix + "*", residual_data, value_map[prefix + "*"])
-        transformed_data.update(residual_transformed)
+        if isinstance(residual_transformed, Mapping) or isinstance(residual_transformed, DictSpace):
+            for key, value in residual_transformed.items():
+                transformed_data[key] = value
         residual_data = {}
     return transformed_data, residual_data
 
@@ -52,6 +54,14 @@ def get_chained_residual_space(
     prefix : str = "",
 ) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
     residual_spaces = {}
+
+    if len(residual_spaces) > 0 and (prefix + "*") in all_keys:
+        return DictSpace(
+            space.backend,
+            {},
+            device=space.device,
+        )
+
     for key, subspace in space.spaces.items():
         full_key = prefix + key
         if full_key in all_keys:
@@ -66,6 +76,7 @@ def get_chained_residual_space(
                 residual_spaces[key] = sub_residual
         else:
             residual_spaces[key] = subspace
+
     return DictSpace(
         space.backend,
         residual_spaces,
@@ -85,7 +96,7 @@ def get_chained_space(
                 prefix,
                 all_keys,
             ) if len(prefix) > 0 else space,
-            all_keys,
+            [key for key in all_keys if key != key_chain],
             prefix=prefix,
         )
         return subspace
@@ -221,7 +232,6 @@ class DictStorage(SpaceStorage[
         init_capacity = first_storage.capacity
         init_len = len(first_storage)
         for key, storage in storage_map.items():
-            assert key in single_instance_space.spaces, f"Storage key {key} not in single instance space"
             assert storage.capacity == init_capacity, \
                 f"All storages must have the same capacity, but storage {key} has capacity {storage.capacity} while first storage has capacity {init_capacity}"
             assert len(storage) == init_len, \
@@ -273,7 +283,7 @@ class DictStorage(SpaceStorage[
         result, residual = map_transform(
             self.single_instance_space,
             self.storage_map,
-            lambda space, storage: storage.get(index)
+            lambda key, space, storage: storage.get(index)
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
         return result
@@ -289,7 +299,7 @@ class DictStorage(SpaceStorage[
         _, residual = map_transform(
             value,
             self.storage_map,
-            lambda data, storage: storage.set(index, data)
+            lambda key, data, storage: storage.set(index, data)
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
 
