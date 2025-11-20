@@ -154,9 +154,6 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
     def close(self) -> None:
         pass
 
-    def __del__(self) -> None:
-        self.close()
-
 SamplerBatchT = TypeVar('SamplerBatchT')
 SamplerArrayType = TypeVar('SamplerArrayType')
 SamplerDeviceType = TypeVar('SamplerDeviceType')
@@ -289,6 +286,3 @@ class BatchSampler(
 
     def close(self) -> None:
         pass
-
-    def __del__(self) -> None:
-        self.close()
