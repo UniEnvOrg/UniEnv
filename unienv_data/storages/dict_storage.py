@@ -303,6 +303,16 @@ class DictStorage(SpaceStorage[
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
 
+    def get_subspace_by_key(
+        self,
+        key: str,
+    ) -> Space[Any, BDeviceType, BDtypeType, BRNGType]:
+        return get_chained_space(
+            self.single_instance_space,
+            key,
+            list(self.storage_map.keys()),
+        )
+
     def clear(self):
         for storage in self.storage_map.values():
             storage.clear()
