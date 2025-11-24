@@ -12,6 +12,24 @@ import numpy as np
 import os
 import json
 
+
+def _merge_nested_mappings(
+    primary: Mapping[str, Any],
+    secondary: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Merge secondary into primary without clobbering explicitly matched keys."""
+    merged: Dict[str, Any] = dict(primary)
+    for merge_key, merge_value in secondary.items():
+        if (
+            merge_key in merged
+            and isinstance(merged[merge_key], Mapping)
+            and isinstance(merge_value, Mapping)
+        ):
+            merged[merge_key] = _merge_nested_mappings(merged[merge_key], merge_value)
+        elif merge_key not in merged:
+            merged[merge_key] = merge_value
+    return merged
+
 def map_transform(
     data : Dict[str, Any],
     value_map : Dict[str, Any],
@@ -44,7 +62,10 @@ def map_transform(
         residual_transformed = fn(prefix + "*", residual_data, value_map[prefix + "*"])
         if isinstance(residual_transformed, Mapping) or isinstance(residual_transformed, DictSpace):
             for key, value in residual_transformed.items():
-                transformed_data[key] = value
+                if key in transformed_data and isinstance(transformed_data[key], Mapping) and isinstance(value, Mapping):
+                    transformed_data[key] = _merge_nested_mappings(transformed_data[key], value)
+                elif key not in transformed_data:
+                    transformed_data[key] = value
         residual_data = {}
     return transformed_data, residual_data
 
