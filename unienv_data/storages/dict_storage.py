@@ -12,6 +12,24 @@ import numpy as np
 import os
 import json
 
+
+def _merge_nested_mappings(
+    primary: Mapping[str, Any],
+    secondary: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Merge secondary into primary without clobbering explicitly matched keys."""
+    merged: Dict[str, Any] = dict(primary)
+    for merge_key, merge_value in secondary.items():
+        if (
+            merge_key in merged
+            and isinstance(merged[merge_key], Mapping)
+            and isinstance(merge_value, Mapping)
+        ):
+            merged[merge_key] = _merge_nested_mappings(merged[merge_key], merge_value)
+        elif merge_key not in merged:
+            merged[merge_key] = merge_value
+    return merged
+
 def map_transform(
     data : Dict[str, Any],
     value_map : Dict[str, Any],
@@ -44,7 +62,10 @@ def map_transform(
         residual_transformed = fn(prefix + "*", residual_data, value_map[prefix + "*"])
         if isinstance(residual_transformed, Mapping) or isinstance(residual_transformed, DictSpace):
             for key, value in residual_transformed.items():
-                transformed_data[key] = value
+                if key in transformed_data and isinstance(transformed_data[key], Mapping) and isinstance(value, Mapping):
+                    transformed_data[key] = _merge_nested_mappings(transformed_data[key], value)
+                elif key not in transformed_data:
+                    transformed_data[key] = value
         residual_data = {}
     return transformed_data, residual_data
 
@@ -54,6 +75,14 @@ def get_chained_residual_space(
     prefix : str = "",
 ) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
     residual_spaces = {}
+
+    if len(residual_spaces) > 0 and (prefix + "*") in all_keys:
+        return DictSpace(
+            space.backend,
+            {},
+            device=space.device,
+        )
+
     for key, subspace in space.spaces.items():
         full_key = prefix + key
         if full_key in all_keys:
@@ -68,6 +97,7 @@ def get_chained_residual_space(
                 residual_spaces[key] = sub_residual
         else:
             residual_spaces[key] = subspace
+
     return DictSpace(
         space.backend,
         residual_spaces,
@@ -87,7 +117,7 @@ def get_chained_space(
                 prefix,
                 all_keys,
             ) if len(prefix) > 0 else space,
-            all_keys,
+            [key for key in all_keys if key != key_chain],
             prefix=prefix,
         )
         return subspace
@@ -293,6 +323,16 @@ class DictStorage(SpaceStorage[
             lambda key, data, storage: storage.set(index, data)
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
+
+    def get_subspace_by_key(
+        self,
+        key: str,
+    ) -> Space[Any, BDeviceType, BDtypeType, BRNGType]:
+        return get_chained_space(
+            self.single_instance_space,
+            key,
+            list(self.storage_map.keys()),
+        )
 
     def clear(self):
         for storage in self.storage_map.values():

@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.1b4 (2025-11-21)
+
+Add DictStorage for mapping dictionary replay buffers with different keys.
+
 ## 0.0.1b3 (2025-11-13)
 
 Removed integration with mujoco-playground and maniskill and moved them over to the `UniEnvAdaptors` package.

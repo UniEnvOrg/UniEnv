@@ -139,6 +139,3 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
 
     def close(self) -> None:
         pass
-
-    def __del__(self) -> None:
-        self.close()
