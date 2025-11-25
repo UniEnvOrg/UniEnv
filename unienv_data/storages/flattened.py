@@ -28,6 +28,7 @@ class FlattenedStorage(SpaceStorage[
         *args,
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "FlattenedStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         flattened_space = sfu.flatten_space(single_instance_space)
@@ -41,6 +42,7 @@ class FlattenedStorage(SpaceStorage[
             *args,
             cache_path=None if cache_path is None else os.path.join(cache_path, inner_storage_path),
             capacity=capacity,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         return FlattenedStorage(
@@ -58,6 +60,7 @@ class FlattenedStorage(SpaceStorage[
         *,
         capacity : Optional[int] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "FlattenedStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         metadata_path = os.path.join(path, "flattened_metadata.json")
@@ -74,6 +77,7 @@ class FlattenedStorage(SpaceStorage[
             flattened_space,
             capacity=capacity,
             read_only=read_only,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         return FlattenedStorage(

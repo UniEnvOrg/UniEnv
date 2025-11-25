@@ -151,6 +151,7 @@ class DictStorage(SpaceStorage[
         *args,
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
+        multiprocessing : bool = False,
         key_kwargs : Dict[str, Any] = {},
         type_kwargs : Dict[Type[SpaceStorage[Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], Dict[str, Any]] = {},
         **kwargs
@@ -173,6 +174,7 @@ class DictStorage(SpaceStorage[
                 *args,
                 cache_path=None if cache_path is None else os.path.join(cache_path, sub_storage_path),
                 capacity=capacity,
+                multiprocessing=multiprocessing,
                 **sub_kwargs
             )
 
@@ -190,6 +192,7 @@ class DictStorage(SpaceStorage[
         *,
         capacity : Optional[int] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
         key_kwargs : Dict[str, Any] = {},
         type_kwargs : Dict[Type[SpaceStorage[Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], Dict[str, Any]] = {},
         **kwargs
@@ -221,6 +224,7 @@ class DictStorage(SpaceStorage[
                 subspace,
                 capacity=capacity,
                 read_only=read_only,
+                multiprocessing=multiprocessing,
                 **sub_kwargs
             )
 
