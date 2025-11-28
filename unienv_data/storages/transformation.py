@@ -31,6 +31,7 @@ class TransformedStorage(SpaceStorage[
         data_transformation : DataTransformation,
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "TransformedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         assert data_transformation.has_inverse, "To transform storages (potentially to save space), you need to use inversible data transformations"
@@ -45,6 +46,7 @@ class TransformedStorage(SpaceStorage[
             *args,
             cache_path=None if cache_path is None else os.path.join(cache_path, inner_storage_path),
             capacity=capacity,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         return TransformedStorage(
@@ -62,6 +64,7 @@ class TransformedStorage(SpaceStorage[
         *,
         capacity : Optional[int] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "TransformedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         metadata_path = os.path.join(path, "transformed_metadata.json")
@@ -85,6 +88,7 @@ class TransformedStorage(SpaceStorage[
             transformed_space,
             capacity=capacity,
             read_only=read_only,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         return TransformedStorage(

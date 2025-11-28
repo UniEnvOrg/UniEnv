@@ -458,6 +458,7 @@ class HDF5Storage(SpaceStorage[
         single_instance_space, 
         capacity, 
         cache_path = None, 
+        multiprocessing : bool = False,
         initial_capacity : Optional[int] = None,
         compression : Union[
             Dict[str, Any],
@@ -476,6 +477,8 @@ class HDF5Storage(SpaceStorage[
     ) -> "HDF5Storage":
         assert cache_path is not None, \
             "cache_path must be provided for HDF5Storage"
+        assert not multiprocessing, \
+            "HDF5Storage does not support multiprocessing safe creation. Please create the storage in the main process and then load it in child processes."
         root = h5py.File(
             cache_path,
             "w",
@@ -506,9 +509,12 @@ class HDF5Storage(SpaceStorage[
         *, 
         capacity = None, 
         read_only = True,
+        multiprocessing : bool = False,
         reduce_io : bool = True,
         **kwargs
     ) -> "HDF5Storage":
+        assert not multiprocessing, \
+            "HDF5Storage does not support multiprocessing safe loading. Please load the storage in the main process and then share it with child processes."
         assert os.path.exists(path), \
             f"Path {path} does not exist"
         

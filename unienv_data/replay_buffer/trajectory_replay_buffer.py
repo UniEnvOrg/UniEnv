@@ -1,6 +1,9 @@
 import abc
 import os
 import dataclasses
+import multiprocessing as mp
+from contextlib import nullcontext
+
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type, Mapping
 from typing_extensions import TypedDict
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -22,8 +25,6 @@ class TrajectoryData(TypedDict, Generic[BatchT, EpisodeBatchT]):
     episode_data : Optional[EpisodeBatchT]
 
 class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BArrayType, BDeviceType, BDtypeType, BRNGType], Generic[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    is_mutable = True
-
     # =========== Class Attributes ==========
     @staticmethod
     def create(
@@ -39,6 +40,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         episode_data_capacity : Optional[int] = None,
         episode_data_storage_kwargs : Dict[str, Any] = {},
         cache_path : Optional[Union[str, os.PathLike]] = None,
+        multiprocessing : bool = False,
         **kwargs,
     ) -> "TrajectoryReplayBuffer[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         backend = step_data_instance_space.backend 
@@ -47,6 +49,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             step_data_instance_space,
             cache_path=None if cache_path is None else os.path.join(cache_path, "step_data"),
             capacity=step_data_capacity,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         step_episode_id_kwargs = step_episode_id_storage_kwargs if step_episode_id_storage_cls is not None else kwargs
@@ -62,6 +65,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             ),
             cache_path=None if cache_path is None else os.path.join(cache_path, "step_episode_ids"),
             capacity=step_episode_id_capacity,
+            multiprocessing=multiprocessing,
             **step_episode_id_kwargs
         )
         if episode_data_instance_space is not None:
@@ -75,6 +79,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
                 episode_data_instance_space,
                 cache_path=None if cache_path is None else os.path.join(cache_path, "episode_data"),
                 capacity=episode_data_capacity,
+                multiprocessing=multiprocessing,
                 **episode_data_storage_kwargs
             )
         else:
@@ -85,6 +90,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             episode_data_buffer,
             current_episode_id=0,
             episode_id_to_index_map={} if episode_data_buffer is not None else None,
+            multiprocessing=multiprocessing,
         )
 
     @staticmethod
@@ -103,6 +109,8 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         *,
         backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         device: Optional[BDeviceType] = None,
+        read_only: bool = False,
+        multiprocessing: bool = False,
         step_storage_kwargs: Dict[str, Any] = {},
         step_episode_id_storage_kwargs: Dict[str, Any] = {},
         episode_storage_kwargs: Dict[str, Any] = {},
@@ -118,6 +126,8 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             os.path.join(path, "step_data"),
             backend=backend,
             device=device,
+            read_only=read_only,
+            multiprocessing=multiprocessing,
             **step_storage_kwargs
         )
         step_episode_id_storage_kwargs.update(storage_kwargs)
@@ -125,6 +135,8 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             os.path.join(path, "step_episode_ids"),
             backend=backend,
             device=device,
+            read_only=read_only,
+            multiprocessing=multiprocessing,
             **step_episode_id_storage_kwargs
         )
         episode_data_buffer = None
@@ -134,6 +146,8 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
                 os.path.join(path, "episode_data"),
                 backend=backend,
                 device=device,
+                read_only=read_only,
+                multiprocessing=multiprocessing,
                 **episode_storage_kwargs
             )
         else:
@@ -144,7 +158,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         if episode_data_buffer is not None:
             raw_map = metadata.get("episode_id_to_index_map")
             episode_id_to_index_map = (
-                {int(k): v for k, v in raw_map.items()}
+                {int(k): int(v) for k, v in raw_map.items()}
                 if raw_map is not None else {}
             )
         else:
@@ -156,35 +170,37 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             episode_data_buffer,
             current_episode_id=metadata["current_episode_id"],
             episode_id_to_index_map=episode_id_to_index_map,
+            multiprocessing=multiprocessing,
         )
 
     # ========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
-        os.makedirs(path, exist_ok=True)
-        step_data_path = os.path.join(path, "step_data")
-        self.step_data_buffer.dumps(step_data_path)
-        step_episode_id_path = os.path.join(path, "step_episode_ids")
-        self.step_episode_id_buffer.dumps(step_episode_id_path)
-        if self.episode_data_buffer is not None:
-            episode_data_path = os.path.join(path, "episode_data")
-            self.episode_data_buffer.dumps(episode_data_path)
-        
-        # Convert episode_id_to_index_map keys to strings for JSON serialization
-        if self.episode_id_to_index_map is not None:
-            episode_id_to_index_map = {
-                str(ep_id): idx
-                for ep_id, idx in self.episode_id_to_index_map.items()
-            }
-        else:
-            episode_id_to_index_map = None
+        with self._lock_scope():
+            os.makedirs(path, exist_ok=True)
+            step_data_path = os.path.join(path, "step_data")
+            self.step_data_buffer.dumps(step_data_path)
+            step_episode_id_path = os.path.join(path, "step_episode_ids")
+            self.step_episode_id_buffer.dumps(step_episode_id_path)
+            if self.episode_data_buffer is not None:
+                episode_data_path = os.path.join(path, "episode_data")
+                self.episode_data_buffer.dumps(episode_data_path)
+            
+            # Convert episode_id_to_index_map keys to strings for JSON serialization
+            if self.episode_id_to_index_map is not None:
+                episode_id_to_index_map = {
+                    str(ep_id): idx
+                    for ep_id, idx in self.episode_id_to_index_map.items()
+                }
+            else:
+                episode_id_to_index_map = None
 
-        metadata = {
-            "type": __class__.__name__,
-            "current_episode_id": self.current_episode_id,
-            "episode_id_to_index_map": episode_id_to_index_map,
-        }
-        with open(os.path.join(path, "metadata.json"), "w") as f:
-            json.dump(metadata, f)
+            metadata = {
+                "type": __class__.__name__,
+                "current_episode_id": self.current_episode_id,
+                "episode_id_to_index_map": episode_id_to_index_map,
+            }
+            with open(os.path.join(path, "metadata.json"), "w") as f:
+                json.dump(metadata, f)
 
     def __init__(
         self,
@@ -193,6 +209,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         episode_data_buffer : Optional[ReplayBuffer[EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         current_episode_id: int = 0,
         episode_id_to_index_map : Optional[Dict[int, int]] = None,
+        multiprocessing: bool = False,
     ):
         assert step_data_buffer.backend == step_episode_id_buffer.backend, \
             "Step data buffer and step episode ID buffer must have the same backend."
@@ -232,8 +249,20 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         self.step_data_buffer = step_data_buffer
         self.step_episode_id_buffer = step_episode_id_buffer
         self.episode_data_buffer = episode_data_buffer
-        self.current_episode_id = current_episode_id
-        self.episode_id_to_index_map = episode_id_to_index_map
+        if multiprocessing:
+            self._current_episode_id = mp.Value('i', current_episode_id)
+            self.episode_id_to_index_map = mp.Manager().dict(episode_id_to_index_map) if episode_id_to_index_map is not None else None
+            self._lock = mp.RLock()
+        else:
+            self._current_episode_id = current_episode_id
+            self.episode_id_to_index_map = episode_id_to_index_map
+            self._lock = None
+
+    def _lock_scope(self):
+        if self._lock is not None:
+            return self._lock
+        else:
+            return nullcontext()
 
     def __len__(self) -> int:
         return len(self.step_episode_id_buffer)
@@ -242,6 +271,8 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         self,
         episode_id : Union[int, BArrayType],
     ) -> Union[int, BArrayType]:
+        assert self.episode_data_buffer is not None, \
+            "Episode data buffer is not set. Cannot get episode data index."
         if isinstance(episode_id, int):
             return self.episode_id_to_index_map[episode_id]
         else:
@@ -268,30 +299,59 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
     def device(self) -> Optional[BDeviceType]:
         return self.step_data_buffer.device
 
+    @property
+    def is_mutable(self) -> bool:
+        return (
+            self.step_data_buffer.is_mutable and 
+            self.step_episode_id_buffer.is_mutable and 
+            (self.episode_data_buffer.is_mutable if self.episode_data_buffer is not None else True)
+        )
+
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return (
+            self._lock is not None and
+            self.step_data_buffer.is_multiprocessing_safe and 
+            self.step_episode_id_buffer.is_multiprocessing_safe and 
+            (self.episode_data_buffer.is_multiprocessing_safe if self.episode_data_buffer is not None else True)
+        )
+
+    @property
+    def current_episode_id(self) -> int:
+        return self._current_episode_id if isinstance(self._current_episode_id, int) else self._current_episode_id.value
+    
+    @current_episode_id.setter
+    def current_episode_id(self, value: int):
+        if isinstance(self._current_episode_id, int):
+            self._current_episode_id = value
+        else:
+            self._current_episode_id.value = value
+
     def get_flattened_at(self, idx):
         return self.get_flattened_at_with_metadata(idx)[0]
 
     def get_flattened_at_with_metadata(self, idx):
-        episode_ids = self.step_episode_id_buffer.get_at(idx)
-        step_data_flat, metadata = self.step_data_buffer.get_flattened_at_with_metadata(idx)
-        
-        # We do some tricks knowing how flat data is layed out for dictionary space
-        if self.episode_data_buffer is not None:
-            episode_data_flat = self.episode_data_buffer.get_flattened_at(
-                self.episode_id_to_episode_data_index(episode_ids)
-            )
-            if isinstance(idx, int):
-                data_flat = self.backend.concat([
-                    step_data_flat,
-                    episode_data_flat
-                ], axis=0)
+        with self._lock_scope():
+            episode_ids = self.step_episode_id_buffer.get_at(idx)
+            step_data_flat, metadata = self.step_data_buffer.get_flattened_at_with_metadata(idx)
+            
+            # We do some tricks knowing how flat data is layed out for dictionary space
+            if self.episode_data_buffer is not None:
+                episode_data_flat = self.episode_data_buffer.get_flattened_at(
+                    self.episode_id_to_episode_data_index(episode_ids)
+                )
+                if isinstance(idx, int):
+                    data_flat = self.backend.concat([
+                        step_data_flat,
+                        episode_data_flat
+                    ], axis=0)
+                else:
+                    data_flat = self.backend.concat([
+                        step_data_flat,
+                        episode_data_flat
+                    ], axis=1)
             else:
-                data_flat = self.backend.concat([
-                    step_data_flat,
-                    episode_data_flat
-                ], axis=1)
-        else:
-            data_flat = step_data_flat
+                data_flat = step_data_flat
         
         metadata = {} if metadata is None else copy.copy(metadata)
         metadata["episode_ids"] = episode_ids
@@ -301,17 +361,18 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         return self.get_at_with_metadata(idx)[0]
     
     def get_at_with_metadata(self, idx):
-        episode_ids = self.step_episode_id_buffer.get_at(idx)
-        step_data, metadata = self.step_data_buffer.get_at_with_metadata(idx)
-        
-        data = {
-            "step_data": step_data,
-        }
-        if self.episode_data_buffer is not None:
-            episode_data = self.episode_data_buffer.get_at(
-                self.episode_id_to_episode_data_index(episode_ids)
-            )
-            data["episode_data"] = episode_data
+        with self._lock_scope():
+            episode_ids = self.step_episode_id_buffer.get_at(idx)
+            step_data, metadata = self.step_data_buffer.get_at_with_metadata(idx)
+            
+            data = {
+                "step_data": step_data,
+            }
+            if self.episode_data_buffer is not None:
+                episode_data = self.episode_data_buffer.get_at(
+                    self.episode_id_to_episode_data_index(episode_ids)
+                )
+                data["episode_data"] = episode_data
 
         metadata = {} if metadata is None else copy.copy(metadata)
         metadata["episode_ids"] = episode_ids
@@ -328,25 +389,26 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         self.set_at(idx, unflat_data)
     
     def set_at(self, idx, value):
-        if "episode_ids" in value:
-            self.step_episode_id_buffer.set_at(idx, value['episode_ids'])
+        with self._lock_scope():
+            if "episode_ids" in value:
+                self.step_episode_id_buffer.set_at(idx, value['episode_ids'])
+                
+            if "step_data" in value:
+                step_data = value["step_data"]
+                self.step_data_buffer.set_at(idx, step_data)
             
-        if "step_data" in value:
-            step_data = value["step_data"]
-            self.step_data_buffer.set_at(idx, step_data)
-        
-        if "episode_data" in value and self.episode_data_buffer is not None:
-            episode_ids = value["episode_ids"] if "episode_ids" in value else self.step_episode_id_buffer.get_at(idx)
-            episode_data = value["episode_data"]
-            episode_ids_unique, unique_indices, _, _ = self.backend.unique_all(episode_ids)
-            self.set_episode_data_at(
-                episode_ids_unique,
-                sbu.get_at(
-                    self._batched_space['episode_data'],
-                    episode_data,
-                    unique_indices
+            if "episode_data" in value and self.episode_data_buffer is not None:
+                episode_ids = value["episode_ids"] if "episode_ids" in value else self.step_episode_id_buffer.get_at(idx)
+                episode_data = value["episode_data"]
+                episode_ids_unique, unique_indices, _, _ = self.backend.unique_all(episode_ids)
+                self.set_episode_data_at(
+                    episode_ids_unique,
+                    sbu.get_at(
+                        self._batched_space['episode_data'],
+                        episode_data,
+                        unique_indices
+                    )
                 )
-            )
     
     def set_episode_data_at(
         self,
@@ -355,58 +417,60 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
     ) -> None:
         assert self.episode_data_buffer is not None, \
             "Episode data buffer is not set. Cannot set episode data."
-        if isinstance(episode_id, int):
-            if episode_id in self.episode_id_to_index_map:
-                index = self.episode_id_to_index_map[episode_id]
-            else:
-                assert self.episode_data_buffer.capacity is None or len(self.episode_data_buffer) < self.episode_data_buffer.capacity, \
-                    "Episode data buffer is full. Cannot set episode data."
-                index = len(self.episode_id_to_index_map)
-                self.episode_id_to_index_map[episode_id] = index
-                self.episode_data_buffer.extend(
-                    sbu.concatenate(
-                        self._batched_space['episode_data'],
-                        [value]
-                    )
-                )
-        else:
-            assert self.backend.is_backendarray(episode_id), \
-                "Episode ID must be an integer or a backend array."
-            assert len(episode_id.shape) == 1, \
-                "Episode ID must be a 1D array."
-            
-            valid_ids = [] # Stores (rb_index, index_in_batch) tuples
-            new_ids = [] # Stores (episode_id, index_in_batch) tuples
-            for i in range(episode_id.shape[0]):
-                ep_id = episode_id[i]
-                if ep_id in self.episode_id_to_index_map:
-                    valid_ids.append((self.episode_id_to_index_map[ep_id], i))
+        
+        with self._lock_scope():
+            if isinstance(episode_id, int):
+                if episode_id in self.episode_id_to_index_map:
+                    index = self.episode_id_to_index_map[episode_id]
                 else:
-                    new_ids.append((ep_id, i))
-            if len(new_ids) > 0:
-                assert self.episode_data_buffer.capacity is None or len(self.episode_data_buffer) + len(new_ids) <= self.episode_data_buffer.capacity, \
-                    "Episode data buffer is full. Cannot set episode data."
-                start_index = len(self.episode_id_to_index_map)
-                for ep_id, i in new_ids:
-                    self.episode_id_to_index_map[ep_id] = start_index
-                    start_index += 1
-                self.episode_data_buffer.extend(
-                    sbu.concatenate(
-                        self._batched_space['episode_data'],
-                        [value[i] for _, i in new_ids]
+                    assert self.episode_data_buffer.capacity is None or len(self.episode_data_buffer) < self.episode_data_buffer.capacity, \
+                        "Episode data buffer is full. Cannot set episode data."
+                    index = len(self.episode_id_to_index_map)
+                    self.episode_id_to_index_map[episode_id] = index
+                    self.episode_data_buffer.extend(
+                        sbu.concatenate(
+                            self._batched_space['episode_data'],
+                            [value]
+                        )
                     )
-                )
-            if len(valid_ids) > 0:
-                rb_indices = self.backend.asarray([i for i, _ in valid_ids], device=self.device)
-                indices_in_batch = self.backend.asarray([i for _, i in valid_ids], device=self.device)
-                self.episode_data_buffer.set_at(
-                    rb_indices,
-                    sbu.get_at(
-                        self._batched_space['episode_data'],
-                        value,
-                        indices_in_batch
+            else:
+                assert self.backend.is_backendarray(episode_id), \
+                    "Episode ID must be an integer or a backend array."
+                assert len(episode_id.shape) == 1, \
+                    "Episode ID must be a 1D array."
+                
+                valid_ids = [] # Stores (rb_index, index_in_batch) tuples
+                new_ids = [] # Stores (episode_id, index_in_batch) tuples
+                for i in range(episode_id.shape[0]):
+                    ep_id = episode_id[i]
+                    if ep_id in self.episode_id_to_index_map:
+                        valid_ids.append((self.episode_id_to_index_map[ep_id], i))
+                    else:
+                        new_ids.append((ep_id, i))
+                if len(new_ids) > 0:
+                    assert self.episode_data_buffer.capacity is None or len(self.episode_data_buffer) + len(new_ids) <= self.episode_data_buffer.capacity, \
+                        "Episode data buffer is full. Cannot set episode data."
+                    start_index = len(self.episode_id_to_index_map)
+                    for ep_id, i in new_ids:
+                        self.episode_id_to_index_map[ep_id] = start_index
+                        start_index += 1
+                    self.episode_data_buffer.extend(
+                        sbu.concatenate(
+                            self._batched_space['episode_data'],
+                            [value[i] for _, i in new_ids]
+                        )
                     )
-                )
+                if len(valid_ids) > 0:
+                    rb_indices = self.backend.asarray([i for i, _ in valid_ids], device=self.device)
+                    indices_in_batch = self.backend.asarray([i for _, i in valid_ids], device=self.device)
+                    self.episode_data_buffer.set_at(
+                        rb_indices,
+                        sbu.get_at(
+                            self._batched_space['episode_data'],
+                            value,
+                            indices_in_batch
+                        )
+                    )
 
     def extend_flattened(self, value):
         try:
@@ -419,38 +483,39 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         self.extend(unflattened_data)
 
     def extend(self, value):
-        B = sbu.batch_size_data(value)
-        if B == 0:
-            return
-        
-        if not isinstance(value, Mapping) or "step_data" not in value:
-            # If the value is not a mapping or does not contain "step_data", we assume it's a single step data
-            value = {
-                "step_data": value
-            }
+        with self._lock_scope():
+            B = sbu.batch_size_data(value)
+            if B == 0:
+                return
+            
+            if not isinstance(value, Mapping) or "step_data" not in value:
+                # If the value is not a mapping or does not contain "step_data", we assume it's a single step data
+                value = {
+                    "step_data": value
+                }
 
-        if "episode_ids" in value:
-            episode_ids = value["episode_ids"]
-        else:
-            episode_ids = self.backend.full(
-                (B,),
-                self.current_episode_id,
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            )
-        self.step_episode_id_buffer.extend(episode_ids)
-        self.step_data_buffer.extend(value["step_data"])
-        
-        if "episode_data" in value and self.episode_data_buffer is not None:
-            episode_ids_unique, unique_indices, _, _ = self.backend.unique_all(episode_ids)
-            self.set_episode_data_at(
-                episode_ids_unique,
-                sbu.get_at(
-                    self._batched_space['episode_data'],
-                    value["episode_data"],
-                    unique_indices
+            if "episode_ids" in value:
+                episode_ids = value["episode_ids"]
+            else:
+                episode_ids = self.backend.full(
+                    (B,),
+                    self.current_episode_id,
+                    dtype=self.backend.default_integer_dtype,
+                    device=self.device
                 )
-            )
+            self.step_episode_id_buffer.extend(episode_ids)
+            self.step_data_buffer.extend(value["step_data"])
+            
+            if "episode_data" in value and self.episode_data_buffer is not None:
+                episode_ids_unique, unique_indices, _, _ = self.backend.unique_all(episode_ids)
+                self.set_episode_data_at(
+                    episode_ids_unique,
+                    sbu.get_at(
+                        self._batched_space['episode_data'],
+                        value["episode_data"],
+                        unique_indices
+                    )
+                )
     
     def set_current_episode_data(
         self,
@@ -462,15 +527,17 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         )
 
     def mark_episode_end(self) -> None:
-        self.current_episode_id += 1
+        with self._lock_scope():
+            self.current_episode_id += 1
 
     def clear(self):
-        self.step_data_buffer.clear()
-        self.step_episode_id_buffer.clear()
-        if self.episode_data_buffer is not None:
-            self.episode_data_buffer.clear()
-            self.episode_id_to_index_map = {}
-        self.current_episode_id = 0
+        with self._lock_scope():
+            self.step_data_buffer.clear()
+            self.step_episode_id_buffer.clear()
+            if self.episode_data_buffer is not None:
+                self.episode_data_buffer.clear()
+                self.episode_id_to_index_map = {}
+            self.current_episode_id = 0
     
     def close(self):
         self.step_data_buffer.close()

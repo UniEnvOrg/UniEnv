@@ -20,6 +20,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         *args,
         capacity : Optional[int],
         cache_path : Optional[Union[str, os.PathLike]] = None,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError
@@ -32,6 +33,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         *,
         capacity : Optional[int] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         raise NotImplementedError

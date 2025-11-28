@@ -1,6 +1,9 @@
 import abc
 import os
 import dataclasses
+import multiprocessing as mp
+from contextlib import nullcontext
+
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
@@ -51,7 +54,6 @@ def index_with_offset(
         return data_index
 
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    is_mutable = True
     # =========== Class Attributes ==========
     @staticmethod
     def create(
@@ -60,6 +62,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         *args,
         cache_path : Optional[Union[str, os.PathLike]] = None,
         capacity : Optional[int] = None,
+        multiprocessing : bool = False,
         **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         storage_path_relative = "storage" + (storage_cls.single_file_ext or "")
@@ -70,6 +73,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             *args,
             cache_path=None if cache_path is None else os.path.join(cache_path, storage_path_relative),
             capacity=capacity,
+            multiprocessing=multiprocessing,
             **kwargs
         )
         return ReplayBuffer(
@@ -77,7 +81,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             storage_path_relative,
             0,
             0,
-            cache_path=cache_path
+            cache_path=cache_path,
+            multiprocessing=multiprocessing
         )
     
     @staticmethod
@@ -97,6 +102,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
         device: Optional[BDeviceType] = None,
         read_only : bool = True,
+        multiprocessing : bool = False,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         with open(os.path.join(path, "metadata.json"), "r") as f:
@@ -118,52 +124,103 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             single_instance_space,
             capacity=capacity,
             read_only=read_only,
+            multiprocessing=multiprocessing,
             **storage_kwargs
         )
-        return ReplayBuffer(storage, metadata["storage_path_relative"], count, offset, cache_path=path)
+        return ReplayBuffer(
+            storage,
+            metadata["storage_path_relative"],
+            count,
+            offset,
+            cache_path=path,
+            multiprocessing=multiprocessing
+        )
 
     # =========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
-        os.makedirs(path, exist_ok=True)
-        storage_path = os.path.join(path, self.storage_path_relative)
-        self.storage.dumps(storage_path)
-        metadata = {
-            "type": __class__.__name__,
-            "count": self.count,
-            "offset": self.offset,
-            "capacity": self.storage.capacity,
-            "storage_cls": get_full_class_name(type(self.storage)),
-            "storage_path_relative": self.storage_path_relative,
-            "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
-        }
-        with open(os.path.join(path, "metadata.json"), "w") as f:
-            json.dump(metadata, f)
+        with self._lock_scope():
+            os.makedirs(path, exist_ok=True)
+            storage_path = os.path.join(path, self.storage_path_relative)
+            self.storage.dumps(storage_path)
+            metadata = {
+                "type": __class__.__name__,
+                "count": self.count,
+                "offset": self.offset,
+                "capacity": self.storage.capacity,
+                "storage_cls": get_full_class_name(type(self.storage)),
+                "storage_path_relative": self.storage_path_relative,
+                "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
+            }
+            with open(os.path.join(path, "metadata.json"), "w") as f:
+                json.dump(metadata, f)
 
     def __init__(
         self,
         storage : SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
-        storage_path_relative : Union[str, os.PathLike],
+        storage_path_relative : str,
         count : int = 0,
         offset : int = 0,
         cache_path : Optional[Union[str, os.PathLike]] = None,
+        multiprocessing : bool = False,
     ):
         self.storage = storage
-        self.count = count
-        self.offset = offset
-        self.storage_path_relative = storage_path_relative
+        self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path
+        self._multiprocessing = multiprocessing
+        if multiprocessing:
+            assert storage.is_multiprocessing_safe, "Storage is not multiprocessing safe"
+            self._lock = mp.Lock()
+            self._count_value = mp.Value("q", int(count))
+            self._offset_value = mp.Value("q", int(offset))
+        else:
+            self._lock = None
+            self._count_value = int(count)
+            self._offset_value = int(offset)
+        
         super().__init__(
             storage.single_instance_space,
             None
         )
 
+    def _lock_scope(self):
+        if self._lock is not None:
+            return self._lock
+        else:
+            return nullcontext()
+
     @property
     def cache_path(self) -> Optional[Union[str, os.PathLike]]:
         return self._cache_path
 
+    @property
+    def storage_path_relative(self) -> str:
+        return self._storage_path_relative
+
     def __len__(self) -> int:
         return self.count
+
+    @property
+    def count(self) -> int:
+        return self._count_value.value if self._multiprocessing else self._count_value
+
+    @count.setter
+    def count(self, value: int) -> None:
+        if self._multiprocessing:
+            self._count_value.value = int(value)
+        else:
+            self._count_value = int(value)
     
+    @property
+    def offset(self) -> int:
+        return self._offset_value.value if self._multiprocessing else self._offset_value
+
+    @offset.setter
+    def offset(self, value: int) -> None:
+        if self._multiprocessing:
+            self._offset_value.value = int(value)
+        else:
+            self._offset_value = int(value)
+
     @property
     def capacity(self) -> Optional[int]:
         return self.storage.capacity
@@ -176,12 +233,21 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def device(self) -> Optional[BDeviceType]:
         return self.storage.device
 
+    @property
+    def is_mutable(self) -> bool:
+        return self.storage.is_mutable
+    
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return self._multiprocessing
+
     def get_flattened_at(self, idx):
         return self.get_flattened_at_with_metadata(idx)[0]
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         if hasattr(self.storage, "get_flattened"):
-            data = self.storage.get_flattened(idx)
+            with self._lock_scope():
+                data = self.storage.get_flattened(idx)
             return data, None
 
         data, metadata = self.get_at_with_metadata(idx)
@@ -195,19 +261,21 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx):
-        data_index = index_with_offset(
-            self.backend,
-            idx,
-            self.count,
-            self.offset,
-            self.device
-        )
-        data = self.storage.get(data_index)
+        with self._lock_scope():
+            data_index = index_with_offset(
+                self.backend,
+                idx,
+                self.count,
+                self.offset,
+                self.device
+            )
+            data = self.storage.get(data_index)
         return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
         if hasattr(self.storage, "set_flattened"):
-            self.storage.set_flattened(idx, value)
+            with self._lock_scope():
+                self.storage.set_flattened(idx, value)
             return
 
         if isinstance(idx, int):
@@ -217,13 +285,14 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.set_at(idx, value)
 
     def set_at(self, idx, value):
-        self.storage.set(index_with_offset(
-            self.backend,
-            idx,
-            self.count,
-            self.offset,
-            self.device
-        ), value)
+        with self._lock_scope():
+            self.storage.set(index_with_offset(
+                self.backend,
+                idx,
+                self.count,
+                self.offset,
+                self.device
+            ), value)
 
     def extend_flattened(
         self,
@@ -233,35 +302,37 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.extend(unflattened_data)
         
     def extend(self, value):
-        B = sbu.batch_size_data(value)
-        if B == 0:
-            return
-        if self.capacity is None:
-            assert self.offset == 0, "Offset must be 0 when capacity is None"
-            self.storage.extend_length(B)
-            self.storage.set(slice(self.count, self.count + B), value)
-            self.count += B
-            return
-        
-        # We have a fixed capacity, only keep the last `capacity` elements
-        if B >= self.capacity:
-            self.storage.set(Ellipsis, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
-            self.count = self.capacity
-            self.offset = 0
-            return
-        
-        # Otherwise, perform round-robin writes
-        indexes = (self.backend.arange(B, device=self.device) + self.offset + self.count) % self.capacity
-        self.storage.set(indexes, value)
-        outflow = max(0, self.count + B - self.capacity)
-        if outflow > 0:
-            self.offset = (self.offset + outflow) % self.capacity
-        self.count = min(self.count + B, self.capacity)
+        with self._lock_scope():
+            B = sbu.batch_size_data(value)
+            if B == 0:
+                return
+            if self.capacity is None:
+                assert self.offset == 0, "Offset must be 0 when capacity is None"
+                self.storage.extend_length(B)
+                self.storage.set(slice(self.count, self.count + B), value)
+                self.count += B
+                return
+            
+            # We have a fixed capacity, only keep the last `capacity` elements
+            if B >= self.capacity:
+                self.storage.set(Ellipsis, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
+                self.count = self.capacity
+                self.offset = 0
+                return
+            
+            # Otherwise, perform round-robin writes
+            indexes = (self.backend.arange(B, device=self.device) + self.offset + self.count) % self.capacity
+            self.storage.set(indexes, value)
+            outflow = max(0, self.count + B - self.capacity)
+            if outflow > 0:
+                self.offset = (self.offset + outflow) % self.capacity
+            self.count = min(self.count + B, self.capacity)
 
     def clear(self):
-        self.count = 0
-        self.offset = 0
-        self.storage.clear()
+        with self._lock_scope():
+            self.count = 0
+            self.offset = 0
+            self.storage.clear()
 
     def close(self) -> None:
         self.storage.close()
