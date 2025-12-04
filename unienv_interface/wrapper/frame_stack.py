@@ -7,7 +7,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.env_base.wrapper import ContextObservationWrapper, ActionWrapper, WrapperContextT, WrapperObsT, WrapperActT
 from unienv_interface.space import Space, DictSpace
-from unienv_interface.utils.data_queue import SpaceDataQueue
+from unienv_interface.utils.framestack_queue import SpaceDataQueue
 
 class FrameStackWrapper(
     ContextObservationWrapper[

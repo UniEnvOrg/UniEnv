@@ -8,7 +8,7 @@ from unienv_interface.utils import seed_util
 from unienv_interface.env_base.funcenv import FuncEnv, ContextType, ObsType, ActType, RenderFrame, StateType, RenderStateType
 from unienv_interface.env_base.funcenv_wrapper import *
 from unienv_interface.space import Space
-from unienv_interface.utils.data_queue import FuncSpaceDataQueue, SpaceDataQueueState
+from unienv_interface.utils.framestack_queue import FuncSpaceDataQueue, SpaceDataQueueState
 from unienv_interface.utils.stateclass import StateClass, field
 
 class FuncFrameStackWrapperState(
