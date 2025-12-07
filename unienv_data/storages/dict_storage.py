@@ -73,7 +73,7 @@ def get_chained_residual_space(
     space : DictSpace[BDeviceType, BDtypeType, BRNGType],
     all_keys : List[str],
     prefix : str = "",
-) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
+) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
     residual_spaces = {}
 
     if len(residual_spaces) > 0 and (prefix + "*") in all_keys:
@@ -93,10 +93,13 @@ def get_chained_residual_space(
                 all_keys,
                 prefix=full_key + "/",
             )
-            if len(sub_residual.spaces) > 0:
+            if sub_residual is not None and len(sub_residual.spaces) > 0:
                 residual_spaces[key] = sub_residual
         else:
             residual_spaces[key] = subspace
+    
+    if len(residual_spaces) == 0:
+        return None
 
     return DictSpace(
         space.backend,
@@ -108,7 +111,7 @@ def get_chained_space(
     space : DictSpace[BDeviceType, BDtypeType, BRNGType],
     key_chain : str,
     all_keys : List[str],
-) -> Space[Any, BDeviceType, BDtypeType, BRNGType]:
+) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
     if key_chain.endswith("*"):
         prefix = key_chain[:-1]
         subspace = get_chained_residual_space(
@@ -127,8 +130,8 @@ def get_chained_space(
     for key in key_chain:
         if len(key) == 0:
             continue
-        assert isinstance(current_space, DictSpace), \
-            f"Expected DictSpace while traversing key chain, but got {type(current_space)}"
+        if not isinstance(current_space, DictSpace) or key not in current_space.spaces:
+            return None
         current_space = current_space.spaces[key]
     return current_space
 
@@ -164,6 +167,8 @@ class DictStorage(SpaceStorage[
         for key, sub_storage_cls in storage_cls_map.items():
             sub_storage_path = key.replace("/", ".").replace("*", "_default") + (sub_storage_cls.single_file_ext or "")
             subspace = get_chained_space(single_instance_space, key, all_keys)
+            if subspace is None:
+                continue
             sub_kwargs = kwargs.copy()
             if sub_storage_cls in type_kwargs:
                 sub_kwargs.update(type_kwargs[sub_storage_cls])
@@ -213,7 +218,9 @@ class DictStorage(SpaceStorage[
             storage_path = storage_meta["path"]
             
             subspace = get_chained_space(single_instance_space, key, all_keys)
-            
+            if subspace is None:
+                continue
+
             sub_kwargs = kwargs.copy()
             if storage_cls in type_kwargs:
                 sub_kwargs.update(type_kwargs[storage_cls])

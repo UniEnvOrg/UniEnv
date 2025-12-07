@@ -7,13 +7,17 @@ from PIL import Image
 import numpy as np
 import io
 
+CONSERVATIVE_COMPRESSION_RATIOS = {
+    "JPEG": 10, # https://stackoverflow.com/questions/3471663/jpeg-compression-ratio
+}
+
 class ImageCompressTransformation(DataTransformation):
     has_inverse = True
 
     def __init__(
         self,
-        init_quality : int = 75,
-        max_size_bytes : int = 65536,
+        init_quality : int = 70,
+        max_size_bytes : Optional[int] = None,
         mode : Optional[str] = None,
         format : str = "JPEG",
     ) -> None:
@@ -25,9 +29,11 @@ class ImageCompressTransformation(DataTransformation):
             mode: Optional mode for PIL Image (e.g., "RGB", "L"). If None, inferred from input.
             format: Image format to use for compression (default "JPEG"). See https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html for options.
         """
+        assert max_size_bytes is not None or format in CONSERVATIVE_COMPRESSION_RATIOS, "Either max_size_bytes must be specified or format must have a conservative compression ratio defined."
 
         self.init_quality = init_quality
         self.max_size_bytes = max_size_bytes
+        self.compression_ratio = CONSERVATIVE_COMPRESSION_RATIOS.get(format, None) if max_size_bytes is None else None
         self.mode = mode
         self.format = format
 
@@ -45,9 +51,15 @@ class ImageCompressTransformation(DataTransformation):
     ) -> BDtypeType:
         return backend.__array_namespace_info__().dtypes()['uint8']
 
+    def _get_max_compressed_size(self, source_space : BoxSpace):
+        H, W, C = source_space.shape[-3], source_space.shape[-2], source_space.shape[-1]
+        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1
+
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
-        new_shape = source_space.shape[:-3] + (self.max_size_bytes,)
+        
+        max_compressed_size = self._get_max_compressed_size(source_space)
+        new_shape = source_space.shape[:-3] + (max_compressed_size,)
         
         return BoxSpace(
             source_space.backend,
@@ -78,14 +90,14 @@ class ImageCompressTransformation(DataTransformation):
         # Create PIL Image (mode inferred automatically)
         img = Image.fromarray(img_array, mode=mode)
 
-        quality = 95
+        quality = self.init_quality
         while quality >= min_quality:
             buf = io.BytesIO()
             img.save(buf, format=self.format, quality=quality)
             image_bytes = buf.getvalue()
             if len(image_bytes) <= max_bytes:
                 return image_bytes, quality
-            quality -= 5
+            quality -= 10
 
         img.close()
         # Return lowest quality attempt if still too large
@@ -93,19 +105,21 @@ class ImageCompressTransformation(DataTransformation):
     
     def transform(self, source_space, data):
         self.validate_source_space(source_space)
+        
+        max_compressed_size = self._get_max_compressed_size(source_space)
         data_numpy = source_space.backend.to_numpy(data)
         flat_data_numpy = data_numpy.reshape(-1, *data_numpy.shape[-3:])
-        flat_compressed_data = np.zeros((flat_data_numpy.shape[0], self.max_size_bytes), dtype=np.uint8)
+        flat_compressed_data = np.zeros((flat_data_numpy.shape[0], max_compressed_size), dtype=np.uint8)
         for i in range(flat_data_numpy.shape[0]):
             img_array = flat_data_numpy[i]
             image_bytes, _ = self.encode_to_size(
                 img_array,
-                self.max_size_bytes,
+                max_compressed_size,
                 mode=self.mode
             )
             byte_array = np.frombuffer(image_bytes, dtype=np.uint8)
             flat_compressed_data[i, :len(byte_array)] = byte_array
-        compressed_data = flat_compressed_data.reshape(data_numpy.shape[:-3] + (self.max_size_bytes, ))
+        compressed_data = flat_compressed_data.reshape(data_numpy.shape[:-3] + (max_compressed_size, ))
         compressed_data_backend = source_space.backend.from_numpy(compressed_data, dtype=self.get_uint8_dtype(source_space.backend), device=source_space.device)
         return compressed_data_backend
     
@@ -206,7 +220,6 @@ class ImageDecompressTransformation(DataTransformation):
         assert source_space is not None, "Source space must be provided to get inverse transformation."
         self.validate_source_space(source_space)
         return ImageCompressTransformation(
-            init_quality=75,
             max_size_bytes=source_space.shape[-1],
             mode=self.mode,
             format=self.format if self.format is not None else "JPEG",

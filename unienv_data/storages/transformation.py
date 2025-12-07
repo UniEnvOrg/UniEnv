@@ -32,6 +32,7 @@ class TransformedStorage(SpaceStorage[
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
         multiprocessing : bool = False,
+        inner_storage_kwargs : Dict[str, Any] = {},
         **kwargs
     ) -> "TransformedStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         assert data_transformation.has_inverse, "To transform storages (potentially to save space), you need to use inversible data transformations"
@@ -41,13 +42,15 @@ class TransformedStorage(SpaceStorage[
         if cache_path is not None:
             os.makedirs(cache_path, exist_ok=True)
 
+        _inner_storage_kwargs = kwargs.copy()
+        _inner_storage_kwargs.update(inner_storage_kwargs)
         inner_storage = inner_storage_cls.create(
             transformed_space,
             *args,
             cache_path=None if cache_path is None else os.path.join(cache_path, inner_storage_path),
             capacity=capacity,
             multiprocessing=multiprocessing,
-            **kwargs
+            **_inner_storage_kwargs
         )
         return TransformedStorage(
             single_instance_space,
@@ -144,6 +147,14 @@ class TransformedStorage(SpaceStorage[
     def __len__(self):
         return len(self.inner_storage)
     
+    @property
+    def is_mutable(self) -> bool:
+        return self.inner_storage.is_mutable
+
+    @property
+    def is_multiprocessing_safe(self) -> bool:
+        return self.inner_storage.is_multiprocessing_safe
+
     def get_flattened(self, index):
         dat = self.get(index)
         if isinstance(index, int):

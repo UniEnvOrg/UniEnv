@@ -40,7 +40,7 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             return self
         
         new_device = device if backend is not None else (device or self.device)
-        return Tuple(
+        return TupleSpace(
             backend=backend or self.backend,
             spaces=[space.to(backend, new_device) for space in self.spaces],
             device=new_device
@@ -93,11 +93,11 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
 
     def __eq__(self, other: Any) -> bool:
         """Check whether ``other`` is equivalent to this instance."""
-        return isinstance(other, Tuple) and self.spaces == other.spaces
+        return isinstance(other, TupleSpace) and self.spaces == other.spaces
     
-    def __copy__(self) -> "Tuple[BDeviceType, BDtypeType, BRNGType]":
+    def __copy__(self) -> "TupleSpace[BDeviceType, BDtypeType, BRNGType]":
         """Create a shallow copy of the Dict space."""
-        return Tuple(
+        return TupleSpace(
             backend=self.backend,
             spaces=copy.copy(self.spaces),
             device=self.device

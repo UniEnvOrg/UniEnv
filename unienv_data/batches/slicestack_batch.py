@@ -33,6 +33,7 @@ class SliceStackedBatch(BatchBase[
         fill_invalid_data : bool = True,
         stack_metadata : bool = False,
     ):
+        assert batch.backend.dtype_is_real_integer(fixed_offset.dtype), "Fixed offset must be an integer tensor"
         assert len(fixed_offset.shape) == 1, "Fixed offset must be a 1D tensor"
         assert fixed_offset.shape[0] > 0, "Fixed offset must have a positive length"
         assert batch.backend.any(fixed_offset == 0), "There should be at least one zero in the fixed offset"

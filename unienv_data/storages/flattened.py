@@ -29,6 +29,7 @@ class FlattenedStorage(SpaceStorage[
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
         multiprocessing : bool = False,
+        inner_storage_kwargs : Dict[str, Any] = {},
         **kwargs
     ) -> "FlattenedStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         flattened_space = sfu.flatten_space(single_instance_space)
@@ -37,13 +38,15 @@ class FlattenedStorage(SpaceStorage[
         if cache_path is not None:
             os.makedirs(cache_path, exist_ok=True)
 
+        _inner_storage_kwargs = kwargs.copy()
+        _inner_storage_kwargs.update(inner_storage_kwargs)
         inner_storage = inner_storage_cls.create(
             flattened_space,
             *args,
             cache_path=None if cache_path is None else os.path.join(cache_path, inner_storage_path),
             capacity=capacity,
             multiprocessing=multiprocessing,
-            **kwargs
+            **_inner_storage_kwargs
         )
         return FlattenedStorage(
             single_instance_space,
