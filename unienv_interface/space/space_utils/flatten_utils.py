@@ -192,14 +192,20 @@ def unflatten_data(space : Space, data : BArrayType, start_dim : int = 0) -> Any
 @flatten_data.register(BinarySpace)
 def _flatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape) <= start_dim <= len(space.shape)
-    return space.backend.reshape(data, data.shape[:start_dim] + (-1,))
+    dat = space.backend.reshape(data, data.shape[:start_dim] + (-1,))
+    if isinstance(space, BinarySpace):
+        dat = space.backend.astype(dat, space.backend.default_integer_dtype)
+    return dat
 
 @unflatten_data.register(BoxSpace)
 @unflatten_data.register(BinarySpace)
 def _unflatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: Any, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape) <= start_dim <= len(space.shape)
     unflat_dat = space.backend.reshape(data, data.shape[:start_dim] + space.shape[start_dim:])
-    unflat_dat = space.backend.astype(unflat_dat, space.dtype)
+    if isinstance(space, BinarySpace):
+        unflat_dat = space.backend.astype(unflat_dat, space.dtype if space.dtype is not None else space.backend.default_boolean_dtype)
+    else:
+        unflat_dat = space.backend.astype(unflat_dat, space.dtype)
     return unflat_dat
 
 @flatten_data.register(DynamicBoxSpace)
