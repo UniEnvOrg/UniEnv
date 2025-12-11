@@ -6,9 +6,31 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from PIL import Image
 import numpy as np
 import io
+import math
+
+# https://stackoverflow.com/questions/3471663/jpeg-compression-ratio
+JPEG_QUALITY_COMPRESSION_MAP = {
+    "quality": np.array([55, 60, 65, 70, 75, 80, 85, 90, 95, 100], dtype=int),
+    "compression_ratio": np.array([43.27, 36.90, 34.24, 31.50, 26.00, 25.06, 19.08, 14.30, 9.88, 5.27], dtype=float),
+    "conservative_ratio": 0.6,
+}
+def get_jpeg_compression_ratio(init_quality : int) -> int:
+    if init_quality <= JPEG_QUALITY_COMPRESSION_MAP['quality'][0]:
+        return math.floor(JPEG_QUALITY_COMPRESSION_MAP['compression_ratio'][0] * JPEG_QUALITY_COMPRESSION_MAP['conservative_ratio'])
+    if init_quality >= JPEG_QUALITY_COMPRESSION_MAP['quality'][-1]:
+        return math.floor(JPEG_QUALITY_COMPRESSION_MAP['compression_ratio'][-1] * JPEG_QUALITY_COMPRESSION_MAP['conservative_ratio'])
+
+    for i in range(1, len(JPEG_QUALITY_COMPRESSION_MAP['quality'])):
+        if init_quality <= JPEG_QUALITY_COMPRESSION_MAP['quality'][i]:
+            q_low = JPEG_QUALITY_COMPRESSION_MAP['quality'][i - 1]
+            q_high = JPEG_QUALITY_COMPRESSION_MAP['quality'][i]
+            r_low = JPEG_QUALITY_COMPRESSION_MAP['compression_ratio'][i - 1]
+            r_high = JPEG_QUALITY_COMPRESSION_MAP['compression_ratio'][i]
+            ratio = r_low + (r_high - r_low) * (init_quality - q_low) / (q_high - q_low)
+            return math.floor(ratio * JPEG_QUALITY_COMPRESSION_MAP['conservative_ratio'])
 
 CONSERVATIVE_COMPRESSION_RATIOS = {
-    "JPEG": 10, # https://stackoverflow.com/questions/3471663/jpeg-compression-ratio
+    "JPEG": get_jpeg_compression_ratio,
 }
 
 class ImageCompressTransformation(DataTransformation):
@@ -18,6 +40,7 @@ class ImageCompressTransformation(DataTransformation):
         self,
         init_quality : int = 70,
         max_size_bytes : Optional[int] = None,
+        compression_ratio : Optional[float] = None,
         mode : Optional[str] = None,
         format : str = "JPEG",
     ) -> None:
@@ -29,11 +52,12 @@ class ImageCompressTransformation(DataTransformation):
             mode: Optional mode for PIL Image (e.g., "RGB", "L"). If None, inferred from input.
             format: Image format to use for compression (default "JPEG"). See https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html for options.
         """
-        assert max_size_bytes is not None or format in CONSERVATIVE_COMPRESSION_RATIOS, "Either max_size_bytes must be specified or format must have a conservative compression ratio defined."
+        assert not (max_size_bytes is not None and compression_ratio is not None), "Specify either max_size_bytes or compression_ratio, not both."
+        assert max_size_bytes is not None or compression_ratio is not None or format in CONSERVATIVE_COMPRESSION_RATIOS, "Either max_size_bytes must be specified or format must have a conservative compression ratio defined."
 
         self.init_quality = init_quality
         self.max_size_bytes = max_size_bytes
-        self.compression_ratio = CONSERVATIVE_COMPRESSION_RATIOS.get(format, None) if max_size_bytes is None else None
+        self.compression_ratio = compression_ratio if compression_ratio is not None else (CONSERVATIVE_COMPRESSION_RATIOS.get(format, None)(init_quality) if max_size_bytes is None else None)
         self.mode = mode
         self.format = format
 
