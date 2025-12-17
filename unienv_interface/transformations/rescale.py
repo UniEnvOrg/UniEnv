@@ -67,14 +67,18 @@ class RescaleTransformation(DataTransformation):
             source_space.backend,
             self.new_low,
             target_ndim
-        ), source_space.backend.device(data))
+        ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_low) else self.new_low
         target_high = source_space.backend.to_device(_get_broadcastable_value(
             source_space.backend,
             self.new_high,
             target_ndim
-        ), source_space.backend.device(data))
+        ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_high) else self.new_high
         scaling_factor = (target_high - target_low) / (source_space._high - source_space._low)
         target_data = (data - source_space._low) * scaling_factor + target_low
+        if self.new_dtype is not None:
+            if source_space.backend.dtype_is_real_integer(self.new_dtype) and source_space.backend.dtype_is_real_floating(target_data.dtype):
+                target_data = source_space.backend.round(target_data)
+            target_data = source_space.backend.astype(target_data, self.new_dtype)
         return target_data
     
     def direction_inverse(self, source_space = None):

@@ -45,17 +45,18 @@ class ChainedTransformation(DataTransformation):
     ) -> Optional["ChainedTransformation"]:
         if not self.has_inverse:
             return None
+
+        source_spaces = [source_space]
+        for transformation in self.transformations:
+            next_space = transformation.get_target_space_from_source(source_spaces[-1])
+            source_spaces.append(next_space)
         
-        inverse_mapping = {
-            key: transformation.direction_inverse(source_space)
-            for key, transformation in self.mapping.items()
-        }
+        inverted_transformations = []
+        for i in reversed(range(len(self.transformations))):
+            inverted_transformations.append(self.transformations[i].direction_inverse(source_spaces[i]))
 
         return ChainedTransformation(
-            transformations=[
-                transformation.direction_inverse(source_space)
-                for transformation in reversed(self.transformations)
-            ]
+            inverted_transformations
         )
 
     def close(self):

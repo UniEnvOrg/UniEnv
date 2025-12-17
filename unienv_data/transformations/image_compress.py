@@ -43,6 +43,7 @@ class ImageCompressTransformation(DataTransformation):
         compression_ratio : Optional[float] = None,
         mode : Optional[str] = None,
         format : str = "JPEG",
+        last_channel : bool = True,
     ) -> None:
         """
         Initialize JPEG compression transformation.
@@ -60,14 +61,17 @@ class ImageCompressTransformation(DataTransformation):
         self.compression_ratio = compression_ratio if compression_ratio is not None else (CONSERVATIVE_COMPRESSION_RATIOS.get(format, None)(init_quality) if max_size_bytes is None else None)
         self.mode = mode
         self.format = format
+        self.last_channel = last_channel
 
-    @staticmethod
-    def validate_source_space(source_space: Space[Any, BDeviceType, BDtypeType, BRNGType]) -> None:
+    def validate_source_space(self, source_space: Space[Any, BDeviceType, BDtypeType, BRNGType]) -> None:
         assert isinstance(source_space, BoxSpace), "JPEGCompressTransformation only supports BoxSpace source spaces."
-        assert len(source_space.shape) >= 3 and (
-            source_space.shape[-1] == 3 or
-            source_space.shape[-1] == 1
-        ), "JPEGCompressTransformation only supports BoxSpace source spaces with shape (..., H, W, 1 or 3)."
+        if not self.last_channel:
+            assert len(source_space.shape) >= 2
+        else:
+            assert len(source_space.shape) >= 3 and (
+                source_space.shape[-1] == 3 or
+                source_space.shape[-1] == 1
+            ), "JPEGCompressTransformation only supports BoxSpace source spaces with shape (..., H, W, 1 or 3)."
 
     @staticmethod
     def get_uint8_dtype(
@@ -76,14 +80,22 @@ class ImageCompressTransformation(DataTransformation):
         return backend.__array_namespace_info__().dtypes()['uint8']
 
     def _get_max_compressed_size(self, source_space : BoxSpace):
-        H, W, C = source_space.shape[-3], source_space.shape[-2], source_space.shape[-1]
+        if self.last_channel:
+            H, W, C = source_space.shape[-3], source_space.shape[-2], source_space.shape[-1]
+        else:
+            H, W = source_space.shape[-2], source_space.shape[-1]
+            C = 1
         return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1
 
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
         
         max_compressed_size = self._get_max_compressed_size(source_space)
-        new_shape = source_space.shape[:-3] + (max_compressed_size,)
+
+        if not self.last_channel:
+            new_shape = source_space.shape[:-2] + (max_compressed_size,)
+        else:
+            new_shape = source_space.shape[:-3] + (max_compressed_size,)
         
         return BoxSpace(
             source_space.backend,
@@ -132,7 +144,11 @@ class ImageCompressTransformation(DataTransformation):
         
         max_compressed_size = self._get_max_compressed_size(source_space)
         data_numpy = source_space.backend.to_numpy(data)
-        flat_data_numpy = data_numpy.reshape(-1, *data_numpy.shape[-3:])
+        if not self.last_channel:
+            flat_data_numpy = data_numpy.reshape(-1, *data_numpy.shape[-2:])
+        else:
+            flat_data_numpy = data_numpy.reshape(-1, *data_numpy.shape[-3:])
+        
         flat_compressed_data = np.zeros((flat_data_numpy.shape[0], max_compressed_size), dtype=np.uint8)
         for i in range(flat_data_numpy.shape[0]):
             img_array = flat_data_numpy[i]
@@ -143,16 +159,26 @@ class ImageCompressTransformation(DataTransformation):
             )
             byte_array = np.frombuffer(image_bytes, dtype=np.uint8)
             flat_compressed_data[i, :len(byte_array)] = byte_array
-        compressed_data = flat_compressed_data.reshape(data_numpy.shape[:-3] + (max_compressed_size, ))
+        
+        if not self.last_channel:
+            compressed_data = flat_compressed_data.reshape(data_numpy.shape[:-2] + (max_compressed_size, ))
+        else:
+            compressed_data = flat_compressed_data.reshape(data_numpy.shape[:-3] + (max_compressed_size, ))
         compressed_data_backend = source_space.backend.from_numpy(compressed_data, dtype=self.get_uint8_dtype(source_space.backend), device=source_space.device)
         return compressed_data_backend
     
     def direction_inverse(self, source_space = None):
         assert source_space is not None, "Source space must be provided to get inverse transformation."
         self.validate_source_space(source_space)
-        height = source_space.shape[-3]
-        width = source_space.shape[-2]
-        channels = source_space.shape[-1]
+        
+        if not self.last_channel:
+            height = source_space.shape[-2]
+            width = source_space.shape[-1]
+            channels = None
+        else:
+            height = source_space.shape[-3]
+            width = source_space.shape[-2]
+            channels = source_space.shape[-1]
         return ImageDecompressTransformation(
             target_height=height,
             target_width=width,
@@ -168,7 +194,7 @@ class ImageDecompressTransformation(DataTransformation):
         self,
         target_height : int,
         target_width : int,
-        target_channels : int = 3,
+        target_channels : Optional[int] = 3,
         mode : Optional[str] = None,
         format : Optional[str] = None,
     ) -> None:
@@ -198,6 +224,9 @@ class ImageDecompressTransformation(DataTransformation):
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
         new_shape = source_space.shape[:-1] + (self.target_height, self.target_width, self.target_channels)
+        if self.target_channels is None:
+            new_shape = new_shape[:-1]
+        
         return BoxSpace(
             source_space.backend,
             shape=new_shape,
@@ -236,7 +265,10 @@ class ImageDecompressTransformation(DataTransformation):
                 byte_array.tobytes(),
                 mode=self.mode
             )
-        decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width, self.target_channels))
+        if self.target_channels is None:
+            decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width))
+        else:
+            decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width, self.target_channels))
         decompressed_image_backend = source_space.backend.from_numpy(decompressed_image, dtype=self.get_uint8_dtype(source_space.backend), device=source_space.device)
         return decompressed_image_backend
     
@@ -247,4 +279,5 @@ class ImageDecompressTransformation(DataTransformation):
             max_size_bytes=source_space.shape[-1],
             mode=self.mode,
             format=self.format if self.format is not None else "JPEG",
+            last_channel=self.target_channels is not None,
         )
