@@ -1,6 +1,6 @@
 import os
 import torch
-from unienv_interface.space import Space, BoxSpace
+from unienv_interface.space import Space, BoxSpace, BinarySpace
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend, PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType
 from unienv_data.base import SpaceStorage
@@ -27,8 +27,8 @@ class PytorchTensorStorage(SpaceStorage[
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, \
             f"Single instance space must be of type PyTorchComputeBackend, got {single_instance_space.backend}"
-        assert isinstance(single_instance_space, BoxSpace), \
-            f"Single instance space must be a BoxSpace, got {type(single_instance_space)}"
+        assert isinstance(single_instance_space, BoxSpace) or isinstance(single_instance_space, BinarySpace), \
+            f"Single instance space must be a BoxSpace or BinarySpace, got {type(single_instance_space)}"
         assert capacity is not None, "Capacity must be specified when creating a new tensor"
 
         target_shape = (capacity, *single_instance_space.shape)
@@ -63,7 +63,10 @@ class PytorchTensorStorage(SpaceStorage[
     def load_from(
         cls,
         path: Union[str, os.PathLike],
-        single_instance_space: BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+        single_instance_space: Union[
+            BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+            BinarySpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+        ],
         *,
         is_memmap : bool = False,
         capacity : Optional[int] = None,
@@ -111,7 +114,10 @@ class PytorchTensorStorage(SpaceStorage[
 
     def __init__(
         self,
-        single_instance_space : BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+        single_instance_space : Union[
+            BoxSpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+            BinarySpace[PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType],
+        ],
         data : Union[torch.Tensor, MemoryMappedTensor],
         mutable : bool = True,
     ):
