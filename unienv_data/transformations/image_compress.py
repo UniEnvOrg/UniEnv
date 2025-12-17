@@ -186,6 +186,12 @@ class ImageCompressTransformation(DataTransformation):
             mode=self.mode,
             format=self.format,
         )
+    
+    def __setstate__(self, state):
+        # for backward compatibility
+        self.__dict__.update(state)
+        if 'last_channel' not in state:
+            self.last_channel = True
 
 class ImageDecompressTransformation(DataTransformation):
     has_inverse = True
