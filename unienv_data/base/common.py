@@ -146,7 +146,7 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         if tqdm:
             from tqdm import tqdm
             iterable_start = tqdm(iterable_start, desc="Extending Batch")
-        for start_idx in range(0, n_total, chunk_size):
+        for start_idx in iterable_start:
             end_idx = min(start_idx + chunk_size, n_total)
             data_chunk = other.get_at(slice(start_idx, end_idx))
             self.extend(data_chunk)
