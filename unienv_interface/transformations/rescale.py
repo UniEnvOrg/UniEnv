@@ -11,8 +11,8 @@ def _get_broadcastable_value(
     if isinstance(value, (int, float)):
         return value
     else:
-        assert target_ndim <= len(value), "Value must have at least as many dimensions as target space"
-        target_shape = tuple([1] * (target_ndim - len(value)) + list(value.shape))
+        assert target_ndim >= len(value.shape), "Target space must have at least as many dimensions as the value"
+        target_shape = tuple([1] * (target_ndim - len(value.shape)) + list(value.shape))
         return backend.reshape(value, target_shape)
 
 class RescaleTransformation(DataTransformation):
