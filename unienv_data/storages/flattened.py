@@ -23,7 +23,7 @@ class FlattenedStorage(SpaceStorage[
     @classmethod
     def create(
         cls,
-        single_instance_space: Space[Any, BDeviceType, BDtypeType, BRNGType],
+        single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         inner_storage_cls : Type[SpaceStorage[BArrayType, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         *args,
         capacity : Optional[int] = None,
@@ -59,7 +59,7 @@ class FlattenedStorage(SpaceStorage[
     def load_from(
         cls,
         path : Union[str, os.PathLike],
-        single_instance_space : Space[Any, BDeviceType, BDtypeType, BRNGType],
+        single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         *,
         capacity : Optional[int] = None,
         read_only : bool = True,
@@ -95,7 +95,7 @@ class FlattenedStorage(SpaceStorage[
 
     def __init__(
         self,
-        single_instance_space: Space[Any, BDeviceType, BDtypeType, BRNGType],
+        single_instance_space: Space[BatchT, BDeviceType, BDtypeType, BRNGType],
         inner_storage : SpaceStorage[
             BArrayType,
             BArrayType,

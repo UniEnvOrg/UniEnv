@@ -31,7 +31,7 @@ def data_to(
             key: data_to(value, source_backend, target_backend, target_device)
             for key, value in data.items()
         }
-    elif isinstance(data, Sequence):
+    elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
         data = [
             data_to(value, source_backend, target_backend, target_device)
             for value in data
