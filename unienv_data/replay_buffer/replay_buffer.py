@@ -169,7 +169,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self._multiprocessing = multiprocessing
         if multiprocessing:
             assert storage.is_multiprocessing_safe, "Storage is not multiprocessing safe"
-            self._lock = mp.Lock()
+            self._lock = mp.RLock()
             self._count_value = mp.Value("q", int(count))
             self._offset_value = mp.Value("q", int(offset))
         else:
