@@ -513,8 +513,8 @@ class HDF5Storage(SpaceStorage[
         reduce_io : bool = True,
         **kwargs
     ) -> "HDF5Storage":
-        assert not multiprocessing, \
-            "HDF5Storage does not support multiprocessing safe loading. Please load the storage in the main process and then share it with child processes."
+        assert read_only or not multiprocessing, \
+            "HDF5Storage does not support multiprocessing safe loading when not `read_only`. Please load the storage in the main process and then share it with child processes."
         assert os.path.exists(path), \
             f"Path {path} does not exist"
         
