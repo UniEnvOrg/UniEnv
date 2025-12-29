@@ -218,6 +218,13 @@ class ToBackendOrDeviceStorage(
         return len(self.inner_storage)
     
     def get(self, index):
+        if self.backend.is_backendarray(index):
+            index = data_to(
+                index,
+                source_backend=self.backend,
+                target_backend=self.inner_backend,
+                target_device=self.inner_device
+            )
         target_data = self.inner_storage.get(index)
         return data_to(
             target_data,
@@ -233,6 +240,13 @@ class ToBackendOrDeviceStorage(
             target_backend=self.inner_backend,
             target_device=self.inner_device
         )
+        if self.backend.is_backendarray(index):
+            index = data_to(
+                index,
+                source_backend=self.backend,
+                target_backend=self.inner_backend,
+                target_device=self.inner_device
+            )
         self.inner_storage.set(index, target_value)
 
     def clear(self):
