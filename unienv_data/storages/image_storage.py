@@ -36,6 +36,8 @@ class ImageStorage(ListStorageBase[
         multiprocessing : bool = False,
         **kwargs
     ) -> "ImageStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        if cache_path is None:
+            raise ValueError("cache_path must be provided for ImageStorage.create")
         assert not os.path.exists(cache_path), f"Cache path {cache_path} already exists"
         os.makedirs(cache_path, exist_ok=True)
         return ImageStorage(
@@ -112,14 +114,18 @@ class ImageStorage(ListStorageBase[
                 device=self.single_instance_space.device,
             )
         with Image.open(filename) as img:
-            img = img.convert("RGB")
-            np_image = np.array(img)
+            rgb_img = img.convert("RGB")
+            # Ensure a compact uint8 array from PIL.
+            np_image = np.asarray(rgb_img, dtype=np.uint8)
             return self.backend.from_numpy(np_image, dtype=self.single_instance_space.dtype, device=self.single_instance_space.device)
     
     def set_to_file(self, filename : str, value : BArrayType):
         np_value = self.backend.to_numpy(value)
         img = Image.fromarray(np_value, mode="RGB")
-        img.save(filename, format=self.format, quality=self.quality)
+        try:
+            img.save(filename, format=self.format, quality=self.quality)
+        finally:
+            img.close()
 
     def dumps(self, path):
         assert os.path.samefile(path, self.cache_filename), \
