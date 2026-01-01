@@ -94,7 +94,7 @@ class CombinedBatch(BatchBase[
         batch_index = int(self.backend.sum(
             idx >= self.index_caches[:, 0]
         ) - 1)
-        return batch_index, idx - self.index_caches[batch_index, 0]
+        return batch_index, idx - int(self.index_caches[batch_index, 0])
 
     def _convert_index(self, idx : Union[IndexableType, BArrayType]) -> Tuple[
         int, 

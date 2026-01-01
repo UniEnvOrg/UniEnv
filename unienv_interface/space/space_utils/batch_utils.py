@@ -734,6 +734,8 @@ def _get_at_tuple(space: TupleSpace, items: typing.Tuple[Any, ...], index : Arra
 
 @get_at.register(BatchedSpace)
 def _get_at_batched(space: BatchedSpace, items: np.ndarray, index: ArrayAPIGetIndex) -> typing.Union[np.ndarray, Any]:
+    if space.backend.is_backendarray(index):
+        index = space.backend.to_numpy(index)
     return items[index]
 
 @singledispatch
@@ -830,6 +832,8 @@ def _set_at_batched(
     value: typing.Union[np.ndarray, Any],
 ) -> np.ndarray:
     new_data = items.copy()
+    if space.backend.is_backendarray(index):
+        index = space.backend.to_numpy(index)
     new_data[index] = value
     return new_data
 
