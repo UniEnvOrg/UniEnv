@@ -431,6 +431,11 @@ class HDF5Storage(SpaceStorage[
             # Convert to numpy array if it's a scalar
             if isinstance(result, (int, float)):
                 result = np.array(result)
+            if isinstance(single_instance_space, TextSpace):
+                if isinstance(result, bytes):
+                    result = result.decode('utf-8')
+                elif isinstance(result, np.ndarray):
+                    result = np.array([r.decode('utf-8') if isinstance(r, bytes) else r for r in result], dtype=object)
         return result
 
     @staticmethod
