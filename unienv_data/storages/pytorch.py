@@ -4,7 +4,7 @@ from unienv_interface.space import Space, BoxSpace, BinarySpace
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend, PyTorchArrayType, PyTorchDeviceType, PyTorchDtypeType, PyTorchRNGType
 from unienv_data.base import SpaceStorage
-from tensordict.memmap import MemoryMappedTensor
+from unienv_data.third_party.tensordict.memmap_tensor import MemoryMappedTensor
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Type
 
 class PytorchTensorStorage(SpaceStorage[
@@ -84,7 +84,8 @@ class PytorchTensorStorage(SpaceStorage[
         target_data = MemoryMappedTensor.from_filename(
             path,
             dtype=single_instance_space.dtype,
-            shape=target_shape
+            shape=target_shape,
+            readonly=read_only,
         )
 
         if is_memmap:
