@@ -34,6 +34,12 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
         new_spaces: Dict[str, Space[Any, BDeviceType, BDtypeType, BRNGType]] = {}
 
         for key, space in spaces.items():
+            if not isinstance(space, Space) and isinstance(space, Mapping):
+                space = DictSpace(
+                    backend,
+                    space,
+                    device
+                )
             assert isinstance(
                 space, Space
             ), f"Dict space element is not an instance of Space: key='{key}', space={space}"
