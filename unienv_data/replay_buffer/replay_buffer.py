@@ -94,6 +94,30 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 metadata = json.load(f)
             return metadata.get('type', None) == __class__.__name__
         return False
+    
+    @staticmethod
+    def get_length_from_path(
+        path : Union[str, os.PathLike]
+    ) -> Optional[int]:
+        if os.path.exists(os.path.join(path, "metadata.json")):
+            with open(os.path.join(path, "metadata.json"), "r") as f:
+                metadata = json.load(f)
+            if metadata.get('type', None) != __class__.__name__:
+                return None
+            return int(metadata["count"])
+        return None
+    
+    @staticmethod
+    def get_capacity_from_path(
+        path : Union[str, os.PathLike]
+    ) -> Optional[int]:
+        if os.path.exists(os.path.join(path, "metadata.json")):
+            with open(os.path.join(path, "metadata.json"), "r") as f:
+                metadata = json.load(f)
+            if metadata.get('type', None) != __class__.__name__:
+                return None
+            return int(metadata["capacity"])
+        return None
 
     @staticmethod
     def load_from(
