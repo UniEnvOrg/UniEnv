@@ -135,12 +135,18 @@ class DictTransformation(DataTransformation):
 
         inverse_mapping = {}
         for key, transformation in self.mapping.items():
-            inverse_mapping[key] = transformation.direction_inverse(
-                None if source_space is None else get_chained_value(
+            if source_space is not None:
+                current_source = get_chained_value(
                     source_space,
                     key.split('/'),
                     ignore_missing_keys=self.ignore_missing_keys
                 )
+                if current_source is None:
+                    continue
+            else:
+                current_source = None
+            inverse_mapping[key] = transformation.direction_inverse(
+                current_source
             )
         
         return DictTransformation(
