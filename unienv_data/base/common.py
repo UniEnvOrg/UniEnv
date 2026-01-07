@@ -46,13 +46,26 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
     ):
         self.single_space = single_space
         self.single_metadata_space = single_metadata_space
-        self._batched_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType] = space_batch_utils.batch_space(single_space, 1)
-        if single_metadata_space is not None:
-            self._batched_metadata_space : DictSpace[
-                BDeviceType, BDtypeType, BRNGType
-            ] = space_batch_utils.batch_space(single_metadata_space, 1)
+
+    # For backwards compatibility
+    @property
+    def _batched_space(self) -> Space[BatchT, BDeviceType, BDtypeType, BRNGType]:
+        if hasattr(self, '_cached_batched_space'):
+            return self._cached_batched_space
         else:
-            self._batched_metadata_space = None
+            self._cached_batched_space = space_batch_utils.batch_space(self.single_space, 1)
+            return self._cached_batched_space
+    
+    @property
+    def _batched_metadata_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        if hasattr(self, '_cached_batched_metadata_space'):
+            return self._cached_batched_metadata_space
+        else:
+            if self.single_metadata_space is not None:
+                self._cached_batched_metadata_space = space_batch_utils.batch_space(self.single_metadata_space, 1)
+            else:
+                self._cached_batched_metadata_space = None
+            return self._cached_batched_metadata_space
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:

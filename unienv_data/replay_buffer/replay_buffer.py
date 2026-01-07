@@ -118,6 +118,24 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 return None
             return int(metadata["capacity"])
         return None
+    
+    @staticmethod
+    def get_space_from_path(
+        path : Union[str, os.PathLike],
+        *,
+        backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        device: Optional[BDeviceType] = None,
+    ) -> Optional[Space[BatchT, BDeviceType, BDtypeType, BRNGType]]:
+        if os.path.exists(os.path.join(path, "metadata.json")):
+            with open(os.path.join(path, "metadata.json"), "r") as f:
+                metadata = json.load(f)
+            if metadata.get('type', None) != __class__.__name__:
+                return None
+            single_instance_space = bsu.json_to_space(
+                metadata["single_instance_space"], backend, device
+            )
+            return single_instance_space
+        return None
 
     @staticmethod
     def load_from(
