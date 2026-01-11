@@ -1,20 +1,16 @@
 from importlib import metadata
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type
 
-from unienv_interface.space import Space, BoxSpace
+from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT, IndexableType
 
-import numpy as np
 import os
-import json
 import shutil
 from abc import abstractmethod
-
-from PIL import Image
 
 def batched_index_to_list(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
