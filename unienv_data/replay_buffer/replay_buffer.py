@@ -2,6 +2,7 @@ import abc
 import os
 import dataclasses
 import multiprocessing as mp
+import ctypes
 from contextlib import nullcontext
 
 from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
@@ -209,11 +210,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path
         self._multiprocessing = multiprocessing
-        if multiprocessing:
+        if multiprocessing and storage.is_mutable:
             assert storage.is_multiprocessing_safe, "Storage is not multiprocessing safe"
             self._lock = mp.RLock()
-            self._count_value = mp.Value("q", int(count))
-            self._offset_value = mp.Value("q", int(offset))
+            self._count_value = mp.Value(ctypes.c_long, int(count))
+            self._offset_value = mp.Value(ctypes.c_long, int(offset))
         else:
             self._lock = None
             self._count_value = int(count)
@@ -243,22 +244,22 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     @property
     def count(self) -> int:
-        return self._count_value.value if self._multiprocessing else self._count_value
+        return self._count_value.value if not isinstance(self._count_value, int) else self._count_value
 
     @count.setter
     def count(self, value: int) -> None:
-        if self._multiprocessing:
+        if not isinstance(self._count_value, int):
             self._count_value.value = int(value)
         else:
             self._count_value = int(value)
     
     @property
     def offset(self) -> int:
-        return self._offset_value.value if self._multiprocessing else self._offset_value
+        return self._offset_value.value if not isinstance(self._offset_value, int) else self._offset_value
 
     @offset.setter
     def offset(self, value: int) -> None:
-        if self._multiprocessing:
+        if not isinstance(self._offset_value, int):
             self._offset_value.value = int(value)
         else:
             self._offset_value = int(value)
