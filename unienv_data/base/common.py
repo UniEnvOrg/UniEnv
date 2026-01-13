@@ -7,6 +7,7 @@ from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from unienv_interface.space import Space, BoxSpace, DictSpace
 import dataclasses
 
+from functools import cached_property
 from unienv_interface.space.space_utils import batch_utils as space_batch_utils, flatten_utils as space_flatten_utils
 
 __all__ = [
@@ -48,24 +49,16 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         self.single_metadata_space = single_metadata_space
 
     # For backwards compatibility
-    @property
+    @cached_property
     def _batched_space(self) -> Space[BatchT, BDeviceType, BDtypeType, BRNGType]:
-        if hasattr(self, '_cached_batched_space'):
-            return self._cached_batched_space
-        else:
-            self._cached_batched_space = space_batch_utils.batch_space(self.single_space, 1)
-            return self._cached_batched_space
+        return space_batch_utils.batch_space(self.single_space, 1)
     
-    @property
+    @cached_property
     def _batched_metadata_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
-        if hasattr(self, '_cached_batched_metadata_space'):
-            return self._cached_batched_metadata_space
+        if self.single_metadata_space is not None:
+            return space_batch_utils.batch_space(self.single_metadata_space, 1)
         else:
-            if self.single_metadata_space is not None:
-                self._cached_batched_metadata_space = space_batch_utils.batch_space(self.single_metadata_space, 1)
-            else:
-                self._cached_batched_metadata_space = None
-            return self._cached_batched_metadata_space
+            return None
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -196,15 +189,24 @@ class BatchSampler(
     ) -> None:
         super().__init__(single_space=single_space, single_metadata_space=single_metadata_space)
         self.batch_size = batch_size
-        self._batched_space : Space[SamplerBatchT, SamplerDeviceType, SamplerDtypeType, SamplerRNGType] = space_batch_utils.batch_space(self.single_space, batch_size)
-        self._batched_metadata_space : Optional[DictSpace[SamplerDeviceType, SamplerDtypeType, SamplerRNGType]] = space_batch_utils.batch_space(self.single_metadata_space, batch_size) if self.single_metadata_space is not None else None
-
+    
     def manual_seed(self, seed : int) -> None:
         if self.rng is not None:
             self.rng = self.backend.random.random_number_generator(seed, device=self.device)
         if self.data_rng is not None:
             self.data_rng = self.backend.random.random_number_generator(seed, device=self.data.device)
 
+    @cached_property
+    def _batched_space(self) -> Space[BatchT, BDeviceType, BDtypeType, BRNGType]:
+        return space_batch_utils.batch_space(self.single_space, self.batch_size)
+    
+    @cached_property
+    def _batched_metadata_space(self) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+        if self.single_metadata_space is not None:
+            return space_batch_utils.batch_space(self.single_metadata_space, self.batch_size)
+        else:
+            return None
+    
     @property
     def sampled_space(self) -> Space[SamplerBatchT, SamplerDeviceType, SamplerDtypeType, SamplerRNGType]:
         return self._batched_space
