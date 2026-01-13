@@ -50,6 +50,7 @@ class ListStorageBase(SpaceStorage[
         capacity : Optional[int] = None,
         length : int = 0,
     ):
+        assert cache_filename is not None, "ListStorage requires a cache filename"
         super().__init__(single_instance_space)
         self._batched_single_space = sbu.batch_space(self.single_instance_space, 1)
         self.file_ext = file_ext
@@ -71,6 +72,7 @@ class ListStorageBase(SpaceStorage[
         self.length += length
 
     def shrink_length(self, length):
+        assert self.is_mutable, "Cannot shrink length of a read-only storage"
         assert self.capacity is None, "Cannot shrink length of a fixed-capacity storage"
         from_len = self.length
         to_len = max(from_len - length, 0)
@@ -115,6 +117,7 @@ class ListStorageBase(SpaceStorage[
         return result
 
     def set(self, index, value):
+        assert self.is_mutable, "Storage is not mutable"
         if isinstance(index, int):
             self.set_single(index, value)
         else:
@@ -123,6 +126,7 @@ class ListStorageBase(SpaceStorage[
                 self.set_single(ind, sbu.get_at(self._batched_single_space, value, i))
 
     def clear(self):
+        assert self.is_mutable, "Cannot clear a read-only storage"
         if self.capacity is None:
             self.length = 0
         shutil.rmtree(self._cache_path)
