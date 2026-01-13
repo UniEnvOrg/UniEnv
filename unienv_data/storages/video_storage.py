@@ -1,6 +1,5 @@
-from importlib import metadata
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, cast
-
+from fractions import Fraction
 from unienv_interface.space import Space, BoxSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -152,7 +151,7 @@ class VideoStorage(EpisodeStorageBase[
         if hasattr(__class__, "_auto_codec"):
             return __class__._auto_codec
         preferred_codecs = ["av1", "hevc", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
-        preferred_suffixes = ["_qsv", "_nvenc", "_amf"]
+        preferred_suffixes = ["_nvenc", "_amf", "_qsv"]
         
         target_codec = None
         for codec in preferred_codecs:
@@ -270,6 +269,11 @@ class VideoStorage(EpisodeStorageBase[
         ) as video:
             video = cast(PyAVPlugin, video)
             video.init_video_stream(self.codec, fps=self.fps, pixel_format=self.file_pixel_format)
+            
+            # Fix codec time base if not set:
+            if video._video_stream.codec_context.time_base is None:
+                video._video_stream.codec_context.time_base = Fraction(1 / self.fps).limit_denominator(int(2**16 - 1))
+
             for i, frame in enumerate(value_np):
                 video.write_frame(frame, pixel_format=self.buffer_pixel_format)
 

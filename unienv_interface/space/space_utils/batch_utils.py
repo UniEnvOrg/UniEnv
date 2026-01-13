@@ -334,7 +334,7 @@ def swap_batch_dims_in_data(
 ) -> Any:
     if backend.is_backendarray(data):
         return _tensor_transpose(backend, data, dim1, dim2)
-    elif isinstance(data, np.ndarray) and data.dtype != object:
+    elif isinstance(data, np.ndarray):
         return _tensor_transpose(NumpyComputeBackend, data, dim1, dim2)
     elif isinstance(data, GraphInstance):
         return GraphInstance(
