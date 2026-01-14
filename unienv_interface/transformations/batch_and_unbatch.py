@@ -6,26 +6,64 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 
 class BatchifyTransformation(DataTransformation):
     has_inverse = True
+
+    def __init__(
+        self,
+        axis : int = 0
+    ) -> None:
+        self.axis = axis
     
     def get_target_space_from_source(self, source_space):
-        return sbu.batch_space(source_space, 1)
+        ret = sbu.batch_space(source_space, 1)
+        if self.axis != 0:
+            ret = sbu.swap_batch_dims(
+                ret,
+                0,
+                self.axis
+            )
 
     def transform(self, source_space, data):
         return sbu.concatenate(
             source_space,
-            [data]
+            [data],
+            axis=self.axis
         )
     
     def direction_inverse(self, source_space = None):
-        return UnBatchifyTransformation()
+        return UnBatchifyTransformation(axis=self.axis)
 
 class UnBatchifyTransformation(DataTransformation):
     has_inverse = True
+
+    def __init__(
+        self,
+        axis : int = 0
+    ) -> None:
+        self.axis = axis
     
     def get_target_space_from_source(self, source_space):
+        if self.axis != 0:
+            source_space = sbu.swap_batch_dims(
+                source_space,
+                0,
+                self.axis
+            )
+        assert sbu.batch_size(source_space) == 1, "Cannot unbatch space with batch size > 1"
         return next(iter(sbu.unbatch_spaces(source_space)))
 
     def transform(self, source_space, data):
+        if self.axis != 0:
+            source_space = sbu.swap_batch_dims(
+                source_space,
+                0,
+                self.axis
+            )
+            data = sbu.swap_batch_dims_in_data(
+                source_space.backend,
+                data,
+                0,
+                self.axis
+            )
         return sbu.get_at(
             source_space,
             data,
@@ -33,4 +71,4 @@ class UnBatchifyTransformation(DataTransformation):
         )
     
     def direction_inverse(self, source_space = None):
-        return BatchifyTransformation()
+        return BatchifyTransformation(axis=self.axis)

@@ -22,6 +22,7 @@ class RescaleTransformation(DataTransformation):
         new_low : Union[BArrayType,float] = -1.0,
         new_high : Union[BArrayType,float] = 1.0,
         new_dtype : Optional[BDtypeType] = None,
+        nan_to : Optional[Union[float, int, BArrayType]] = None,
     ):
         # assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box action spaces"
         # assert source_space.backend.dtype_is_real_floating(source_space.dtype), "RescaleTransformation only supports real-valued floating spaces"
@@ -31,6 +32,7 @@ class RescaleTransformation(DataTransformation):
         self.new_high = new_high
         self._new_span = new_high - new_low
         self.new_dtype = new_dtype
+        self.nan_to = nan_to
 
     def get_target_space_from_source(self, source_space):
         assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box spaces"
@@ -75,6 +77,14 @@ class RescaleTransformation(DataTransformation):
         ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_high) else self.new_high
         scaling_factor = (target_high - target_low) / (source_space._high - source_space._low)
         target_data = (data - source_space._low) * scaling_factor + target_low
+        
+        if self.nan_to is not None:
+            target_data = source_space.backend.where(
+                source_space.backend.isnan(target_data),
+                self.nan_to,
+                target_data
+            )
+
         if self.new_dtype is not None:
             if source_space.backend.dtype_is_real_integer(self.new_dtype) and source_space.backend.dtype_is_real_floating(target_data.dtype):
                 target_data = source_space.backend.round(target_data)
