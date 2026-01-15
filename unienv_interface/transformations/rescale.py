@@ -110,3 +110,8 @@ class RescaleTransformation(DataTransformation):
             new_high=new_high,
             new_dtype=source_space.dtype
         )
+    
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if not hasattr(self, "nan_to"):
+            self.nan_to = None
