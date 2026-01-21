@@ -3,11 +3,11 @@ name = "unienv"
 description = "Unified robot environment framework supporting multiple tensor and simulation backends"
 readme = "README.md"
 license = "MIT"
-version = "0.0.1b5"
+version = "0.0.1b6"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
-    "xbarray>=0.0.1a8",
+    "xbarray>=0.0.1a13",
     "pillow",
     "cloudpickle",
     "pyvers",
