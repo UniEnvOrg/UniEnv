@@ -21,6 +21,7 @@ class BatchifyTransformation(DataTransformation):
                 0,
                 self.axis
             )
+        return ret
 
     def transform(self, source_space, data):
         return sbu.concatenate(

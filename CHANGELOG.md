@@ -2,8 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.1b7 (2026-01-22)
+
+- Bugfix `BatchifyTransformation`.
+
 ## 0.0.1b6 (2026-01-21)
 
+- **Deprecated, use version 0.0.1b7 instead.**
 - There's now an optional `nan_to` parameter for the `RescaleTransformation` class that allows users to specify a value to replace NaN values in the input data during rescaling. If not provided, NaN values will remain unchanged.
 - Flipped `is_memmap` parameter default value to `True` in `PyTorchTensorStorage` to improve usability when storing large datasets.
 - `PyTorchTensorStorage` now supports saving and loading data in the `BinarySpace` format.

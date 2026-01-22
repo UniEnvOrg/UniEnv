@@ -3,7 +3,7 @@ name = "unienv"
 description = "Unified robot environment framework supporting multiple tensor and simulation backends"
 readme = "README.md"
 license = "MIT"
-version = "0.0.1b6"
+version = "0.0.1b7"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
