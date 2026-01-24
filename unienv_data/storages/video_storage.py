@@ -180,7 +180,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         file_ext : str = "mp4",
-        file_pixel_format : Optional[str] = None,
+        file_pixel_format : Optional[str] = "yuv420p",
         buffer_pixel_format : str = "rgb24",
         fps : int = 15,
         mutable : bool = True,
@@ -276,6 +276,30 @@ class VideoStorage(EpisodeStorageBase[
 
             for i, frame in enumerate(value_np):
                 video.write_frame(frame, pixel_format=self.buffer_pixel_format)
+            
+        # container = av.open(filename, mode='w')
+        # output_stream = container.add_stream(self.codec, rate=self.fps)
+        # if len(self.single_instance_space.shape) == 3: # (H, W, C)
+        #     output_stream.width = self.single_instance_space.shape[1]
+        #     output_stream.height = self.single_instance_space.shape[0]
+        # else: # (H, W)
+        #     output_stream.width = self.single_instance_space.shape[1]
+        #     output_stream.height = self.single_instance_space.shape[0]
+        # if self.file_pixel_format is not None:
+        #     output_stream.pix_fmt = self.file_pixel_format
+        # output_stream.time_base = Fraction(1, self.fps).limit_denominator(int(2**16 - 1))
+        # for i, frame_np in enumerate(value_np):
+        #     frame = av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format)
+        #     for packet in output_stream.encode(frame):
+        #         container.mux(packet)
+        # # Flush stream
+        # for packet in output_stream.encode():
+        #     container.mux(packet)
+        
+        # # Close container
+        # if hasattr(output_stream, 'close'):
+        #     output_stream.close()
+        # container.close()
 
     def dumps(self, path):
         assert os.path.samefile(path, self.cache_filename), \
