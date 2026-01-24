@@ -72,6 +72,7 @@ class PytorchTensorStorage(SpaceStorage[
         capacity : Optional[int] = None,
         read_only : bool = True,
         multiprocessing : bool = False,
+        **kwargs,
     ) -> "PytorchTensorStorage":
         assert single_instance_space.backend is PyTorchComputeBackend, "PytorchTensorStorage only supports PyTorch backend"
         assert capacity is not None, "Capacity must be specified when creating a new tensor"
