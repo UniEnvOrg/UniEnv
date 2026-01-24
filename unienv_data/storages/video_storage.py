@@ -3,6 +3,7 @@ from fractions import Fraction
 from unienv_interface.space import Space, BoxSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage
@@ -12,12 +13,19 @@ import numpy as np
 import os
 import json
 import shutil
+import logging
 
+# PyAV and ImageIO seems to have bugs when we try to run encode / decode with hardware acceleration on hevc codec.
 import av
 import imageio.v3 as iio
 from imageio.plugins.pyav import PyAVPlugin
 from av.codec.hwaccel import HWAccel, hwdevices_available
 from av.codec import codecs_available
+
+# TorchCodec backend for video encoding / decoding
+# import av
+# from av.codec import codecs_available
+# from torchcodec.decoders import VideoDecoder, set_cuda_backend
 
 class VideoStorage(EpisodeStorageBase[
     BArrayType,
@@ -30,7 +38,7 @@ class VideoStorage(EpisodeStorageBase[
     A storage for RGB or depth video data using video files
     If encoding RGB video
     - Set `buffer_pixel_format` to `rgb24`
-        - Set `file_pixel_format` to `None`
+        - Set `file_pixel_format` to `None` (especially when running with nvenc codec)
         - Set `file_ext` to anything you like (e.g., "mp4", "avi", "mkv", etc.)
     If encoding depth video
         - Set `buffer_pixel_format` to `gray16le` (You can use rescale transform inside a `TransformedStorage` to convert depth values to this format, where `dtype` should be `np.uint16`) - if in meters, set min to 0 and max to 65.535 as the multiplication factor is 1000 (i.e., depth in mm)
@@ -45,6 +53,7 @@ class VideoStorage(EpisodeStorageBase[
         cls,
         single_instance_space: BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         *args,
+        seek_mode : Literal['exact', 'approximate'] = 'exact',
         hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         file_ext : str = "mp4",
@@ -64,6 +73,7 @@ class VideoStorage(EpisodeStorageBase[
         return VideoStorage(
             single_instance_space,
             cache_filename=cache_path,
+            seek_mode=seek_mode,
             hardware_acceleration=hardware_acceleration,
             codec=codec,
             file_ext=file_ext,
@@ -79,6 +89,7 @@ class VideoStorage(EpisodeStorageBase[
         path : Union[str, os.PathLike],
         single_instance_space : BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         *,
+        seek_mode : Literal['exact', 'approximate'] = 'exact',
         hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         capacity : Optional[int] = None,
@@ -113,6 +124,7 @@ class VideoStorage(EpisodeStorageBase[
         return VideoStorage(
             single_instance_space,
             cache_filename=path,
+            seek_mode=seek_mode,
             hardware_acceleration=hardware_acceleration,
             codec=codec,
             file_ext=file_ext,
@@ -131,6 +143,8 @@ class VideoStorage(EpisodeStorageBase[
     def get_auto_hwaccel() -> Optional[HWAccel]:
         if hasattr(__class__, "_auto_hwaccel"):
             return __class__._auto_hwaccel
+        
+        # PyAV Implementation
         available_hwdevices = hwdevices_available()
         target_hwaccel = None
         if "d3d11va" in available_hwdevices:
@@ -141,6 +155,11 @@ class VideoStorage(EpisodeStorageBase[
             target_hwaccel = HWAccel(device_type="vaapi", allow_software_fallback=True)
         elif "videotoolbox" in available_hwdevices:
             target_hwaccel = HWAccel(device_type="videotoolbox", allow_software_fallback=True)
+
+        # --- TorchCodec Implementation ---
+        # if torch.cuda.is_available():
+        #     target_hwaccel = 'beta'
+
         __class__._auto_hwaccel = target_hwaccel
         return target_hwaccel
 
@@ -150,8 +169,14 @@ class VideoStorage(EpisodeStorageBase[
     ) -> str:
         if hasattr(__class__, "_auto_codec"):
             return __class__._auto_codec
+        
+        # --- PyAV Implementation ---
         preferred_codecs = ["av1", "hevc", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
-        preferred_suffixes = ["_nvenc", "_amf", "_qsv"]
+        preferred_suffixes = ["_nvenc", "_vaapi", "_amf", "_qsv", "_videotoolbox"]
+
+        # --- TorchCodec Implementation ---
+        # preferred_codecs = ["hevc", "av1", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
+        # preferred_suffixes = ["_nvenc"]
         
         target_codec = None
         for codec in preferred_codecs:
@@ -177,10 +202,11 @@ class VideoStorage(EpisodeStorageBase[
         self,
         single_instance_space: BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         cache_filename : Union[str, os.PathLike],
+        seek_mode : Literal['exact', 'approximate'] = 'exact',
         hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         file_ext : str = "mp4",
-        file_pixel_format : Optional[str] = "yuv420p",
+        file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
         fps : int = 15,
         mutable : bool = True,
@@ -195,6 +221,7 @@ class VideoStorage(EpisodeStorageBase[
             capacity=capacity,
             length=length,
         )
+        self.seek_mode = seek_mode
         self.hwaccel = None if hardware_acceleration is None else (
             self.get_auto_hwaccel() if hardware_acceleration == 'auto' else hardware_acceleration
         )
@@ -202,6 +229,13 @@ class VideoStorage(EpisodeStorageBase[
         self.fps = fps
         self.file_pixel_format = file_pixel_format
         self.buffer_pixel_format = buffer_pixel_format
+        
+        # --- PyAV Implementation ---
+        assert seek_mode == 'exact', "Currently only 'exact' seek mode is supported with `pyav` backend"
+
+        # --- TorchCodec Implementation ---
+        # assert (file_pixel_format is None) or (not codec.endswith('_nvenc')), "When using nvenc codec, file_pixel_format must be None"
+        # assert buffer_pixel_format == 'rgb24', "Currently only 'rgb24' buffer pixel format is supported with `torchcodec` backend"
 
     def get_from_file(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
         with iio.imopen(filename, 'r', plugin='pyav', hwaccel=self.hwaccel) as video:
@@ -260,6 +294,35 @@ class VideoStorage(EpisodeStorageBase[
                     all_frames = self.backend.to_device(all_frames, self.device)
                 return all_frames
 
+    # def get_from_file_torchcodec(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
+    #     if self.hwaccel != None:
+    #         with set_cuda_backend(self.hwaccel):
+    #             decoder = VideoDecoder(filename, device='cuda', seek_mode=self.seek_mode)
+    #     if isinstance(index, int):
+    #         ret = decoder.get_frame_at(index).data.permute(1, 2, 0) # (C, H, W) -> (H, W, C)
+    #     elif index is Ellipsis:
+    #         ret = decoder.get_frames_in_range(0, len(decoder)).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+    #     elif isinstance(index, slice):
+    #         start, stop, step = index.indices(total_length)
+    #         ret = decoder.get_frames_in_range(start, stop, step=step).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+    #     else:
+    #         if self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
+    #             index = self.backend.nonzero(index)[0]
+    #         if self.backend.simplified_name != 'pytorch':
+    #             index = PyTorchComputeBackend.from_other_backend(self.backend, index).to('cpu', torch.int64)
+    #         ret = decoder.get_frames_at(index).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        
+    #     if self.backend.simplified_name != 'pytorch':
+    #         ret = self.backend.from_other_backend(PyTorchComputeBackend, ret)
+    #     if self.device is not None:
+    #         ret = self.backend.to_device(ret, self.device)
+    #     if len(self.single_instance_space.shape) < 3:
+    #         assert ret.shape[-1] == 1, "Expected single channel for grayscale images"
+    #         # Remove channel dimension for grayscale images
+    #         ret = ret[..., 0]
+    #     return ret
+
+    # PyAV Implementation (Commented out due to bugs with hevc codec)
     def set_to_file(self, filename : str, value : BArrayType):
         value_np = self.backend.to_numpy(value)
         with iio.imopen(
@@ -276,30 +339,31 @@ class VideoStorage(EpisodeStorageBase[
 
             for i, frame in enumerate(value_np):
                 video.write_frame(frame, pixel_format=self.buffer_pixel_format)
-            
-        # container = av.open(filename, mode='w')
-        # output_stream = container.add_stream(self.codec, rate=self.fps)
-        # if len(self.single_instance_space.shape) == 3: # (H, W, C)
-        #     output_stream.width = self.single_instance_space.shape[1]
-        #     output_stream.height = self.single_instance_space.shape[0]
-        # else: # (H, W)
-        #     output_stream.width = self.single_instance_space.shape[1]
-        #     output_stream.height = self.single_instance_space.shape[0]
-        # if self.file_pixel_format is not None:
-        #     output_stream.pix_fmt = self.file_pixel_format
-        # output_stream.time_base = Fraction(1, self.fps).limit_denominator(int(2**16 - 1))
-        # for i, frame_np in enumerate(value_np):
-        #     frame = av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format)
-        #     for packet in output_stream.encode(frame):
-        #         container.mux(packet)
-        # # Flush stream
-        # for packet in output_stream.encode():
-        #     container.mux(packet)
+
+    # TorchCodec Implementation (extremely slow, and seems to have double-write issues)
+    # def set_to_file(self, filename : str, value : BArrayType):
+    #     if self.backend.simplified_name != 'pytorch':
+    #         value_pt = PyTorchComputeBackend.from_other_backend(self.backend, value)
+    #     else:
+    #         value_pt = value
+    #     if self.codec.endswith('_nvenc'):
+    #         value_pt = value_pt.to("cuda")
+    #     else:
+    #         value_pt = value_pt.to("cpu")
         
-        # # Close container
-        # if hasattr(output_stream, 'close'):
-        #     output_stream.close()
-        # container.close()
+    #     if len(self.single_instance_space.shape) < 3:
+    #         # Add channel dimension for grayscale images
+    #         value_pt = value_pt[..., None]  # (N, H, W) -> (N, H, W, 1)
+        
+    #     encoder = VideoEncoder(
+    #         value_pt.permute(0, 3, 1, 2), # (N, H, W, C) -> (N, C, H, W)
+    #         frame_rate=self.fps,
+    #     )
+    #     encoder.to_file(
+    #         filename,
+    #         codec=self.codec,
+    #         pixel_format=self.file_pixel_format,
+    #     )
 
     def dumps(self, path):
         assert os.path.samefile(path, self.cache_filename), \
