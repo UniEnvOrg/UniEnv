@@ -12,6 +12,102 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 
 from ..base.common import BatchBase, IndexableType, BatchT
 
+__all__ = [
+    "convert_single_index_to_batch",
+    "convert_index_to_batch",
+    "CombinedBatch",
+]
+
+def convert_single_index_to_batch(
+    backend : ComputeBackend,
+    index_starts : BArrayType, # (num_batches, )
+    total_length : int, # Total length of all batches
+    idx : int,
+    device : Optional[BDeviceType] = None,
+) -> Tuple[int, int]:
+    """
+    Convert a single index for this batch to a tuple of:
+        - The index of the batch
+        - The index to index into the batch
+    """
+    assert -total_length <= idx < total_length, f"Index {idx} out of bounds for batch of size {total_length}"
+    if idx < 0:
+        idx += total_length
+    batch_index = int(backend.sum(
+        idx >= index_starts
+    ) - 1)
+    return batch_index, idx - int(index_starts[batch_index])
+
+def convert_index_to_batch(
+    backend : ComputeBackend,
+    index_starts : BArrayType, # (num_batches, )
+    total_length : int, # Total length of all batches
+    idx : Union[IndexableType, BArrayType],
+    device : Optional[BDeviceType] = None,
+) -> Tuple[
+    int, 
+    Union[List[
+        Tuple[int, BArrayType, BArrayType]
+    ], int]
+]:
+    """
+    Convert an index for this batch to a tuple of:
+        - The length of the resulting array
+        - List of tuples, each containing:
+            - The index of the batch
+            - The index to index into the batch
+            - The bool mask to index into the resulting array
+    """
+    if isinstance(idx, slice):
+        idx_array = backend.arange(
+            *idx.indices(total_length),
+            dtype=backend.default_index_dtype,
+            device=device
+        )
+    elif idx is Ellipsis:
+        idx_array = backend.arange(
+            total_length,
+            dtype=backend.default_index_dtype,
+            device=device
+        )
+    elif backend.is_backendarray(idx):
+        assert len(idx.shape) == 1, "Index must be 1D"
+        assert backend.dtype_is_real_integer(idx.dtype) or backend.dtype_is_boolean(idx.dtype), \
+            f"Index must be of integer or boolean type, got {idx.dtype}"
+        if backend.dtype_is_boolean(idx.dtype):
+            assert idx.shape[0] == total_length, f"Boolean index must have the same length as the batch, got {idx.shape[0]} vs {total_length}"
+            idx_array = backend.nonzero(idx)[0]
+        else:
+            assert backend.all(backend.logical_and(-total_length <= idx, idx < total_length)), \
+                f"Index array contains out of bounds indices for batch of size {total_length}"
+            idx_array = (idx + total_length) % total_length
+    else:
+        raise ValueError(f"Invalid index type: {type(idx)}")
+    
+    assert bool(backend.all(
+        backend.logical_and(
+            -total_length <= idx_array,
+            idx_array < total_length
+        )
+    )), f"Index {idx} converted to {idx_array} is out of bounds for batch of size {total_length}"
+    
+    # Convert negative indices to positive indices
+    idx_array = backend.at(idx_array)[idx_array < 0].add(total_length)
+    idx_array_bigger = idx_array[:, None] >= index_starts[None, :] # (idx_array_shape, len(self.batches))
+    idx_array_batch_idx = backend.sum(
+        idx_array_bigger,
+        axis=-1
+    ) - 1 # (idx_array_shape, )
+    
+    result_batch_list = []
+    batch_indexes = backend.unique_values(idx_array_batch_idx)
+    for i in range(batch_indexes.shape[0]):
+        batch_index = int(batch_indexes[i])
+        result_mask = idx_array_batch_idx == batch_index
+        index_into_batch = idx_array[result_mask] - index_starts[batch_index]
+        result_batch_list.append((batch_index, index_into_batch, result_mask))
+    return idx_array.shape[0], result_batch_list
+
 class CombinedBatch(BatchBase[
     BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
 ]):
@@ -83,18 +179,13 @@ class CombinedBatch(BatchBase[
         return self.index_caches[-1, 1]
 
     def _convert_single_index(self, idx : int) -> Tuple[int, int]:
-        """
-        Convert a single index to a tuple containing
-         - the batch index
-         - the index within the batch
-        """
-        assert -len(self) <= idx < len(self), f"Index {idx} out of bounds for batch of size {len(self)}"
-        if idx < 0:
-            idx += len(self)
-        batch_index = int(self.backend.sum(
-            idx >= self.index_caches[:, 0]
-        ) - 1)
-        return batch_index, idx - int(self.index_caches[batch_index, 0])
+        return convert_single_index_to_batch(
+            self.backend,
+            self.index_caches[:, 0],
+            len(self),
+            idx,
+            device=self.device,
+        )
 
     def _convert_index(self, idx : Union[IndexableType, BArrayType]) -> Tuple[
         int, 
@@ -102,61 +193,13 @@ class CombinedBatch(BatchBase[
             Tuple[int, BArrayType, BArrayType]
         ]
     ]:
-        """
-        Convert an index for this batch to a tuple of:
-         - The length of the resulting array
-         - List of tuples, each containing:
-             - The index of the batch
-             - The index to index into the batch
-             - The bool mask to index into the resulting array
-        """
-        if isinstance(idx, slice):
-            idx_array = self.backend.arange(
-                *idx.indices(len(self)),
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            )
-        elif idx is Ellipsis:
-            idx_array = self.backend.arange(
-                len(self),
-                dtype=self.backend.default_integer_dtype,
-                device=self.device
-            )
-        elif self.backend.is_backendarray(idx):
-            assert len(idx.shape) == 1, "Index must be 1D"
-            assert self.backend.dtype_is_real_integer(idx.dtype) or self.backend.dtype_is_boolean(idx.dtype), \
-                f"Index must be of integer or boolean type, got {idx.dtype}"
-            if self.backend.dtype_is_boolean(idx.dtype):
-                assert idx.shape[0] == len(self), f"Boolean index must have the same length as the batch, got {idx.shape[0]} vs {len(self)}"
-                idx_array = self.backend.nonzero(idx)[0]
-            else:
-                idx_array = idx
-        else:
-            raise ValueError(f"Invalid index type: {type(idx)}")
-        
-        assert bool(self.backend.all(
-            self.backend.logical_and(
-                -len(self) <= idx_array,
-                idx_array < len(self)
-            )
-        )), f"Index {idx} converted to {idx_array} is out of bounds for batch of size {len(self)}"
-        
-        # Convert negative indices to positive indices
-        idx_array = self.backend.at(idx_array)[idx_array < 0].add(len(self))
-        idx_array_bigger = idx_array[:, None] >= self.index_caches[None, :, 0] # (idx_array_shape, len(self.batches))
-        idx_array_batch_idx = self.backend.sum(
-            idx_array_bigger,
-            axis=-1
-        ) - 1 # (idx_array_shape, )
-        
-        result_batch_list = []
-        batch_indexes = self.backend.unique_values(idx_array_batch_idx)
-        for i in range(batch_indexes.shape[0]):
-            batch_index = int(batch_indexes[i])
-            result_mask = idx_array_batch_idx == batch_index
-            index_into_batch = idx_array[result_mask] - self.index_caches[batch_index, 0]
-            result_batch_list.append((batch_index, index_into_batch, result_mask))
-        return idx_array.shape[0], result_batch_list
+        return convert_index_to_batch(
+            self.backend,
+            self.index_caches[:, 0],
+            len(self),
+            idx,
+            device=self.device,
+        )
 
     def get_flattened_at(self, idx : Union[IndexableType, BaseException]) -> BArrayType:
         if isinstance(idx, int):
