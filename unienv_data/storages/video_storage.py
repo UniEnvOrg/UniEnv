@@ -1,31 +1,229 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, cast
 from fractions import Fraction
-from unienv_interface.space import Space, BoxSpace
-from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
+
+from unienv_interface.space import BoxSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.utils.symbol_util import *
 
-from unienv_data.base import SpaceStorage
 from ._episode_storage import IndexableType, EpisodeStorageBase
 
 import numpy as np
 import os
 import json
-import shutil
 import logging
+import importlib
+import importlib.util
 
-# PyAV and ImageIO seems to have bugs when we try to run encode / decode with hardware acceleration on hevc codec.
 import av
-import imageio.v3 as iio
-from imageio.plugins.pyav import PyAVPlugin
-from av.codec.hwaccel import HWAccel, hwdevices_available
+from av.codec.hwaccel import HWAccel as PyAvHWAccel
 from av.codec import codecs_available
+import av.error
 
 # TorchCodec backend for video encoding / decoding
 # import av
 # from av.codec import codecs_available
 # from torchcodec.decoders import VideoDecoder, set_cuda_backend
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+LOGGER = logging.getLogger(__name__)
+
+class PyAvVideoReader:
+    HWAccel = PyAvHWAccel
+
+    @staticmethod
+    def available_hwdevices() -> List[str]:
+        from av.codec.hwaccel import hwdevices_available
+        return hwdevices_available()
+    
+    @staticmethod
+    def get_auto_hwaccel() -> Optional[HWAccel]:
+        available_hwdevices = __class__.available_hwdevices()
+        target_hwaccel = None
+        if "d3d11va" in available_hwdevices:
+            target_hwaccel = PyAvHWAccel(device_type="d3d11va", allow_software_fallback=True)
+        elif "cuda" in available_hwdevices:
+            target_hwaccel = PyAvHWAccel(device_type="cuda", allow_software_fallback=True)
+        elif "vaapi" in available_hwdevices:
+            target_hwaccel = PyAvHWAccel(device_type="vaapi", allow_software_fallback=True)
+        elif "videotoolbox" in available_hwdevices:
+            target_hwaccel = PyAvHWAccel(device_type="videotoolbox", allow_software_fallback=True)
+        return target_hwaccel
+
+    def __init__(
+        self, 
+        backend : ComputeBackend,
+        filename: str, 
+        hwaccel: Optional[Union[HWAccel, Literal['auto']]] = None, 
+        seek_mode: Literal['exact', 'approximate'] = 'exact',
+        device : Optional[BDeviceType] = None,
+    ):
+        if seek_mode != 'exact':
+            LOGGER.warning("PyAvVideoReader only supports 'exact' seek mode. Falling back to 'exact'.")
+        
+        if hwaccel == 'auto':
+            hwaccel = __class__.get_auto_hwaccel()
+        self.container = av.open(filename, mode='r', hwaccel=hwaccel)
+        self.video_stream = self.container.streams.video[0]
+        self.total_frames = self.video_stream.frames
+        self.frame_iterator = self.container.decode(self.video_stream)
+        self.backend = backend
+        self.device = device
+    
+    def seek(self, frame_index: int):
+        self.container.seek(frame_index, any_frame=True, backward=True, stream=self.video_stream)
+        self.frame_iterator = self.container.decode(self.video_stream)
+    
+    def __next__(self):
+        try:
+            frame = next(self.frame_iterator)
+            frame = frame.to_rgb().to_ndarray(channel_last=True)
+        except av.error.EOFError:
+            raise StopIteration
+        if np.prod(frame.shape) == 0:
+            raise StopIteration
+        return frame
+
+    def __iter__(self):
+        return self
+
+    def __len__(self):
+        return self.total_frames
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, *args, **kwargs):
+        self.container.close()
+    
+    def __getitem__(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
+        if isinstance(index, int):
+            self.seek(index)
+            frame_np = next(self.frame_iterator).to_rgb().to_ndarray(channel_last=True)
+            frame = self.backend.from_numpy(frame_np)
+            if self.device is not None:
+                frame = self.backend.to_device(frame, self.device)
+            return frame
+        else:
+            total_length = len(self)
+            if index is Ellipsis:
+                index = np.arange(total_length)
+            elif isinstance(index, slice):
+                index = np.arange(*index.indices(total_length))
+            elif self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
+                index = self.backend.nonzero(index)[0]
+            if self.backend.is_backendarray(index):
+                index = self.backend.to_numpy(index)
+
+            argsorted_indices = np.argsort(index)
+            sorted_index = index[argsorted_indices]
+            reserve_index = np.argsort(argsorted_indices)
+            
+            if len(index) < total_length // 2:
+                all_frames_np = []
+                past_frame_np = None
+                for frame_i in sorted_index:
+                    self.seek(frame_i)
+                    
+                    try:
+                        frame_np = next(self)
+                    except StopIteration:
+                        frame_np = past_frame_np
+                    past_frame_np = frame_np
+                    all_frames_np.append(frame_np)
+                    
+                all_frames_np = np.stack(all_frames_np, axis=0)
+                # Reorder from sorted order back to original order
+                all_frames_np = all_frames_np[reserve_index]
+            else:
+                # Create a set for O(1) lookup and a mapping from frame index to position in sorted_index
+                sorted_index_set = set(sorted_index)
+                frame_to_sorted_pos = {int(frame_idx): pos for pos, frame_idx in enumerate(sorted_index)}
+                
+                # Pre-allocate array to store frames in sorted order
+                all_frames_list = [None] * len(sorted_index)
+                past_frame_np = None
+                self.seek(0)
+                for frame_i in range(total_length):
+                    try:
+                        frame_np = next(self)
+                    except StopIteration:
+                        frame_np = past_frame_np
+                    if frame_i in sorted_index_set:
+                        # Store at the position corresponding to sorted_index order
+                        all_frames_list[frame_to_sorted_pos[frame_i]] = frame_np
+                    past_frame_np = frame_np
+                all_frames_np = np.stack(all_frames_list, axis=0)
+                # Reorder from sorted order back to original order
+                all_frames_np = all_frames_np[reserve_index]
+            all_frames = self.backend.from_numpy(all_frames_np)
+            if self.device is not None:
+                all_frames = self.backend.to_device(all_frames, self.device)
+            return all_frames
+
+class TorchCodecVideoReader:
+    HWAccel = Literal['beta', 'ffmpeg']
+    def __init__(
+        self, 
+        backend : ComputeBackend,
+        filename: str, 
+        hwaccel: Optional[Union[HWAccel, Literal['auto']]] = None, 
+        seek_mode: Literal['exact', 'approximate'] = 'exact',
+        device : Optional[BDeviceType] = None,
+    ):
+        from torchcodec.decoders import VideoDecoder, set_cuda_backend
+        assert torch is not None, "TorchCodecVideoReader requires PyTorch and TorchCodec to be installed."
+        if hwaccel == 'auto':
+            hwaccel = __class__.get_auto_hwaccel()
+        if hwaccel is not None:
+            with set_cuda_backend(hwaccel):
+                self.decoder = VideoDecoder(filename, device='cuda', seek_mode=seek_mode)
+        else:
+            self.decoder = VideoDecoder(filename, seek_mode=seek_mode)
+        self.backend = backend
+        self.device = device
+
+    @staticmethod
+    def get_auto_hwaccel() -> Optional[HWAccel]:
+        assert torch is not None, "TorchCodecVideoReader requires PyTorch to be installed."
+        if torch.cuda.is_available():
+            return 'beta'
+        else:
+            return None
+
+    def __len__(self):
+        return len(self.decoder)
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, *args, **kwargs):
+        pass
+    
+    def __getitem__(self, index : Union[IndexableType, np.ndarray]) -> np.ndarray:
+        if isinstance(index, int):
+            ret = self.decoder.get_frame_at(index).data.permute(1, 2, 0) # (C, H, W) -> (H, W, C)
+        elif index is Ellipsis:
+            ret = self.decoder.get_frames_in_range(0, len(self.decoder)).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        elif isinstance(index, slice):
+            start, stop, step = index.indices(len(self))
+            ret = self.decoder.get_frames_in_range(start, stop, step=step).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        else:
+            if self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
+                index = self.backend.nonzero(index)[0]
+            if self.backend.simplified_name != 'pytorch':
+                index = PyTorchComputeBackend.from_other_backend(self.backend, index).to('cpu', torch.int64)
+            ret = self.decoder.get_frames_at(index).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+        
+        if self.backend.simplified_name != 'pytorch':
+            ret = self.backend.from_other_backend(PyTorchComputeBackend, ret)
+        if self.device is not None:
+            ret = self.backend.to_device(ret, self.device)
+        return ret
 
 class VideoStorage(EpisodeStorageBase[
     BArrayType,
@@ -48,13 +246,15 @@ class VideoStorage(EpisodeStorageBase[
     """
 
     # ========== Class Attributes ==========
+    PyAV_LOG_LEVEL = av.logging.WARNING
+
     @classmethod
     def create(
         cls,
         single_instance_space: BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         *args,
         seek_mode : Literal['exact', 'approximate'] = 'exact',
-        hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
+        hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
@@ -90,7 +290,7 @@ class VideoStorage(EpisodeStorageBase[
         single_instance_space : BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         *,
         seek_mode : Literal['exact', 'approximate'] = 'exact',
-        hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
+        hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         capacity : Optional[int] = None,
         read_only : bool = True,
@@ -140,30 +340,6 @@ class VideoStorage(EpisodeStorageBase[
     single_file_ext = None
 
     @staticmethod
-    def get_auto_hwaccel() -> Optional[HWAccel]:
-        if hasattr(__class__, "_auto_hwaccel"):
-            return __class__._auto_hwaccel
-        
-        # PyAV Implementation
-        available_hwdevices = hwdevices_available()
-        target_hwaccel = None
-        if "d3d11va" in available_hwdevices:
-            target_hwaccel = HWAccel(device_type="d3d11va", allow_software_fallback=True)
-        elif "cuda" in available_hwdevices:
-            target_hwaccel = HWAccel(device_type="cuda", allow_software_fallback=True)
-        elif "vaapi" in available_hwdevices:
-            target_hwaccel = HWAccel(device_type="vaapi", allow_software_fallback=True)
-        elif "videotoolbox" in available_hwdevices:
-            target_hwaccel = HWAccel(device_type="videotoolbox", allow_software_fallback=True)
-
-        # --- TorchCodec Implementation ---
-        # if torch.cuda.is_available():
-        #     target_hwaccel = 'beta'
-
-        __class__._auto_hwaccel = target_hwaccel
-        return target_hwaccel
-
-    @staticmethod
     def get_auto_codec(
         base : Optional[str] = None
     ) -> str:
@@ -203,8 +379,9 @@ class VideoStorage(EpisodeStorageBase[
         single_instance_space: BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType],
         cache_filename : Union[str, os.PathLike],
         seek_mode : Literal['exact', 'approximate'] = 'exact',
-        hardware_acceleration : Optional[Union[HWAccel, Literal['auto']]] = 'auto',
+        hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
+        decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -222,123 +399,85 @@ class VideoStorage(EpisodeStorageBase[
             length=length,
         )
         self.seek_mode = seek_mode
-        self.hwaccel = None if hardware_acceleration is None else (
-            self.get_auto_hwaccel() if hardware_acceleration == 'auto' else hardware_acceleration
-        )
+        self.hwaccel = hardware_acceleration
         self.codec = self.get_auto_codec() if codec == 'auto' else codec
+        
+        if decode_backend == 'auto':
+            if importlib.util.find_spec("torchcodec"):
+                decode_backend = 'torchcodec'
+            else:
+                decode_backend = 'pyav'
+        self.decode_backend = decode_backend
+
         self.fps = fps
         self.file_pixel_format = file_pixel_format
         self.buffer_pixel_format = buffer_pixel_format
         
-        # --- PyAV Implementation ---
-        assert seek_mode == 'exact', "Currently only 'exact' seek mode is supported with `pyav` backend"
-
-        # --- TorchCodec Implementation ---
-        # assert (file_pixel_format is None) or (not codec.endswith('_nvenc')), "When using nvenc codec, file_pixel_format must be None"
-        # assert buffer_pixel_format == 'rgb24', "Currently only 'rgb24' buffer pixel format is supported with `torchcodec` backend"
-
     def get_from_file(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
-        with iio.imopen(filename, 'r', plugin='pyav', hwaccel=self.hwaccel) as video:
-            video = cast(PyAVPlugin, video)
-            if isinstance(index, int):
-                frame_np = video.read(index=index, format=self.buffer_pixel_format)
-                frame = self.backend.from_numpy(frame_np)
-                if self.device is not None:
-                    frame = self.backend.to_device(frame, self.device)
-                return frame
-            else:
-                if index is Ellipsis:
-                    index = np.arange(total_length)
-                elif isinstance(index, slice):
-                    index = np.arange(*index.indices(total_length))
-                elif self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
-                    index = self.backend.nonzero(index)[0]
-                if self.backend.is_backendarray(index):
-                    index = self.backend.to_numpy(index)
-
-                argsorted_indices = np.argsort(index)
-                sorted_index = index[argsorted_indices]
-                reserve_index = np.argsort(argsorted_indices)
-                
-                if len(index) < total_length // 2:
-                    all_frames_np = []
-                    for frame_i in sorted_index:
-                        frame_np = video.read(index=frame_i, format=self.buffer_pixel_format)
-                        all_frames_np.append(frame_np)
-                    all_frames_np = np.stack(all_frames_np, axis=0)
-                    # Reorder from sorted order back to original order
-                    all_frames_np = all_frames_np[reserve_index]
-                else:
-                    # Create a set for O(1) lookup and a mapping from frame index to position in sorted_index
-                    sorted_index_set = set(sorted_index)
-                    frame_to_sorted_pos = {int(frame_idx): pos for pos, frame_idx in enumerate(sorted_index)}
-                    
-                    # Pre-allocate array to store frames in sorted order
-                    all_frames_list = [None] * len(sorted_index)
-                    past_frame_np = None
-                    video_iter = video.iter(format=self.buffer_pixel_format)
-                    for frame_i in range(total_length):
-                        try:
-                            frame_np = next(video_iter)
-                        except StopIteration:
-                            frame_np = past_frame_np
-                        if frame_i in sorted_index_set:
-                            # Store at the position corresponding to sorted_index order
-                            all_frames_list[frame_to_sorted_pos[frame_i]] = frame_np
-                        past_frame_np = frame_np
-                    all_frames_np = np.stack(all_frames_list, axis=0)
-                    # Reorder from sorted order back to original order
-                    all_frames_np = all_frames_np[reserve_index]
-                all_frames = self.backend.from_numpy(all_frames_np)
-                if self.device is not None:
-                    all_frames = self.backend.to_device(all_frames, self.device)
-                return all_frames
-
-    # def get_from_file_torchcodec(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
-    #     if self.hwaccel != None:
-    #         with set_cuda_backend(self.hwaccel):
-    #             decoder = VideoDecoder(filename, device='cuda', seek_mode=self.seek_mode)
-    #     if isinstance(index, int):
-    #         ret = decoder.get_frame_at(index).data.permute(1, 2, 0) # (C, H, W) -> (H, W, C)
-    #     elif index is Ellipsis:
-    #         ret = decoder.get_frames_in_range(0, len(decoder)).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
-    #     elif isinstance(index, slice):
-    #         start, stop, step = index.indices(total_length)
-    #         ret = decoder.get_frames_in_range(start, stop, step=step).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
-    #     else:
-    #         if self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
-    #             index = self.backend.nonzero(index)[0]
-    #         if self.backend.simplified_name != 'pytorch':
-    #             index = PyTorchComputeBackend.from_other_backend(self.backend, index).to('cpu', torch.int64)
-    #         ret = decoder.get_frames_at(index).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
-        
-    #     if self.backend.simplified_name != 'pytorch':
-    #         ret = self.backend.from_other_backend(PyTorchComputeBackend, ret)
-    #     if self.device is not None:
-    #         ret = self.backend.to_device(ret, self.device)
-    #     if len(self.single_instance_space.shape) < 3:
-    #         assert ret.shape[-1] == 1, "Expected single channel for grayscale images"
-    #         # Remove channel dimension for grayscale images
-    #         ret = ret[..., 0]
-    #     return ret
+        if self.decode_backend == 'pyav':
+            reader_cls = PyAvVideoReader
+        elif self.decode_backend == 'torchcodec':
+            reader_cls = TorchCodecVideoReader
+        else:
+            raise ValueError(f"Unknown decode_backend {self.decode_backend}")
+        with reader_cls(
+            backend=self.backend,
+            filename=filename,
+            hwaccel=self.hwaccel,
+            seek_mode=self.seek_mode,
+            device=self.device,
+        ) as video_reader:
+            return video_reader[index]
 
     # PyAV Implementation (Commented out due to bugs with hevc codec)
     def set_to_file(self, filename : str, value : BArrayType):
-        value_np = self.backend.to_numpy(value)
-        with iio.imopen(
-            filename,
-            'w',
-            plugin='pyav',
-        ) as video:
-            video = cast(PyAVPlugin, video)
-            video.init_video_stream(self.codec, fps=self.fps, pixel_format=self.file_pixel_format)
+        # ImageIO Implementation
+        # with iio.imopen(
+        #     filename,
+        #     'w',
+        #     plugin='pyav',
+        # ) as video:
+        #     video = cast(PyAVPlugin, video)
+        #     video.init_video_stream(self.codec, fps=self.fps, pixel_format=self.file_pixel_format)
             
-            # Fix codec time base if not set:
-            if video._video_stream.codec_context.time_base is None:
-                video._video_stream.codec_context.time_base = Fraction(1 / self.fps).limit_denominator(int(2**16 - 1))
+        #     # Fix codec time base if not set:
+        #     if video._video_stream.codec_context.time_base is None:
+        #         video._video_stream.codec_context.time_base = Fraction(1 / self.fps).limit_denominator(int(2**16 - 1))
 
-            for i, frame in enumerate(value_np):
-                video.write_frame(frame, pixel_format=self.buffer_pixel_format)
+        #     for i, frame in enumerate(value_np):
+        #         video.write_frame(frame, pixel_format=self.buffer_pixel_format)
+
+        # PyAV Implementation
+        logging.getLogger("libav").setLevel(self.PyAV_LOG_LEVEL)
+        with av.open(filename, mode='w') as container:
+            output_stream = container.add_stream(self.codec, rate=self.fps)
+            if len(self.single_instance_space.shape) == 3: # (H, W, C)
+                output_stream.width = self.single_instance_space.shape[1]
+                output_stream.height = self.single_instance_space.shape[0]
+            else: # (H, W)
+                output_stream.width = self.single_instance_space.shape[1]
+                output_stream.height = self.single_instance_space.shape[0]
+            if self.file_pixel_format is not None:
+                output_stream.pix_fmt = self.file_pixel_format
+            # output_stream.time_base = Fraction(1, self.fps).limit_denominator(int(2**16 - 1))
+            value_np = self.backend.to_numpy(value)
+            for i, frame_np in enumerate(value_np):
+                frame = av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format, channel_last=True)
+                packets = output_stream.encode(frame)
+                if packets:
+                    container.mux(packets)
+            # Flush stream
+            packets = output_stream.encode()
+            if packets:
+                container.mux(packets)
+            
+            # Close container
+            if hasattr(output_stream, 'close'):
+                output_stream.close()
+            # container.close()
+
+            # Restore logging level
+            av.logging.restore_default_callback()
 
     # TorchCodec Implementation (extremely slow, and seems to have double-write issues)
     # def set_to_file(self, filename : str, value : BArrayType):

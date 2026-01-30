@@ -188,8 +188,9 @@ class EpisodeStorageBase(SpaceStorage[
                 index = self.backend.arange(0, self.capacity, device=self.device)
             else:
                 index = self.backend.arange(0, self.length, device=self.device)
-        elif self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
-            index = self.backend.nonzero(index)[0]
+        elif self.backend.is_backendarray(index):
+            if self.backend.dtype_is_boolean(index.dtype):
+                index = self.backend.nonzero(index)[0]
 
         batch_size = index.shape[0] if self.backend.is_backendarray(index) else 1
 
