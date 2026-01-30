@@ -191,6 +191,9 @@ class EpisodeStorageBase(SpaceStorage[
         elif self.backend.is_backendarray(index):
             if self.backend.dtype_is_boolean(index.dtype):
                 index = self.backend.nonzero(index)[0]
+            else:
+                assert self.backend.dtype_is_real_integer(index.dtype), "Index array must be of integer or boolean type."
+                index = (index + (self.capacity if self.capacity is not None else self.length)) % (self.capacity if self.capacity is not None else self.length)
 
         batch_size = index.shape[0] if self.backend.is_backendarray(index) else 1
 
@@ -369,8 +372,13 @@ class EpisodeStorageBase(SpaceStorage[
                 index = self.backend.arange(0, self.capacity, device=self.device)
             else:
                 index = self.backend.arange(0, self.length, device=self.device)
-        elif self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
-            index = self.backend.nonzero(index)[0]
+        elif self.backend.is_backendarray(index):
+            if self.backend.dtype_is_boolean(index.dtype):
+                index = self.backend.nonzero(index)[0]
+            else:
+                assert self.backend.dtype_is_real_integer(index.dtype), "Index array must be of integer or boolean type."
+                index = (index + (self.capacity if self.capacity is not None else self.length)) % (self.capacity if self.capacity is not None else self.length)
+
         assert self.backend.is_backendarray(index) and self.backend.dtype_is_real_integer(index.dtype) and len(index.shape) == 1, "Index must be a 1D array of integers"
         sorted_indexes_arg = self.backend.argsort(index)
         sorted_indexes = index[sorted_indexes_arg]
