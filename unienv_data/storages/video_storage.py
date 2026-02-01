@@ -19,6 +19,7 @@ import av
 from av.codec.hwaccel import HWAccel as PyAvHWAccel
 from av.codec import codecs_available
 import av.error
+from av.video.reformatter import VideoReformatter
 
 # TorchCodec backend for video encoding / decoding
 # import av
@@ -58,6 +59,7 @@ class PyAvVideoReader:
         self, 
         backend : ComputeBackend,
         filename: str, 
+        buffer_pixel_format : Optional[str] = None,
         hwaccel: Optional[Union[HWAccel, Literal['auto']]] = None, 
         seek_mode: Literal['exact', 'approximate'] = 'exact',
         device : Optional[BDeviceType] = None,
@@ -69,7 +71,12 @@ class PyAvVideoReader:
             hwaccel = __class__.get_auto_hwaccel()
         self.container = av.open(filename, mode='r', hwaccel=hwaccel)
         self.video_stream = self.container.streams.video[0]
-        self.total_frames = self.video_stream.frames
+        if buffer_pixel_format is not None:
+            self.video_reformatter = VideoReformatter()
+        else:
+            self.video_reformatter = None
+        self.buffer_pixel_format = buffer_pixel_format
+        self.total_frames = self.video_stream.frames # Sometimes this reads 0 for some containers (as they don't explicitly store it)
         self.frame_iterator = self.container.decode(self.video_stream)
         self.backend = backend
         self.device = device
@@ -81,18 +88,21 @@ class PyAvVideoReader:
     def __next__(self):
         try:
             frame = next(self.frame_iterator)
-            frame = frame.to_rgb().to_ndarray(channel_last=True)
+            if self.video_reformatter is not None:
+                frame = self.video_reformatter.reformat(
+                    frame,
+                    format=self.buffer_pixel_format,
+                )
+            frame = frame.to_ndarray(channel_last=True)
         except av.error.EOFError:
             raise StopIteration
         if np.prod(frame.shape) == 0:
             raise StopIteration
+    
         return frame
 
     def __iter__(self):
         return self
-
-    def __len__(self):
-        return self.total_frames
     
     def __enter__(self):
         return self
@@ -100,16 +110,15 @@ class PyAvVideoReader:
     def __exit__(self, *args, **kwargs):
         self.container.close()
     
-    def __getitem__(self, index : Union[IndexableType, BArrayType]) -> BArrayType:
+    def read(self, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
         if isinstance(index, int):
             self.seek(index)
-            frame_np = next(self.frame_iterator).to_rgb().to_ndarray(channel_last=True)
+            frame_np = next(self)
             frame = self.backend.from_numpy(frame_np)
             if self.device is not None:
                 frame = self.backend.to_device(frame, self.device)
             return frame
         else:
-            total_length = len(self)
             if index is Ellipsis:
                 index = np.arange(total_length)
             elif isinstance(index, slice):
@@ -163,6 +172,7 @@ class PyAvVideoReader:
             all_frames = self.backend.from_numpy(all_frames_np)
             if self.device is not None:
                 all_frames = self.backend.to_device(all_frames, self.device)
+            
             return all_frames
 
 class TorchCodecVideoReader:
@@ -171,12 +181,14 @@ class TorchCodecVideoReader:
         self, 
         backend : ComputeBackend,
         filename: str, 
+        buffer_pixel_format : Optional[str] = None,
         hwaccel: Optional[Union[HWAccel, Literal['auto']]] = None, 
         seek_mode: Literal['exact', 'approximate'] = 'exact',
         device : Optional[BDeviceType] = None,
     ):
         from torchcodec.decoders import VideoDecoder, set_cuda_backend
         assert torch is not None, "TorchCodecVideoReader requires PyTorch and TorchCodec to be installed."
+        assert buffer_pixel_format == 'rgb24', "TorchCodecVideoReader currently only supports 'rgb24' buffer pixel format."
         if hwaccel == 'auto':
             hwaccel = __class__.get_auto_hwaccel()
         if hwaccel is not None:
@@ -186,6 +198,7 @@ class TorchCodecVideoReader:
             self.decoder = VideoDecoder(filename, seek_mode=seek_mode)
         self.backend = backend
         self.device = device
+        self.buffer_pixel_format = buffer_pixel_format
 
     @staticmethod
     def get_auto_hwaccel() -> Optional[HWAccel]:
@@ -194,9 +207,6 @@ class TorchCodecVideoReader:
             return 'beta'
         else:
             return None
-
-    def __len__(self):
-        return len(self.decoder)
     
     def __enter__(self):
         return self
@@ -204,7 +214,7 @@ class TorchCodecVideoReader:
     def __exit__(self, *args, **kwargs):
         pass
     
-    def __getitem__(self, index : Union[IndexableType, np.ndarray]) -> np.ndarray:
+    def read(self, index : Union[IndexableType, np.ndarray], total_length : int) -> np.ndarray:
         if isinstance(index, int):
             ret = self.decoder.get_frame_at(index).data.permute(1, 2, 0) # (C, H, W) -> (H, W, C)
         elif index is Ellipsis:
@@ -423,11 +433,12 @@ class VideoStorage(EpisodeStorageBase[
         with reader_cls(
             backend=self.backend,
             filename=filename,
+            buffer_pixel_format=self.buffer_pixel_format,
             hwaccel=self.hwaccel,
             seek_mode=self.seek_mode,
             device=self.device,
         ) as video_reader:
-            return video_reader[index]
+            return video_reader.read(index, total_length)
 
     # PyAV Implementation (Commented out due to bugs with hevc codec)
     def set_to_file(self, filename : str, value : BArrayType):
