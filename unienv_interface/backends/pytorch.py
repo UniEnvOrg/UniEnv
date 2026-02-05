@@ -1,7 +1,7 @@
 try:
-    from xbarray.backends.pytorch import PytorchComputeBackend as XBPytorchBackend
+    from xbarray.backends.pytorch import PyTorchComputeBackend as XBPytorchBackend
 except ImportError:
-    from xbarray.pytorch import PytorchComputeBackend as XBPytorchBackend
+    from xbarray.pytorch import PyTorchComputeBackend as XBPytorchBackend
 from xbarray import ComputeBackend
 
 from typing import Union
