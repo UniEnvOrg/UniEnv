@@ -86,10 +86,12 @@ class DictTransformation(DataTransformation):
     def __init__(
         self,
         mapping: Dict[str, DataTransformation],
-        ignore_missing_keys : bool = False
+        ignore_missing_keys : bool = False,
+        nested_separator : str = '/'
     ):
         self.mapping = mapping
         self.ignore_missing_keys = ignore_missing_keys
+        self.nested_separator = nested_separator
         self.has_inverse = all(
             transformation.has_inverse for transformation in mapping.values()
         )
@@ -104,7 +106,7 @@ class DictTransformation(DataTransformation):
         for key, transformation in self.mapping.items():
             new_space = call_function_on_chained_dict(
                 new_space,
-                key.split('.'),
+                key.split(self.nested_separator),
                 transformation.get_target_space_from_source,
                 ignore_missing_keys=self.ignore_missing_keys
             )
@@ -120,7 +122,7 @@ class DictTransformation(DataTransformation):
             new_data = call_conditioned_function_on_chained_dict(
                 source_space,
                 new_data,
-                key.split('.'),
+                key.split(self.nested_separator),
                 transformation.transform,
                 ignore_missing_keys=self.ignore_missing_keys
             )
@@ -138,7 +140,7 @@ class DictTransformation(DataTransformation):
             if source_space is not None:
                 current_source = get_chained_value(
                     source_space,
-                    key.split('.'),
+                    key.split(self.nested_separator),
                     ignore_missing_keys=self.ignore_missing_keys
                 )
                 if current_source is None:
@@ -151,7 +153,8 @@ class DictTransformation(DataTransformation):
         
         return DictTransformation(
             mapping=inverse_mapping,
-            ignore_missing_keys=self.ignore_missing_keys
+            ignore_missing_keys=self.ignore_missing_keys,
+            nested_separator=self.nested_separator
         )
 
     def close(self):

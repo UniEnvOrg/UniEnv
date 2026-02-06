@@ -75,7 +75,9 @@ class DictIncludeKeyTransformation(DataTransformation):
         enabled_keys : Iterable[str],
         *,
         ignore_missing_keys: bool = False,
+        nested_separator : str = '/'
     ):
+        self.nested_separator = nested_separator
         self.enabled_keys = enabled_keys
         self.ignore_missing_keys = ignore_missing_keys
 
@@ -90,7 +92,7 @@ class DictIncludeKeyTransformation(DataTransformation):
         # Compute the list of chained keys
         self._chained_keys : List[List[str]] = []
         for key in enabled_keys:
-            self._chained_keys.append(key.split('.'))
+            self._chained_keys.append(key.split(self.nested_separator))
 
     def get_target_space_from_source(self, source_space):
         new_space = None
@@ -127,7 +129,9 @@ class DictExcludeKeyTransformation(DataTransformation):
         excluded_keys : Iterable[str],
         *,
         ignore_missing_keys: bool = False,
+        nested_separator : str = '/'
     ):
+        self.nested_separator = nested_separator
         self.excluded_keys = excluded_keys
         self.ignore_missing_keys = ignore_missing_keys
     
@@ -142,7 +146,7 @@ class DictExcludeKeyTransformation(DataTransformation):
         # Compute the list of chained keys
         self._chained_keys : List[List[str]] = []
         for key in excluded_keys:
-            self._chained_keys.append(key.split('.'))
+            self._chained_keys.append(key.split(self.nested_separator))
         
     def get_target_space_from_source(self, source_space):
         new_space = source_space
@@ -164,7 +168,7 @@ class DictExcludeKeyTransformation(DataTransformation):
                 new_data = exclude_chained_key_in_dict(
                     new_data,
                     chained_key,
-                    ignore_missing_keys=self.ignore_missing_keys
+                    ignore_missing_keys=self.ignore_missing_keys,
                 )
             except KeyError as e:
                 raise ValueError(*e.args)

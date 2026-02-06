@@ -4,7 +4,8 @@ from unienv_interface.space import DictSpace
 __
 
 def flatten_keys_in_mapping(
-    d : Union[Mapping[str, Any], DictSpace]
+    d : Union[Mapping[str, Any], DictSpace],
+    nested_separator : str = '/'
 ) -> Union[Mapping[str, Any], DictSpace]:
     """
     Flattens the keys of a nested dictionary or DictSpace. For example, {'a': {'b': 1}} will be flattened to {'a.b': 1}.
@@ -16,8 +17,8 @@ def flatten_keys_in_mapping(
     result : Dict[str, Any] = {}
     for key, value in d.items():
         if isinstance(value, (DictSpace, Mapping)):
-            for sub_key, sub_value in flatten_keys_in_mapping(value).items():
-                result[f'{key}.{sub_key}'] = sub_value
+            for sub_key, sub_value in flatten_keys_in_mapping(value, nested_separator=nested_separator).items():
+                result[f'{key}{nested_separator}{sub_key}'] = sub_value
         else:
             result[key] = value
     if isinstance(d, DictSpace):
@@ -29,7 +30,8 @@ def flatten_keys_in_mapping(
     return result
 
 def unflatten_keys_in_mapping(
-    d : Union[Mapping[str, Any], DictSpace]
+    d : Union[Mapping[str, Any], DictSpace],
+    nested_separator : str = '/'
 ) -> Union[Mapping[str, Any], DictSpace]:
     """
     Unflattens the keys of a dictionary or DictSpace that were flattened using the flatten_keys function. For example, {'a.b': 1} will be unflattened to {'a': {'b': 1}}.
@@ -41,7 +43,7 @@ def unflatten_keys_in_mapping(
     result : Dict[str, Any] = {}
     all_firstlevel_keys = set()
     for key in d.keys():
-        firstlevel_key = key.split('.')[0]
+        firstlevel_key = key.split(nested_separator)[0]
         all_firstlevel_keys.add(firstlevel_key)
     for firstlevel_key in all_firstlevel_keys:
         sub_dict : Dict[str, Any] = {}
@@ -49,10 +51,10 @@ def unflatten_keys_in_mapping(
             result[firstlevel_key] = d[firstlevel_key]
         else:
             for key, value in d.items():
-                if key.startswith(f'{firstlevel_key}.'):
-                    sub_key = key[len(firstlevel_key) + 1:]
+                if key.startswith(f'{firstlevel_key}{nested_separator}'):
+                    sub_key = key[len(firstlevel_key) + len(nested_separator):]
                     sub_dict[sub_key] = value
-            result[firstlevel_key] = unflatten_keys_in_mapping(sub_dict)
+            result[firstlevel_key] = unflatten_keys_in_mapping(sub_dict, nested_separator=nested_separator)
     if isinstance(d, DictSpace):
         result = DictSpace(
             d.backend,

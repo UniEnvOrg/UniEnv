@@ -35,6 +35,7 @@ def map_transform(
     value_map : Dict[str, Any],
     fn : Callable[[str, Any, Any], Any], # (str, data, value_map) -> transformed data
     prefix : str = "",
+    nested_separator : str = '/',
 ) -> Tuple[
     Dict[str, Any], # Transformed data
     Dict[str, Any], # Residual data
@@ -50,7 +51,7 @@ def map_transform(
                 value,
                 value_map,
                 fn,
-                prefix=full_key + ".",
+                prefix=full_key + nested_separator,
             )
             if len(sub_transformed) > 0:
                 transformed_data[key] = sub_transformed
@@ -73,6 +74,7 @@ def get_chained_residual_space(
     space : DictSpace[BDeviceType, BDtypeType, BRNGType],
     all_keys : List[str],
     prefix : str = "",
+    nested_separator : str = '/',
 ) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
     residual_spaces = {}
 
@@ -91,7 +93,7 @@ def get_chained_residual_space(
             sub_residual = get_chained_residual_space(
                 subspace,
                 all_keys,
-                prefix=full_key + ".",
+                prefix=full_key + nested_separator,
             )
             if sub_residual is not None and len(sub_residual.spaces) > 0:
                 residual_spaces[key] = sub_residual
@@ -111,6 +113,7 @@ def get_chained_space(
     space : DictSpace[BDeviceType, BDtypeType, BRNGType],
     key_chain : str,
     all_keys : List[str],
+    nested_separator : str = '/',
 ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
     if key_chain.endswith("*"):
         prefix = key_chain[:-1]
@@ -124,7 +127,7 @@ def get_chained_space(
             prefix=prefix,
         )
         return subspace
-    key_chain = key_chain.split(".")
+    key_chain = key_chain.split(nested_separator)
     current_space : Space[Any, BDeviceType, BDtypeType, BRNGType]
     current_space = space
     for key in key_chain:
@@ -157,6 +160,7 @@ class DictStorage(SpaceStorage[
         multiprocessing : bool = False,
         key_kwargs : Dict[str, Any] = {},
         type_kwargs : Dict[Type[SpaceStorage[Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], Dict[str, Any]] = {},
+        nested_separator : str = '/',
         **kwargs
     ) -> "DictStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         if cache_path is not None:
@@ -165,8 +169,8 @@ class DictStorage(SpaceStorage[
         storage_map = {}
         all_keys = list(storage_cls_map.keys())
         for key, sub_storage_cls in storage_cls_map.items():
-            sub_storage_path = key.replace("*", "_default") + (sub_storage_cls.single_file_ext or "")
-            subspace = get_chained_space(single_instance_space, key, all_keys)
+            sub_storage_path = key.replace(nested_separator, ".").replace("*", "_default") + (sub_storage_cls.single_file_ext or "")
+            subspace = get_chained_space(single_instance_space, key, all_keys, nested_separator=nested_separator)
             if subspace is None:
                 continue
             sub_kwargs = kwargs.copy()
@@ -187,6 +191,7 @@ class DictStorage(SpaceStorage[
             single_instance_space,
             storage_map,
             cache_filename=cache_path,
+            nested_separator=nested_separator,
         )
 
     @classmethod
@@ -209,6 +214,7 @@ class DictStorage(SpaceStorage[
         assert metadata["storage_type"] == cls.__name__, \
             f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
         
+        nested_separator = metadata.get("nested_separator", '/')
         storage_map_metadata = metadata["storage_map"]
         storage_map = {}
 
@@ -217,7 +223,7 @@ class DictStorage(SpaceStorage[
             storage_cls : Type[SpaceStorage] = get_class_from_full_name(storage_meta["type"])
             storage_path = storage_meta["path"]
             
-            subspace = get_chained_space(single_instance_space, key, all_keys)
+            subspace = get_chained_space(single_instance_space, key, all_keys, nested_separator=nested_separator)
             if subspace is None:
                 continue
 
@@ -258,6 +264,7 @@ class DictStorage(SpaceStorage[
             ],
         ],
         cache_filename: Optional[Union[str, os.PathLike]] = None,
+        nested_separator : str = '/',
     ):
         assert len(storage_map) > 0, "Storage map cannot be empty"
         first_storage = next(iter(storage_map.values()))
@@ -272,6 +279,7 @@ class DictStorage(SpaceStorage[
         super().__init__(single_instance_space)
         self._batched_instance_space = sbu.batch_space(single_instance_space, 1)
         self.storage_map = storage_map
+        self.nested_separator = nested_separator
         self._cache_filename = cache_filename if all(
             storage.cache_filename is not None for storage in storage_map.values()
         ) else None
@@ -331,7 +339,8 @@ class DictStorage(SpaceStorage[
         _, residual = map_transform(
             value,
             self.storage_map,
-            lambda key, data, storage: storage.set(index, data)
+            lambda key, data, storage: storage.set(index, data),
+            nested_separator=self.nested_separator,
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
 
@@ -343,6 +352,7 @@ class DictStorage(SpaceStorage[
             self.single_instance_space,
             key,
             list(self.storage_map.keys()),
+            nested_separator=self.nested_separator,
         )
 
     def clear(self):
@@ -354,7 +364,7 @@ class DictStorage(SpaceStorage[
 
         storage_map_metadata = {}
         for key, storage in self.storage_map.items():
-            sub_storage_path = key.replace("*", "_default") + (storage.single_file_ext or "")
+            sub_storage_path = key.replace(self.nested_separator, ".").replace("*", "_default") + (storage.single_file_ext or "")
             storage_map_metadata[key] = {
                 "type": get_full_class_name(type(storage)),
                 "path": sub_storage_path,
@@ -364,6 +374,7 @@ class DictStorage(SpaceStorage[
         metadata = {
             "storage_type": __class__.__name__,
             "storage_map": storage_map_metadata,
+            "nested_separator": self.nested_separator,
         }
         with open(os.path.join(path, "dict_storage_metadata.json"), "w") as f:
             json.dump(metadata, f)
