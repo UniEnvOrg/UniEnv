@@ -104,7 +104,7 @@ class DictTransformation(DataTransformation):
         for key, transformation in self.mapping.items():
             new_space = call_function_on_chained_dict(
                 new_space,
-                key.split('/'),
+                key.split('.'),
                 transformation.get_target_space_from_source,
                 ignore_missing_keys=self.ignore_missing_keys
             )
@@ -120,7 +120,7 @@ class DictTransformation(DataTransformation):
             new_data = call_conditioned_function_on_chained_dict(
                 source_space,
                 new_data,
-                key.split('/'),
+                key.split('.'),
                 transformation.transform,
                 ignore_missing_keys=self.ignore_missing_keys
             )
@@ -138,7 +138,7 @@ class DictTransformation(DataTransformation):
             if source_space is not None:
                 current_source = get_chained_value(
                     source_space,
-                    key.split('/'),
+                    key.split('.'),
                     ignore_missing_keys=self.ignore_missing_keys
                 )
                 if current_source is None:

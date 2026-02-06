@@ -50,7 +50,7 @@ def map_transform(
                 value,
                 value_map,
                 fn,
-                prefix=full_key + "/",
+                prefix=full_key + ".",
             )
             if len(sub_transformed) > 0:
                 transformed_data[key] = sub_transformed
@@ -91,7 +91,7 @@ def get_chained_residual_space(
             sub_residual = get_chained_residual_space(
                 subspace,
                 all_keys,
-                prefix=full_key + "/",
+                prefix=full_key + ".",
             )
             if sub_residual is not None and len(sub_residual.spaces) > 0:
                 residual_spaces[key] = sub_residual
@@ -124,7 +124,7 @@ def get_chained_space(
             prefix=prefix,
         )
         return subspace
-    key_chain = key_chain.split("/")
+    key_chain = key_chain.split(".")
     current_space : Space[Any, BDeviceType, BDtypeType, BRNGType]
     current_space = space
     for key in key_chain:
@@ -165,7 +165,7 @@ class DictStorage(SpaceStorage[
         storage_map = {}
         all_keys = list(storage_cls_map.keys())
         for key, sub_storage_cls in storage_cls_map.items():
-            sub_storage_path = key.replace("/", ".").replace("*", "_default") + (sub_storage_cls.single_file_ext or "")
+            sub_storage_path = key.replace("*", "_default") + (sub_storage_cls.single_file_ext or "")
             subspace = get_chained_space(single_instance_space, key, all_keys)
             if subspace is None:
                 continue
@@ -354,7 +354,7 @@ class DictStorage(SpaceStorage[
 
         storage_map_metadata = {}
         for key, storage in self.storage_map.items():
-            sub_storage_path = key.replace("/", ".").replace("*", "_default") + (storage.single_file_ext or "")
+            sub_storage_path = key.replace("*", "_default") + (storage.single_file_ext or "")
             storage_map_metadata[key] = {
                 "type": get_full_class_name(type(storage)),
                 "path": sub_storage_path,

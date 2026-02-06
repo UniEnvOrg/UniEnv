@@ -90,7 +90,7 @@ class DictIncludeKeyTransformation(DataTransformation):
         # Compute the list of chained keys
         self._chained_keys : List[List[str]] = []
         for key in enabled_keys:
-            self._chained_keys.append(key.split('/'))
+            self._chained_keys.append(key.split('.'))
 
     def get_target_space_from_source(self, source_space):
         new_space = None
@@ -142,7 +142,7 @@ class DictExcludeKeyTransformation(DataTransformation):
         # Compute the list of chained keys
         self._chained_keys : List[List[str]] = []
         for key in excluded_keys:
-            self._chained_keys.append(key.split('/'))
+            self._chained_keys.append(key.split('.'))
         
     def get_target_space_from_source(self, source_space):
         new_space = source_space
