@@ -1,7 +1,11 @@
-from typing import Any, Mapping, List, Union, Dict
+from typing import Any, Mapping, List, Sequence, Union, Dict
 from unienv_interface.space import DictSpace
 
-__
+__all__ = [
+    "flatten_keys_in_mapping",
+    "unflatten_keys_in_mapping",
+    "nested_get",
+]
 
 def flatten_keys_in_mapping(
     d : Union[Mapping[str, Any], DictSpace],
@@ -62,3 +66,12 @@ def unflatten_keys_in_mapping(
             d.device
         )
     return result
+
+def nested_get(
+    d : Union[Mapping[str, Any], DictSpace],
+    chained_key : Sequence[str]
+) -> Any:
+    if len(chained_key) == 0:
+        return d
+    else:
+        return nested_get(d[chained_key[0]], chained_key[1:])

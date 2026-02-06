@@ -123,6 +123,11 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     def set(self, index : Union[IndexableType, BArrayType], value : BatchT) -> None:
         raise NotImplementedError
     
+    # We don't define them here, since they are optional and the `ReplayBuffer` checks if they are implemented
+    # by using hasattr(self, "get_column")
+    # def get_column(self, nested_keys : Sequence[str]) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+    #     raise NotImplementedError
+
     def clear(self) -> None:
         """
         Clear all data inside the storage and set the length to 0 if the storage has unlimited capacity.
@@ -141,3 +146,6 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
 
     def close(self) -> None:
         pass
+    
+    def __del__(self):
+        self.close()

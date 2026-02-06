@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar, Iterable, Iterator
+from typing import List, Sequence, Tuple, Union, Dict, Any, Optional, Generic, TypeVar, Iterable, Iterator, Any
 from types import EllipsisType
 import os
 import abc
@@ -156,9 +156,20 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
             end_idx = min(start_idx + chunk_size, n_total)
             data_chunk = other.get_at(slice(start_idx, end_idx))
             self.extend(data_chunk)
+    
+    def get_slice(self, idx : Union[IndexableType, BArrayType]) -> 'BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]':
+        from unienv_data.batches.subindex_batch import SubIndexedBatch
+        return SubIndexedBatch(self, idx)
+
+    def get_column(self, nested_keys : Sequence[str]) -> 'BatchBase[Any, BArrayType, BDeviceType, BDtypeType, BRNGType]':
+        from unienv_data.batches.subitem_batch import SubItemBatch
+        return SubItemBatch(self, nested_keys)
 
     def close(self) -> None:
         pass
+
+    def __del__(self):
+        self.close()
 
 SamplerBatchT = TypeVar('SamplerBatchT')
 SamplerArrayType = TypeVar('SamplerArrayType')

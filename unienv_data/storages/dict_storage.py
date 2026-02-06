@@ -355,6 +355,13 @@ class DictStorage(SpaceStorage[
             nested_separator=self.nested_separator,
         )
 
+    def get_column(self, nested_keys : Sequence[str]) -> "SpaceStorage[Any, BDeviceType, BDtypeType, BRNGType]":
+        direct_key = self.nested_separator.join(nested_keys)
+        if direct_key in self.storage_map:
+            return self.storage_map[direct_key]
+        else:
+            raise KeyError(f"Sub-storage with key '{direct_key}' not found in DictStorage, and nested access is not supported yet for get_column in DictStorage")
+
     def clear(self):
         for storage in self.storage_map.values():
             storage.clear()

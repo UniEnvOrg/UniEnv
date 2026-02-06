@@ -371,6 +371,20 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self.offset = (self.offset + outflow) % self.capacity
             self.count = min(self.count + B, self.capacity)
 
+    def get_column(self, nested_keys):
+        if hasattr(self.storage, "get_column"):
+            column_storage = self.storage.get_column(nested_keys)
+            return ReplayBuffer(
+                column_storage,
+                self.storage_path_relative + "_column_" + ".".join(nested_keys),
+                self.count,
+                self.offset,
+                cache_path=self.cache_path,
+                multiprocessing=self._multiprocessing
+            )
+        else:
+            return super().get_column(nested_keys)
+
     def clear(self):
         with self._lock_scope():
             self.count = 0
@@ -378,4 +392,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self.storage.clear()
 
     def close(self) -> None:
-        self.storage.close()
+        # Only dereference the storage
+        # the actual cleanup logic should be implemented in the storage's close method if necessary
+        # We do this to avoid issues when we create multiple ReplayBuffer instances that reference the same underlying storage (e.g. when using different RBs for different columns)
+        self.storage = None

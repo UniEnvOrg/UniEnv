@@ -5,6 +5,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.backends.numpy import NumpyComputeBackend, NumpyArrayType, NumpyDeviceType, NumpyDtypeType, NumpyRNGType
 from unienv_interface.utils.symbol_util import *
+from unienv_interface.utils.dict_util import nested_get
 
 from unienv_data.base import SpaceStorage, BatchT
 from unienv_data.replay_buffer import ReplayBuffer
@@ -549,12 +550,14 @@ class HDF5Storage(SpaceStorage[
         root : h5py.Group,
         capacity : Optional[int] = None,
         reduce_io : bool = True,
+        check_file : bool = True,
     ):
-        __class__._check_hdf5_file(
-            root,
-            single_instance_space,
-            capacity
-        )
+        if check_file:
+            __class__._check_hdf5_file(
+                root,
+                single_instance_space,
+                capacity
+            )
         super().__init__(
             single_instance_space
         )
@@ -652,6 +655,17 @@ class HDF5Storage(SpaceStorage[
                     unique_idx
                 )
             )
+
+    def get_column(self, nested_keys : Sequence[str]) -> "HDF5Storage":
+        sub_root = nested_get(self.root, nested_keys)
+        sub_space = nested_get(self.single_instance_space, nested_keys)
+        return __class__(
+            sub_space,
+            sub_root,
+            capacity=self.capacity,
+            reduce_io=self.reduce_io,
+            check_file=False,
+        )
 
     def dumps(self, path):
         if isinstance(self.root, h5py.File) and os.path.samefile(self.root.filename, path):
