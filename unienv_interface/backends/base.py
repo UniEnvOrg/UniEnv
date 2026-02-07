@@ -1,1 +1,1 @@
-from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray, ArrayAPIGetIndex, ArrayAPISetIndex
+from xbarray import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, ArrayAPIArray, ArrayAPIGetIndex, ArrayAPISetIndex, get_backend_from_tensor
