@@ -6,7 +6,7 @@ from unienv_interface.backends.jax import JaxComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.space import BoxSpace
 from unienv_interface.transformations import ImageResizeTransformation
-from .test_utils import verify_transformation_serialization
+from test_utils import verify_transformation_serialization
 
 
 ALL_BACKENDS = [NumpyComputeBackend, JaxComputeBackend, PyTorchComputeBackend]

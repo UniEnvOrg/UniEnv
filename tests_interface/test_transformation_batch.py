@@ -6,7 +6,7 @@ from unienv_interface.backends.jax import JaxComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.transformations import BatchifyTransformation, UnBatchifyTransformation
 from unienv_interface.space.space_utils import batch_utils as sbu
-from .test_utils import make_random_box_space, verify_transformation_serialization
+from test_utils import make_random_box_space, verify_transformation_serialization
 
 
 ALL_BACKENDS = [NumpyComputeBackend, JaxComputeBackend, PyTorchComputeBackend]

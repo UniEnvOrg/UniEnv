@@ -5,7 +5,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.backends.jax import JaxComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.transformations import RescaleTransformation
-from .test_utils import make_random_box_space, verify_transformation_serialization
+from test_utils import make_random_box_space, verify_transformation_serialization
 
 
 ALL_BACKENDS = [NumpyComputeBackend, JaxComputeBackend, PyTorchComputeBackend]

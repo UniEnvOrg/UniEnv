@@ -11,7 +11,7 @@ from unienv_interface.transformations import (
     RescaleTransformation
 )
 from unienv_interface.space import DictSpace
-from .test_utils import make_random_box_space, make_random_dict_space, verify_transformation_serialization
+from test_utils import make_random_box_space, make_random_dict_space, verify_transformation_serialization
 
 
 ALL_BACKENDS = [NumpyComputeBackend, JaxComputeBackend, PyTorchComputeBackend]
