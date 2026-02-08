@@ -67,16 +67,30 @@ class ImageResizeTransformation(DataTransformation):
             )
         elif backend.simplified_name == "pytorch":
             import torch.nn.functional as F
-            # PyTorch expects (B, C, H, W)
+            # PyTorch expects (B, C, H, W) but we have (..., H, W, C)
+            # First permute to (..., C, H, W)
             data_permuted = backend.permute_dims(data, (*range(len(data.shape[:-3])), -1, -3, -2))
-            resized_data_permuted = F.interpolate(
-                data_permuted,
-                size=(self.new_height, self.new_width),
-                mode='bilinear',
-                align_corners=False,
-                antialias=True
-            )
-            # Permute back to original shape
+            # Add batch dimension if needed - F.interpolate expects at least 4D (B, C, H, W)
+            if data_permuted.ndim == 3:
+                data_permuted = data_permuted.unsqueeze(0)
+                resized_data_permuted = F.interpolate(
+                    data_permuted,
+                    size=(self.new_height, self.new_width),
+                    mode='bilinear',
+                    align_corners=False,
+                    antialias=True
+                )
+                # Remove the batch dimension we added
+                resized_data_permuted = resized_data_permuted.squeeze(0)
+            else:
+                resized_data_permuted = F.interpolate(
+                    data_permuted,
+                    size=(self.new_height, self.new_width),
+                    mode='bilinear',
+                    align_corners=False,
+                    antialias=True
+                )
+            # Permute back to original shape (..., H, W, C)
             resized_data = backend.permute_dims(resized_data_permuted, (*range(len(resized_data_permuted.shape[:-3])), -2, -1, -3))
         elif backend.simplified_name == "numpy":
             import cv2

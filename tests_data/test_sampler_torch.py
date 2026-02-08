@@ -48,7 +48,8 @@ def test_step_sampler(
     rb = construct_torch_rb(space, capacity, False, seed)
     rb = check_fixed_capacity_replay_buffer(
         rb,
-        seed=seed
+        seed=seed,
+        load_kwargs={"is_memmap": False}
     )
     sampler = StepSampler(
         rb,

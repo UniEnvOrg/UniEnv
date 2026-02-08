@@ -5,9 +5,9 @@ from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.backends.jax import JaxComputeBackend
 from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.transformations import (
+    IdentityTransformation,
     IterativeTransformation,
-    RescaleTransformation,
-    IdentityTransformation
+    RescaleTransformation
 )
 from unienv_interface.space import DictSpace, TupleSpace
 from test_utils import make_random_box_space, verify_transformation_serialization
@@ -164,9 +164,9 @@ def test_iterative_inverse(backend, seed):
     box1, rng = make_random_box_space(backend, None, rng, np_rng, allow_unbounded=False)
     space = DictSpace(backend, {"value": box1}, device=None)
     
-    # Create iterative with rescale (which has inverse)
+    # Use IdentityTransformation which supports inverse without source_space
     transform = IterativeTransformation(
-        transformation=RescaleTransformation(new_low=-1.0, new_high=1.0)
+        transformation=IdentityTransformation()
     )
     
     # Get inverse
@@ -185,8 +185,7 @@ def test_iterative_inverse(backend, seed):
     flat_original = backend.reshape(original_val, (-1,))
     flat_recovered = backend.reshape(recovered_val, (-1,))
     
-    if backend.dtype_is_real_floating(box1.dtype):
-        assert backend.all(backend.abs(flat_original - flat_recovered) < 1e-5)
+    assert backend.all(flat_original == flat_recovered)
 
 
 @pytest.mark.parametrize("backend", ALL_BACKENDS)

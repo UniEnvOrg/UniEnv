@@ -2,11 +2,16 @@
 import typing
 import numpy as np
 from unienv_interface.backends import ComputeBackend
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.jax import JaxComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.space import Space, BoxSpace, DictSpace
 from unienv_interface.transformations.transformation import DataTransformation
+from unienv_interface.space.space_utils import flatten_data
+
 
 def make_random_box_space(
-    backend: ComputeBackend,
+    backend_class,
     device: typing.Optional[typing.Any],
     rng: typing.Any,
     np_rng: np.random.Generator,
@@ -17,7 +22,7 @@ def make_random_box_space(
     """Create a random BoxSpace for testing.
     
     Args:
-        backend: The compute backend to use
+        backend_class: The backend class to use (not an instance)
         device: The device to use
         rng: The backend random number generator
         np_rng: NumPy random generator for shape/parameters
@@ -30,41 +35,41 @@ def make_random_box_space(
     """
     shape_ndims = int(np_rng.integers(ndims_range[0], ndims_range[1] + 1))
     shape = tuple([int(np_rng.integers(shape_range[0], shape_range[1] + 1)) for _ in range(shape_ndims)])
-    dtype = np_rng.choice([backend.default_floating_dtype, backend.default_integer_dtype])
+    dtype = np_rng.choice([backend_class.default_floating_dtype, backend_class.default_integer_dtype])
     
     # Generate random bounds
-    rng, values_1 = backend.random.random_exponential(
+    rng, values_1 = backend_class.random.random_exponential(
         shape, lambd=0.5, rng=rng, dtype=dtype, device=device
-    ) if backend.dtype_is_real_floating(dtype) else backend.random.random_discrete_uniform(
+    ) if backend_class.dtype_is_real_floating(dtype) else backend_class.random.random_discrete_uniform(
         shape, 0, 127, rng=rng, dtype=dtype, device=device
     )
-    rng, values_2 = backend.random.random_exponential(
+    rng, values_2 = backend_class.random.random_exponential(
         shape, lambd=0.5, rng=rng, dtype=dtype, device=device
-    ) if backend.dtype_is_real_floating(dtype) else backend.random.random_discrete_uniform(
+    ) if backend_class.dtype_is_real_floating(dtype) else backend_class.random.random_discrete_uniform(
         shape, 0, 127, rng=rng, dtype=dtype, device=device
     )
-    
-    min_values = backend.minimum(values_1, values_2)
-    max_values = backend.maximum(values_1, values_2)
+
+    min_values = backend_class.minimum(values_1, values_2)
+    max_values = backend_class.maximum(values_1, values_2)
     
     # Make some dimensions unbounded if allowed
-    if allow_unbounded and backend.dtype_is_real_floating(dtype):
-        rng, idx_min_unbound = backend.random.random_uniform(shape, rng=rng, low=0.0, high=1.0, device=device)
-        rng, idx_max_unbound = backend.random.random_uniform(shape, rng=rng, low=0.0, high=1.0, device=device)
+    if allow_unbounded and backend_class.dtype_is_real_floating(dtype):
+        rng, idx_min_unbound = backend_class.random.random_uniform(shape, rng=rng, low=0.0, high=1.0, device=device)
+        rng, idx_max_unbound = backend_class.random.random_uniform(shape, rng=rng, low=0.0, high=1.0, device=device)
         idx_min_unbound = idx_min_unbound <= 0.2
         idx_max_unbound = idx_max_unbound <= 0.2
-        min_values = backend.at(min_values)[idx_min_unbound].set(-backend.inf)
-        max_values = backend.at(max_values)[idx_max_unbound].set(backend.inf)
+        min_values = backend_class.at(min_values)[idx_min_unbound].set(-backend_class.inf)
+        max_values = backend_class.at(max_values)[idx_max_unbound].set(backend_class.inf)
     
-    if backend.dtype_is_real_integer(dtype):
-        min_values = backend.round(min_values)
-        max_values = backend.round(max_values)
+    if backend_class.dtype_is_real_integer(dtype):
+        min_values = backend_class.round(min_values)
+        max_values = backend_class.round(max_values)
     
-    return BoxSpace(backend, min_values, max_values, dtype=dtype, device=device), rng
+    return BoxSpace(backend_class, min_values, max_values, dtype=dtype, device=device), rng
 
 
 def make_random_dict_space(
-    backend: ComputeBackend,
+    backend_class,
     device: typing.Optional[typing.Any],
     rng: typing.Any,
     np_rng: np.random.Generator,
@@ -74,7 +79,7 @@ def make_random_dict_space(
     """Create a random DictSpace for testing.
     
     Args:
-        backend: The compute backend to use
+        backend_class: The backend class to use (not an instance)
         device: The device to use
         rng: The backend random number generator
         np_rng: NumPy random generator
@@ -92,17 +97,17 @@ def make_random_dict_space(
         if nested and np_rng.random() < 0.3 and i > 0:
             # Create a nested dict
             nested_space, rng = make_random_dict_space(
-                backend, device, rng, np_rng, 
+                backend_class, device, rng, np_rng, 
                 num_keys_range=(1, 3), 
                 nested=False
             )
             spaces[key] = nested_space
         else:
             # Create a box space
-            box_space, rng = make_random_box_space(backend, device, rng, np_rng)
+            box_space, rng = make_random_box_space(backend_class, device, rng, np_rng)
             spaces[key] = box_space
     
-    return DictSpace(backend, spaces, device=device), rng
+    return DictSpace(backend_class, spaces, device=device), rng
 
 
 def sample_and_verify_transformation(
@@ -183,10 +188,17 @@ def verify_transformation_serialization(
         original_transformed = transformation.transform(source_space, data)
         restored_transformed = restored.transform(source_space, data)
         
-        flat_original = source_space.backend.reshape(original_transformed, (-1,))
-        flat_restored = source_space.backend.reshape(restored_transformed, (-1,))
+        # Use flatten_data to handle both array and dict/tuple data
+        target_space_original = transformation.get_target_space_from_source(source_space)
+        target_space_restored = restored.get_target_space_from_source(source_space)
         
-        if source_space.backend.dtype_is_real_floating(source_space.dtype):
+        flat_original = flatten_data(target_space_original, original_transformed, start_dim=0)
+        flat_restored = flatten_data(target_space_restored, restored_transformed, start_dim=0)
+        
+        # Determine dtype for comparison - use source space's dtype
+        compare_dtype = source_space.dtype
+        
+        if source_space.backend.dtype_is_real_floating(compare_dtype):
             assert source_space.backend.all(
                 source_space.backend.abs(flat_original - flat_restored) < 1e-5
             ), "Restored transformation should produce same results"

@@ -1,6 +1,6 @@
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import DictSpace
-from typing import Union, Any, Optional, Dict, Set, Iterable, List
+from typing import Union, Any, Optional, Dict, Set, Iterable, List, Mapping
 from unienv_interface.space import DictSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
@@ -40,32 +40,29 @@ def exclude_chained_key_in_dict(
 def include_chained_key_in_dict(
     d : Union[Dict[str, Any], DictSpace[BDeviceType, BDtypeType, BRNGType]],
     chained_key : List[str],
-    /,
     *,
     target_d : Optional[Union[Dict[str, Any], DictSpace[BDeviceType, BDtypeType, BRNGType]]] = None,
     ignore_missing_keys : bool = False,
-) -> Union[Dict[str, Any], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
+    ) -> Union[Dict[str, Any], DictSpace[BDeviceType, BDtypeType, BRNGType]]:
     if len(chained_key) == 0:
         return d
 
     if target_d is None:
-        target_d = dict() if isinstance(d, dict) else DictSpace(d.backend, {}, device=d.device)
+        target_d = DictSpace(d.backend, {}, device=d.device) if isinstance(d, DictSpace) else dict()
 
     first_key = chained_key[0]
-    first_value = d.get(first_key, None)
 
-    if first_value is None:
+    if first_key not in d.keys():
         if ignore_missing_keys:
             return target_d
         else:
             raise KeyError(f"Key '{first_key}' not found in the source dictionary.")
-
-    target_d[first_key] = dict() if isinstance(first_value, dict) else DictSpace(first_value.backend, {}, device=first_value.device)
     
-    include_chained_key_in_dict(
+    first_value = d[first_key]
+    target_d[first_key] = include_chained_key_in_dict(
         first_value,
         chained_key[1:],
-        target_d=target_d[first_key],
+        target_d=None,
         ignore_missing_keys=ignore_missing_keys
     )
     
@@ -101,7 +98,7 @@ class DictIncludeKeyTransformation(DataTransformation):
         new_space = None
         for chained_key in self._chained_keys:
             try:
-                include_chained_key_in_dict(
+                new_space = include_chained_key_in_dict(
                     source_space,
                     chained_key,
                     target_d=new_space,
@@ -116,7 +113,7 @@ class DictIncludeKeyTransformation(DataTransformation):
         for chained_key in self._chained_keys:
             try:
                 new_data = include_chained_key_in_dict(
-                    source_space,
+                    data,
                     chained_key,
                     target_d=new_data,
                     ignore_missing_keys=self.ignore_missing_keys

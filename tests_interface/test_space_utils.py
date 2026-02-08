@@ -81,8 +81,8 @@ def test_batch_data(backend, seed):
         rng, data = space.sample(rng)
         samples.append(data)
     
-    # Batch the data
-    batched = sbu.stack(backend, samples)
+    # Batch the data using backend.stack()
+    batched = backend.stack(samples, axis=0)
     assert batched.shape == (num_samples, 3, 4)
 
 
@@ -106,13 +106,17 @@ def test_flatten_unflatten_roundtrip(backend, seed, batch_size):
         space = batched_space
     
     # Flatten
-    flat = sfu.flatten_data(space, data)
+    if batch_size == 1:
+        flat = sfu.flatten_data(space, data)
+    else:
+        flat = sfu.flatten_data(space, data, start_dim=1)
     
     # Check flattened shape
     expected_flat_dim = 3 * 4 * 5
-    if batch_size > 1:
-        expected_flat_dim *= batch_size
-    assert flat.shape[-1] == expected_flat_dim
+    if batch_size == 1:
+        assert flat.shape[-1] == expected_flat_dim
+    else:
+        assert flat.shape == (batch_size, expected_flat_dim)
     
     # Unflatten
     if batch_size == 1:

@@ -101,7 +101,7 @@ def test_rescale_inverse(backend, seed):
 def test_rescale_with_array_bounds(backend, seed):
     """Test rescaling with per-element bounds."""
     np_rng = np.random.default_rng(seed)
-    rng = backend.random.number_generator(seed)
+    rng = backend.random.random_number_generator(seed)
     
     # Create a bounded box space
     space, rng = make_random_box_space(backend, None, rng, np_rng, allow_unbounded=False)

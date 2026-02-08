@@ -35,9 +35,8 @@ def test_batchify_transformation(backend, seed, axis):
     target_space = transform.get_target_space_from_source(space)
     assert target_space is not None
     
-    # Target space should have batch dimension
-    expected_batch_size = sbu.batch_size(target_space)
-    assert expected_batch_size == 1, f"Batchified space should have batch_size=1, got {expected_batch_size}"
+    # Target space should have batch dimension at the specified axis
+    assert target_space.shape[axis] == 1, f"Batchified space should have shape[axis]={axis}] == 1, got {target_space.shape[axis]}"
     
     # Sample and transform
     rng, data = space.sample(rng)
@@ -134,7 +133,13 @@ def test_unbatchify_serialization(backend, seed):
     np_rng = np.random.default_rng(seed)
     rng = backend.random.random_number_generator(seed)
     
+    # First create a regular space
     space, rng = make_random_box_space(backend, None, rng, np_rng, allow_unbounded=False)
+    
+    # Then batchify it - UnBatchifyTransformation needs a batched space
+    batchify = BatchifyTransformation(axis=0)
+    batched_space = batchify.get_target_space_from_source(space)
+    
     transform = UnBatchifyTransformation(axis=0)
     
-    verify_transformation_serialization(transform, space, rng, num_samples=5)
+    verify_transformation_serialization(transform, batched_space, rng, num_samples=5)

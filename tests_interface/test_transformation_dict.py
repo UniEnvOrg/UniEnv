@@ -85,7 +85,7 @@ def test_dict_exclude_keys(backend, seed):
 def test_dict_transformation(backend, seed):
     """Test applying transformations to dict values."""
     np_rng = np.random.default_rng(seed)
-    rng = backend.random.number_generator(seed)
+    rng = backend.random.random_number_generator(seed)
     
     # Create a dict space with box values
     num_boxes = 3

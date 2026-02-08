@@ -80,8 +80,12 @@ class RescaleTransformation(DataTransformation):
             self.new_high,
             target_ndim
         ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_high) else self.new_high
-        scaling_factor = (target_high - target_low) / (source_space._high - source_space._low)
+        
+        source_span = source_space._high - source_space._low
+        source_span_zero_mask = source_span == 0
+        scaling_factor = (target_high - target_low) / source_space.backend.where(source_span_zero_mask, 1, source_span)
         target_data = (data - source_space._low) * scaling_factor + target_low
+        target_data = source_space.backend.where(source_span_zero_mask, target_low, target_data)
         
         if self.nan_to is not None:
             target_data = source_space.backend.where(
@@ -135,10 +139,14 @@ class RescaleTransformation(DataTransformation):
 
         new_low_backend, new_low_data = serialize_value(self.new_low)
         new_high_backend, new_high_data = serialize_value(self.new_high)
-        nan_to_backend, nan_to_data = serialize_value(self.nan_to)
+        nan_to_result = serialize_value(self.nan_to)
+        if nan_to_result is None:
+            nan_to_backend, nan_to_data = None, None
+        else:
+            nan_to_backend, nan_to_data = nan_to_result
         backend = new_low_backend or new_high_backend or nan_to_backend
         result = {
-            "type": serialize_dtype(backend, self.new_dtype) if self.new_dtype is not None and backend is not None else None,
+            "type": get_full_class_name(type(self)),
             "new_low": new_low_data,
             "new_high": new_high_data,
             "nan_to": nan_to_data,
