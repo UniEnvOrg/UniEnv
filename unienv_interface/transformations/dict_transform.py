@@ -3,6 +3,8 @@ from typing import Union, Any, Optional, Mapping, List, Callable, Dict
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.transformations import serialization_utils as tsu
+from unienv_interface.utils.symbol_util import get_full_class_name
 
 import copy
 from .transformation import DataTransformation, TargetDataT
@@ -160,3 +162,25 @@ class DictTransformation(DataTransformation):
     def close(self):
         for transformation in self.mapping.values():
             transformation.close()
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "mapping": {
+                key: tsu.transformation_to_json(transformation)
+                for key, transformation in self.mapping.items()
+            },
+            "ignore_missing_keys": self.ignore_missing_keys,
+            "nested_separator": self.nested_separator,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictTransformation":
+        return cls(
+            mapping={
+                key: tsu.json_to_transformation(transformation_data)
+                for key, transformation_data in json_data["mapping"].items()
+            },
+            ignore_missing_keys=json_data.get("ignore_missing_keys", False),
+            nested_separator=json_data.get("nested_separator", "/"),
+        )

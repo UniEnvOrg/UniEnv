@@ -5,7 +5,7 @@ from unienv_interface.space import Space, BoxSpace
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils.symbol_util import *
-from unienv_interface.transformations import DataTransformation
+from unienv_interface.transformations import DataTransformation, transformation_to_json, json_to_transformation
 
 from unienv_data.base import SpaceStorage, BatchT
 
@@ -77,9 +77,17 @@ class TransformedStorage(SpaceStorage[
         assert metadata["storage_type"] == cls.__name__, \
             f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
         
-        data_transform_path = os.path.join(path, "data_transformation.pkl")
-        with open(data_transform_path, "rb") as f:
-            data_transform = pickle.load(f)
+        # Try to load transformation from JSON (new format), fall back to pickle (legacy format)
+        if "data_transformation" in metadata:
+            # New JSON-based serialization
+            data_transform = json_to_transformation(metadata["data_transformation"])
+        else:
+            # Legacy pickle-based format for backward compatibility
+            data_transform_path = os.path.join(path, "data_transformation.pkl")
+            assert os.path.exists(data_transform_path), \
+                f"Transformation file not found: neither JSON in metadata nor pickle at {data_transform_path}"
+            with open(data_transform_path, "rb") as f:
+                data_transform = pickle.load(f)
         
         assert isinstance(data_transform, DataTransformation)
         transformed_space = data_transform.get_target_space_from_source(single_instance_space)
@@ -192,13 +200,11 @@ class TransformedStorage(SpaceStorage[
             "storage_type": __class__.__name__,
             "inner_storage_type": get_full_class_name(type(self.inner_storage)),
             "inner_storage_path": self.inner_storage_path,
-            "transformation": get_full_class_name(type(self.data_transformation))
+            "data_transformation": transformation_to_json(self.data_transformation)
         }
         self.inner_storage.dumps(os.path.join(path, self.inner_storage_path))
         with open(os.path.join(path, "transformed_metadata.json"), "w") as f:
             json.dump(metadata, f)
-        with open(os.path.join(path, "data_transformation.pkl"), "wb") as f:
-            pickle.dump(self.data_transformation, f)
 
     def close(self):
         self.inner_storage.close()

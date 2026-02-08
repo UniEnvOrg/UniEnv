@@ -3,7 +3,10 @@ from unienv_interface.space import DictSpace
 from typing import Union, Any, Optional, Dict, Set, Iterable, List
 from unienv_interface.space import DictSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.transformations import serialization_utils as tsu
+from unienv_interface.utils.symbol_util import get_full_class_name
 import copy
+
 
 def exclude_chained_key_in_dict(
     d : Union[Dict[str, Any], DictSpace[BDeviceType, BDtypeType, BRNGType]],
@@ -122,6 +125,23 @@ class DictIncludeKeyTransformation(DataTransformation):
                 raise ValueError(*e.args)
         return new_data
 
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "enabled_keys": list(self._enabled_keys),
+            "nested_separator": self.nested_separator,
+            "ignore_missing_keys": self.ignore_missing_keys,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictIncludeKeyTransformation":
+        return cls(
+            enabled_keys=json_data["enabled_keys"],
+            nested_separator=json_data.get("nested_separator", "/"),
+            ignore_missing_keys=json_data.get("ignore_missing_keys", False),
+        )
+
+
 class DictExcludeKeyTransformation(DataTransformation):
     has_inverse = False
     def __init__(
@@ -173,3 +193,19 @@ class DictExcludeKeyTransformation(DataTransformation):
             except KeyError as e:
                 raise ValueError(*e.args)
         return new_data
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "excluded_keys": list(self._excluded_keys),
+            "nested_separator": self.nested_separator,
+            "ignore_missing_keys": self.ignore_missing_keys,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictExcludeKeyTransformation":
+        return cls(
+            excluded_keys=json_data["excluded_keys"],
+            nested_separator=json_data.get("nested_separator", "/"),
+            ignore_missing_keys=json_data.get("ignore_missing_keys", False),
+        )

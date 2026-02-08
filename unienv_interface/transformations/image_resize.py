@@ -1,12 +1,14 @@
 from unienv_interface.space.space_utils import batch_utils as sbu
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import Space, BoxSpace
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, Dict
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.utils.symbol_util import get_full_class_name
+
 
 class ImageResizeTransformation(DataTransformation):
     has_inverse = True
-    
+
     def __init__(
         self,
         new_height: int,
@@ -15,7 +17,7 @@ class ImageResizeTransformation(DataTransformation):
         self.new_height = new_height
         self.new_width = new_width
 
-    def _validate_source_space(self, source_space : Space[Any, BDeviceType, BDtypeType, BRNGType]) -> BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+    def _validate_source_space(self, source_space: Space[Any, BDeviceType, BDtypeType, BRNGType]) -> BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         assert isinstance(source_space, BoxSpace), \
             f"ImageResizeTransformation only supports BoxSpace, got {type(source_space)}"
         assert len(source_space.shape) >= 3, \
@@ -97,10 +99,24 @@ class ImageResizeTransformation(DataTransformation):
             raise ValueError(f"Unsupported backend: {backend.simplified_name}")
         return resized_data
 
-    def direction_inverse(self, source_space = None):
+    def direction_inverse(self, source_space=None):
         assert source_space is not None, "Inverse transformation requires source_space"
         source_space = self._validate_source_space(source_space)
         return ImageResizeTransformation(
             new_height=source_space.shape[-3],
             new_width=source_space.shape[-2]
+        )
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "new_height": self.new_height,
+            "new_width": self.new_width,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "ImageResizeTransformation":
+        return cls(
+            new_height=json_data["new_height"],
+            new_width=json_data["new_width"],
         )

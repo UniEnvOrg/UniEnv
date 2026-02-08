@@ -3,12 +3,16 @@ from typing import Union, Any, Optional, Mapping, List, Callable, Dict
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace, TupleSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.transformations import serialization_utils as tsu
+from unienv_interface.utils.symbol_util import get_full_class_name, serialize_function, deserialize_function
 
 import copy
 from .transformation import DataTransformation, TargetDataT
 
-def default_is_leaf_fn(space : Space[Any, BDeviceType, BDtypeType, BRNGType]):
+
+def default_is_leaf_fn(space: Space[Any, BDeviceType, BDtypeType, BRNGType]):
     return not isinstance(space, (DictSpace, TupleSpace))
+
 
 class IterativeTransformation(DataTransformation):
     def __init__(
@@ -90,3 +94,19 @@ class IterativeTransformation(DataTransformation):
 
     def close(self):
         self.transformation.close()
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "transformation": tsu.transformation_to_json(self.transformation),
+            "is_leaf_node_fn": serialize_function(self.is_leaf_node_fn),
+            "inv_is_leaf_node_fn": serialize_function(self.inv_is_leaf_node_fn),
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "IterativeTransformation":
+        return cls(
+            transformation=tsu.json_to_transformation(json_data["transformation"]),
+            is_leaf_node_fn=deserialize_function(json_data.get("is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
+            inv_is_leaf_node_fn=deserialize_function(json_data.get("inv_is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
+        )

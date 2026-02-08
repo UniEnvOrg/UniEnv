@@ -1,7 +1,11 @@
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import BoxSpace
-from typing import Union, Any, Optional
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from typing import Union, Any, Optional, Dict
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, get_backend_from_tensor
+from unienv_interface.backends.serialization import serialize_backend, deserialize_backend, serialize_dtype, deserialize_dtype
+from unienv_interface.backends import serialization as bsu
+from unienv_interface.utils.symbol_util import get_full_class_name
+import numpy as np
 
 def _get_broadcastable_value(
     backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -14,6 +18,7 @@ def _get_broadcastable_value(
         assert target_ndim >= len(value.shape), "Target space must have at least as many dimensions as the value"
         target_shape = tuple([1] * (target_ndim - len(value.shape)) + list(value.shape))
         return backend.reshape(value, target_shape)
+
 
 class RescaleTransformation(DataTransformation):
     has_inverse = True
@@ -115,3 +120,62 @@ class RescaleTransformation(DataTransformation):
         self.__dict__.update(state)
         if not hasattr(self, "nan_to"):
             self.nan_to = None
+
+    def serialize(self) -> Dict[str, Any]:
+        # Handle new_low and new_high - they can be scalars or arrays
+        def serialize_value(value):
+            if value is None:
+                return None
+            if isinstance(value, (int, float)):
+                return None, {"scalar": True, "value": value, "backend": None}
+            else:
+                # It's an array - convert to numpy and then to list
+                backend = get_backend_from_tensor(value)
+                return backend, {"scalar": False, "value": backend.to_numpy(value).tolist(), "backend": serialize_backend(backend)}
+
+        new_low_backend, new_low_data = serialize_value(self.new_low)
+        new_high_backend, new_high_data = serialize_value(self.new_high)
+        nan_to_backend, nan_to_data = serialize_value(self.nan_to)
+        backend = new_low_backend or new_high_backend or nan_to_backend
+        result = {
+            "type": serialize_dtype(backend, self.new_dtype) if self.new_dtype is not None and backend is not None else None,
+            "new_low": new_low_data,
+            "new_high": new_high_data,
+            "nan_to": nan_to_data,
+        }
+        # Store dtype as string if present (dtype is backend-agnostic string representation)
+        if self.new_dtype is not None:
+            result["new_dtype"] = str(self.new_dtype)
+        return result
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "RescaleTransformation":
+        def deserialize_value(value_data):
+            if value_data is None:
+                return None, None
+            if value_data.get("scalar", False):
+                return None, value_data["value"]
+            else:
+                backend = deserialize_backend(value_data["backend"])
+                return backend, backend.from_numpy(np.array(value_data['value']))
+
+        # Deserialize dtype from string if present
+        # The dtype will be converted to the appropriate backend-specific dtype 
+        # when the transformation is actually applied
+        
+        new_low_backend, new_low = deserialize_value(json_data["new_low"])
+        new_high_backend, new_high = deserialize_value(json_data["new_high"])
+        nan_to_backend, nan_to = deserialize_value(json_data.get("nan_to"))
+        backend = new_low_backend or new_high_backend or nan_to_backend
+
+        new_dtype = None
+        if json_data.get("new_dtype") is not None and backend is not None:
+            # Store as numpy dtype for now - will be converted when applied
+            new_dtype = deserialize_dtype(backend, json_data["new_dtype"])
+
+        return cls(
+            new_low=new_low,
+            new_high=new_high,
+            new_dtype=new_dtype,
+            nan_to=nan_to,
+        )

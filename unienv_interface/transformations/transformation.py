@@ -10,9 +10,9 @@ SourceBDeviceT = TypeVar("TargetBDeviceT")
 SourceBDTypeT = TypeVar("TargetBDTypeT")
 SourceBDRNGT = TypeVar("TargetBDRNGT")
 TargetDataT = TypeVar("TargetDataT")
-class DataTransformation(
-    abc.ABC,
-):
+
+
+class DataTransformation(abc.ABC):
     has_inverse: bool = False
     
     @abc.abstractmethod
@@ -44,3 +44,29 @@ class DataTransformation(
 
     def __del__(self):
         self.close()
+    
+    @abc.abstractmethod
+    def serialize(self) -> Dict[str, Any]:
+        """
+        Serialize the transformation to a JSON-compatible dictionary.
+
+        Returns:
+            dict: A dictionary representation of the transformation containing:
+                - "type": The fully qualified class name (e.g., "unienv_interface.transformations.identity.IdentityTransformation")
+                - Additional parameters specific to the transformation type
+        """
+        raise NotImplementedError
+    
+    @classmethod
+    @abc.abstractmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DataTransformation":
+        """
+        Deserialize a transformation from a JSON-compatible dictionary.
+        
+        Args:
+            json_data: The dictionary containing the transformation data
+            
+        Returns:
+            DataTransformation: A new instance of the transformation
+        """
+        raise NotImplementedError

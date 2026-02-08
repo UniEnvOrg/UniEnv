@@ -3,6 +3,8 @@ from typing import Union, Any, Optional, Iterable, List, Callable, Dict
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.transformations import serialization_utils as tsu
+from unienv_interface.utils.symbol_util import get_full_class_name
 
 import copy
 from .transformation import DataTransformation, TargetDataT
@@ -62,3 +64,20 @@ class ChainedTransformation(DataTransformation):
     def close(self):
         for transformation in self.transformations:
             transformation.close()
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "transformations": [
+                tsu.transformation_to_json(t) for t in self.transformations
+            ],
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "ChainedTransformation":
+        return cls(
+            transformations=[
+                tsu.json_to_transformation(t_data)
+                for t_data in json_data["transformations"]
+            ]
+        )

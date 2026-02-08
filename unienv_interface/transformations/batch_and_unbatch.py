@@ -1,18 +1,20 @@
 from unienv_interface.space.space_utils import batch_utils as sbu
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import Space
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, Dict
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.utils.symbol_util import get_full_class_name
+
 
 class BatchifyTransformation(DataTransformation):
     has_inverse = True
 
     def __init__(
         self,
-        axis : int = 0
+        axis: int = 0
     ) -> None:
         self.axis = axis
-    
+
     def get_target_space_from_source(self, source_space):
         ret = sbu.batch_space(source_space, 1)
         if self.axis != 0:
@@ -29,19 +31,32 @@ class BatchifyTransformation(DataTransformation):
             [data],
             axis=self.axis
         )
-    
-    def direction_inverse(self, source_space = None):
+
+    def direction_inverse(self, source_space=None):
         return UnBatchifyTransformation(axis=self.axis)
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "axis": self.axis,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "BatchifyTransformation":
+        return cls(
+            axis=json_data.get("axis", 0),
+        )
+
 
 class UnBatchifyTransformation(DataTransformation):
     has_inverse = True
 
     def __init__(
         self,
-        axis : int = 0
+        axis: int = 0
     ) -> None:
         self.axis = axis
-    
+
     def get_target_space_from_source(self, source_space):
         if self.axis != 0:
             source_space = sbu.swap_batch_dims(
@@ -70,6 +85,18 @@ class UnBatchifyTransformation(DataTransformation):
             data,
             0
         )
-    
-    def direction_inverse(self, source_space = None):
+
+    def direction_inverse(self, source_space=None):
         return BatchifyTransformation(axis=self.axis)
+
+    def serialize(self) -> Dict[str, Any]:
+        return {
+            "type": get_full_class_name(type(self)),
+            "axis": self.axis,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any]) -> "UnBatchifyTransformation":
+        return cls(
+            axis=json_data.get("axis", 0),
+        )
