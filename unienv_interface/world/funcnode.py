@@ -9,15 +9,80 @@ from .funcworld import FuncWorld, WorldStateT
 NodeStateT = TypeVar("NodeStateT")
 
 class FuncWorldNode(ABC, Generic[
-    WorldStateT, NodeStateT, 
+    WorldStateT, NodeStateT,
     ContextType, ObsType, ActType, BArrayType, BDeviceType, BDtypeType, BRNGType
 ]):
-    """
-    Each `FuncWorldNode` in the simulated / real world will manage some aspect of the environment.
-    How the methods in this class will be called once environment resets:
-    `FuncWorld.reset(...)` -> `FuncWorldNode.reset(...)` -> `FuncWorldNode.after_reset(...)` -> `FuncWorldNode.get_observation(...)` -> World can start stepping normally
-    How the methods in this class will be called during a environment step:
-    `FuncWorldNode.set_next_action(...)` -> `FuncWorldNode.pre_environment_step(...)` -> `FuncWorld.step(...)` -> `FuncWorldNode.post_environment_step(...)` -> `FuncWorldNode.get_observation(...)` -> `FuncWorldNode.get_reward(...)` -> `FuncWorldNode.get_termination(...)` -> `FuncWorldNode.get_truncation(...)` -> `FuncWorldNode.get_info(...)`
+    """A functional (stateless) node that manages one aspect of a world.
+
+    Unlike ``WorldNode``, every method receives and returns explicit state objects
+    (``world_state``, ``node_state``) instead of mutating internal attributes.
+
+    ``initial`` creates the node state for the first time (the environment has not
+    been set up yet).  ``reset`` is called on subsequent episode boundaries when the
+    node state already exists.
+
+    Lifecycle — initial flow (environment not yet created)::
+
+        FuncWorldNode.initial(world_state, priority=...)
+          -> returns (world_state, node_state)
+
+    Lifecycle — reset flow::
+
+        FuncWorld.reset()
+          -> FuncWorldNode.reset(world_state, node_state, priority=...)
+          -> FuncWorldNode.after_reset(world_state, node_state, priority=...)
+          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...)
+
+    Lifecycle — reload flow::
+
+        FuncWorld.reload()
+          -> FuncWorldNode.reload(world_state, priority=...)
+          -> FuncWorldNode.after_reset(world_state, node_state, priority=...)
+          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...)
+
+    ``reload`` re-generates the simulation environment (e.g. re-reading assets,
+    rebuilding the scene).  This is typically much more expensive than ``reset``
+    and should only be called when the environment configuration has changed.
+    By default ``reload`` delegates to ``initial``.
+
+    Lifecycle — step flow::
+
+        FuncWorldNode.set_next_action(world_state, node_state, action)
+          -> FuncWorldNode.pre_environment_step(world_state, node_state, dt, priority=...)
+          -> FuncWorld.step()
+          -> FuncWorldNode.post_environment_step(world_state, node_state, dt, priority=...)
+          -> FuncWorldNode.get_observation(world_state, node_state)
+          -> FuncWorldNode.get_reward(...) / get_termination(...) / get_truncation(...) / get_info(...)
+
+    Implementing a node
+    -------------------
+    Subclasses should:
+
+    1. Set ``name``, ``world``, and any relevant spaces / signal flags in ``__init__``
+       (or as class-level attributes).
+    2. Implement ``initial`` and ``reset`` (both abstract), plus any other lifecycle
+       methods the node needs (``pre_environment_step``, ``post_environment_step``, etc.).
+    3. **Populate the corresponding priority sets** for every lifecycle method they
+       implement.  Callers check these sets before dispatching a method call — a node
+       will only have a given method called for priorities present in its corresponding
+       set.  A node with an empty priority set for a given method will never have that
+       method called.
+
+       Example::
+
+           class MySensor(FuncWorldNode[...]):
+               initial_priorities = {0}
+               reset_priorities = {0}
+               after_reset_priorities = {0}
+               post_environment_step_priorities = {0}
+
+               def initial(self, world_state, *, priority=0, seed=None, **kwargs):
+                   ...
+               def reset(self, world_state, node_state, *, priority=0, seed=None, mask=None, **kwargs):
+                   ...
+
+       Multiple priorities (e.g. ``{0, 1}``) allow the same method to be invoked at
+       different stages; the caller iterates priorities in the desired order.
     """
 
     name : str
@@ -93,23 +158,12 @@ class FuncWorldNode(ABC, Generic[
         *,
         priority : int = 0,
         mask : Optional[BArrayType] = None
-    ) -> Tuple[
-        WorldStateT,
-        NodeStateT,
-        Optional[ContextType],
-        Optional[ObsType],
-        Optional[Dict[str, Any]]
-    ]:
+    ) -> Tuple[WorldStateT, NodeStateT]:
         """
-        This method is called after `WorldNode`'s has been called with `reset` (e.g. the environment reset is effectively done)
-        Returns:
-            world_state: The updated world state after reset.
-            node_state: The updated node state after reset.
-            context: The optional context of the node after reset.
-            observation: The optional observation of the node after reset.
-            info: The auxiliary information of the node after reset.
+        This method is called after all ``FuncWorldNode``s has been called with ``reset`` (e.g. the environment reset is effectively done).
+        Use ``get_context``, ``get_observation``, and ``get_info`` to read the post-reset state.
         """
-        return world_state, node_state, None, self.get_observation(world_state, node_state), self.get_info(world_state, node_state)
+        return world_state, node_state
 
     def pre_environment_step(
         self,
@@ -127,6 +181,17 @@ class FuncWorldNode(ABC, Generic[
             dt (Union[float, BArrayType]): The time delta since the last step.
         """
         return world_state, node_state
+
+    def get_context(
+        self,
+        world_state : WorldStateT,
+        node_state : NodeStateT
+    ) -> Optional[ContextType]:
+        """
+        Get the current context from the node.
+        If the context space is None, this method should not be called.
+        """
+        return None
 
     def get_observation(
         self,

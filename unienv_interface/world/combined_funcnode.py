@@ -198,37 +198,14 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		*,
 		priority: int = 0,
 		mask: Optional[BArrayType] = None,
-	) -> Tuple[
-		WorldStateT,
-		CombinedNodeStateT,
-		Optional[CombinedDataT],
-		Optional[CombinedDataT],
-		Optional[Dict[str, Any]],
-	]:
+	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
-		contexts: Dict[str, Any] = {}
-		observations: Dict[str, Any] = {}
-		infos: Dict[str, Any] = {}
-
 		for node in self.nodes:
 			if priority in node.after_reset_priorities:
 				ns = node_state[node.name]
-				world_state, ns, ctx, obs, info = node.after_reset(world_state, ns, priority=priority, mask=mask)
+				world_state, ns = node.after_reset(world_state, ns, priority=priority, mask=mask)
 				node_state[node.name] = ns
-				if ctx is not None:
-					contexts[node.name] = ctx
-				if obs is not None:
-					observations[node.name] = obs
-				if info is not None:
-					infos[node.name] = info
-
-		return (
-			world_state,
-			node_state,
-			self.aggregate_data(contexts, direct_return=self.direct_return),
-			self.aggregate_data(observations, direct_return=self.direct_return),
-			self.aggregate_data(infos, direct_return=False),
-		)
+		return world_state, node_state
 
 	def pre_environment_step(
 		self,
@@ -295,6 +272,21 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		return world_state
 
 	# ========== Data accessors ==========
+	def get_context(
+		self,
+		world_state: WorldStateT,
+		node_state: CombinedNodeStateT,
+	) -> CombinedDataT:
+		assert self.context_space is not None, "Context space is None, cannot get context."
+		return self.aggregate_data(
+			{
+				node.name: node.get_context(world_state, node_state[node.name])
+				for node in self.nodes
+				if node.context_space is not None
+			},
+			direct_return=self.direct_return,
+		)
+
 	def get_observation(
 		self,
 		world_state: WorldStateT,

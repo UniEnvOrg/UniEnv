@@ -7,12 +7,61 @@ from unienv_interface.env_base.env import ContextType, ObsType, ActType
 from .world import World
 
 class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    """
-    Each `WorldNode` in the simulated / real world will manage some aspect of the environment. This can include sensors, robots, or other entities that interact with the world.
-    How the methods in this class will be called once environment resets:
-    `World.reset(...)` -> `WorldNode.reset(...)` -> `WorldNode.after_reset(...)` -> `WorldNode.get_observation(...)` -> World can start stepping normally
-    How the methods in this class will be called during a environment step:
-    `WorldNode.set_next_action(...)` -> `WorldNode.pre_environment_step(...)` -> `World.step(...)` -> `WorldNode.post_environment_step(...)` -> `WorldNode.get_observation(...)` -> `WorldNode.get_reward(...)` -> `WorldNode.get_termination(...)` -> `WorldNode.get_truncation(...)` -> `WorldNode.get_info(...)`
+    """A stateful node that manages one aspect of a world (e.g. a sensor, a robot, a reward function).
+
+    The environment is initialized during the first call to ``reset`` or ``reload``.
+
+    Lifecycle — reset flow::
+
+        World.reset()
+          -> WorldNode.reset(priority=...)
+          -> WorldNode.after_reset(priority=...)
+          -> WorldNode.get_context() / get_observation() / get_info()
+
+    Lifecycle — reload flow::
+
+        World.reload()
+          -> WorldNode.reload(priority=...)
+          -> WorldNode.after_reset(priority=...)
+          -> WorldNode.get_context() / get_observation() / get_info()
+
+    ``reload`` re-generates the simulation environment (e.g. re-reading assets,
+    rebuilding the scene).  This is typically much more expensive than ``reset``
+    and should only be called when the environment configuration has changed.
+    By default ``reload`` delegates to ``reset``.
+
+    Lifecycle — step flow::
+
+        WorldNode.set_next_action(action)
+          -> WorldNode.pre_environment_step(dt, priority=...)
+          -> World.step()
+          -> WorldNode.post_environment_step(dt, priority=...)
+          -> WorldNode.get_observation()
+          -> WorldNode.get_reward() / get_termination() / get_truncation() / get_info()
+
+    Implementing a node
+    -------------------
+    Subclasses should:
+
+    1. Set ``name``, ``world``, and any relevant spaces / signal flags in ``__init__``.
+    2. Override the lifecycle methods they need (``reset``, ``pre_environment_step``, etc.).
+    3. **Populate the corresponding priority sets** for every lifecycle method they
+       override.  Callers check these sets before dispatching a method call — a node
+       will only have a given method called for priorities present in its corresponding
+       set.  A node with an empty priority set for a given method will never have that
+       method called.
+
+       Example::
+
+           class MySensor(WorldNode[...]):
+               after_reset_priorities = {0}
+               post_environment_step_priorities = {0}
+
+               def post_environment_step(self, dt, *, priority=0):
+                   ...  # read sensor data
+
+       Multiple priorities (e.g. ``{0, 1}``) allow the same method to be invoked at
+       different stages; the caller iterates priorities in the desired order.
     """
 
     name : str
@@ -46,6 +95,13 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
             dt (float/BArrayType): The time elapsed between the last world step and the current step (NOT the current step and next step).
         """
         pass
+
+    def get_context(self) -> Optional[ContextType]:
+        """
+        Get the current context from the node.
+        If the context space is None, this method should not be called.
+        """
+        return None
 
     def get_observation(self) -> ObsType:
         """
@@ -131,16 +187,12 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         *,
         priority : int = 0,
         mask : Optional[BArrayType] = None,
-    ) -> Tuple[Optional[ContextType], Optional[ObsType], Optional[Dict[str, Any]]]:
+    ) -> None:
         """
-        This method is called after all `WorldNode`s has been called with `reset` (e.g. the environment reset is effectively done)
-        Returns:
-            context: The optional context of the node after reset.
-            observation: The optional observation of the node after reset.
-            info: The auxiliary information of the node after reset.
+        This method is called after all ``WorldNode``s has been called with ``reset`` (e.g. the environment reset is effectively done).
+        Use ``get_context``, ``get_observation``, and ``get_info`` to read the post-reset state.
         """
         self.post_environment_step(self.control_timestep, priority=priority)
-        return None, self.get_observation(), self.get_info()
 
     def close(self) -> None:
         pass

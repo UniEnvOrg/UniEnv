@@ -133,6 +133,17 @@ class CombinedWorldNode(WorldNode[
             if priority in node.pre_environment_step_priorities:
                 node.pre_environment_step(dt, priority=priority)
     
+    def get_context(self):
+        assert self.context_space is not None, "Context space is None, cannot get context."
+        return self.aggregate_data(
+            {
+                node.name: node.get_context()
+                for node in self.nodes
+                if node.context_space is not None
+            },
+            direct_return=self.direct_return,
+        )
+
     def get_observation(self):
         assert self.observation_space is not None, "Observation space is None, cannot get observation."
         return self.aggregate_data(
@@ -241,31 +252,9 @@ class CombinedWorldNode(WorldNode[
                 )
 
     def after_reset(self, *, priority : int = 0, mask = None):
-        contexts = {}
-        observations = {}
-        infos = {}
-
-
         for node in self.nodes:
             if priority in node.after_reset_priorities:
-                context, observation, info = node.after_reset(priority=priority, mask=mask)
-                if context is not None:
-                    contexts[node.name] = context
-                if observation is not None:
-                    observations[node.name] = observation
-                if info is not None:
-                    infos[node.name] = info
-
-        return self.aggregate_data(
-            contexts,
-            direct_return=self.direct_return,
-        ), self.aggregate_data(
-            observations,
-            direct_return=self.direct_return,
-        ), self.aggregate_data(
-            infos,
-            direct_return=False
-        )
+                node.after_reset(priority=priority, mask=mask)
     
 
     def close(self):
