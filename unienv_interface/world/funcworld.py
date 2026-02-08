@@ -51,6 +51,7 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
 
     def reload(
         self,
+        state : WorldStateT,
         *,
         seed : Optional[int] = None,
         **kwargs

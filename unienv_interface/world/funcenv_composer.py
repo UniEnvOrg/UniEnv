@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable
 from dataclasses import dataclass
 
-from unienv_interface.env_base.funcenv import FuncEnv
+from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderInfo
 from unienv_interface.env_base.env import ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 
@@ -35,11 +35,13 @@ class FuncWorldEnv(FuncEnv[
 			FuncWorldNode[WorldStateT, NodeStateT, ContextType, ObsType, ActType, BArrayType, BDeviceType, BDtypeType, BRNGType],
 			Iterable[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
 		],
+		*,
+		render_mode: Optional[str] = None,
 	):
 		if isinstance(node_or_nodes, FuncWorldNode):
 			self.node = node_or_nodes
 		else:
-			self.node = CombinedFuncWorldNode("combined", node_or_nodes)
+			self.node = CombinedFuncWorldNode("combined", node_or_nodes, render_mode=render_mode)
 
 		self.world = world
 
@@ -54,15 +56,71 @@ class FuncWorldEnv(FuncEnv[
 			self._n_substeps = 1
 		self._control_dt = self.node.control_timestep or world.world_timestep
 
-		# Copy properties from node / world
-		self.observation_space = self.node.observation_space
-		self.action_space = self.node.action_space
-		self.context_space = self.node.context_space
-		self.backend = world.backend
-		self.device = world.device
-		self.batch_size = world.batch_size
+	@property
+	def observation_space(self):
+		return self.node.observation_space
+
+	@property
+	def action_space(self):
+		return self.node.action_space
+
+	@property
+	def context_space(self):
+		return self.node.context_space
+
+	@property
+	def backend(self):
+		return self.world.backend
+
+	@property
+	def device(self):
+		return self.world.device
+
+	@property
+	def batch_size(self):
+		return self.world.batch_size
+
+	@property
+	def render_mode(self) -> Optional[str]:
+		return self.node.render_mode
+
+	@property
+	def render_fps(self) -> Optional[int]:
+		if self.node.control_timestep is not None:
+			return int(round(1 / self.node.control_timestep))
+		return None
 
 	# ========== FuncEnv interface ==========
+
+	def reload(
+		self,
+		state: WorldFuncEnvState,
+		*,
+		seed: Optional[int] = None,
+		**kwargs,
+	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		world_state = self.world.reload(
+			state.world_state,
+			seed=seed, **kwargs
+		)
+
+		node_state = None
+		for p in sorted(self.node.reload_priorities, reverse=True):
+			world_state, ns_p = self.node.reload(world_state, priority=p, seed=seed, **kwargs)
+			if isinstance(ns_p, dict) and isinstance(node_state, dict):
+				node_state.update(ns_p)
+			else:
+				node_state = ns_p
+
+		for p in sorted(self.node.after_reset_priorities, reverse=True):
+			world_state, node_state = self.node.after_reset(
+				world_state, node_state, priority=p
+			)
+
+		context = self.node.get_context(world_state, node_state) if self.node.context_space is not None else None
+		obs = self.node.get_observation(world_state, node_state) if self.node.observation_space is not None else None
+		info = self.node.get_info(world_state, node_state) or {}
+		return WorldFuncEnvState(world_state, node_state), context, obs, info
 
 	def initial(
 		self,
@@ -192,3 +250,18 @@ class FuncWorldEnv(FuncEnv[
 	def close(self, state: WorldFuncEnvState) -> None:
 		world_state = self.node.close(state.world_state, state.node_state)
 		self.world.close(world_state)
+
+	# ========== Render interface ==========
+
+	def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+		return state, None, FuncEnvCommonRenderInfo(render_mode=render_mode)
+
+	def render_image(self, state, render_state):
+		if self.node.can_render:
+			image = self.node.render(state.world_state, state.node_state)
+		else:
+			image = None
+		return image, state, render_state
+
+	def render_close(self, state, render_state):
+		return state

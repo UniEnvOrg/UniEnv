@@ -22,11 +22,14 @@ class CombinedFuncWorldNode(FuncWorldNode[
 	across child nodes. If only one child exposes a given interface and `direct_return=True`, the value is passed through directly.
 	"""
 
+	supported_render_modes = ('dict', 'auto')
+
 	def __init__(
 		self,
 		name: str,
 		nodes: Iterable[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
 		direct_return: bool = True,
+		render_mode: Optional[str] = 'dict',
 	):
 		nodes = list(nodes)
 		if len(nodes) == 0:
@@ -66,6 +69,22 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 		self.name = name
 		self.direct_return = direct_return
+
+		# Rendering
+		renderable_nodes = [node for node in nodes if node.can_render]
+		self._renderable_nodes = renderable_nodes
+		self._true_render_mode = render_mode
+		if render_mode == 'auto':
+			if len(renderable_nodes) == 1:
+				self.render_mode = renderable_nodes[0].render_mode
+			elif len(renderable_nodes) > 1:
+				self.render_mode = 'dict'
+			else:
+				self.render_mode = None
+		elif render_mode == 'dict':
+			self.render_mode = 'dict' if renderable_nodes else None
+		else:
+			self.render_mode = render_mode
 
 	# ========== Helper aggregation methods ==========
 	@staticmethod
@@ -383,3 +402,20 @@ class CombinedFuncWorldNode(FuncWorldNode[
 			if info is not None:
 				infos[node.name] = info
 		return self.aggregate_data(infos, direct_return=False)  # Always dict if not empty
+
+	def render(self, world_state, node_state):
+		if not self.can_render:
+			return None
+		if len(self._renderable_nodes) == 1 and self._true_render_mode != 'dict':
+			return self._renderable_nodes[0].render(world_state, node_state[self._renderable_nodes[0].name])
+		result = {}
+		for node in self._renderable_nodes:
+			r = node.render(world_state, node_state[node.name])
+			if r is None:
+				continue
+			if isinstance(r, dict):
+				for k, v in r.items():
+					result[f"{node.name}.{k}"] = v
+			else:
+				result[node.name] = r
+		return result if result else None

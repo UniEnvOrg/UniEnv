@@ -28,7 +28,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         if isinstance(node_or_nodes, WorldNode):
             self.node = node_or_nodes
         else:
-            self.node = CombinedWorldNode("combined", node_or_nodes)
+            self.node = CombinedWorldNode("combined", node_or_nodes, render_mode=render_mode)
 
         self.world = world
 
@@ -43,19 +43,65 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
             self._n_substeps = 1
         self._control_dt = self.node.control_timestep or world.world_timestep
 
-        # Copy properties from node / world
-        self.observation_space = self.node.observation_space
-        self.action_space = self.node.action_space
-        self.context_space = self.node.context_space
-        self.backend = world.backend
-        self.device = world.device
-        self.batch_size = world.batch_size
-        self.render_mode = render_mode
         self.rng = self.backend.random.random_number_generator(device=self.device)
 
         self._first_reset = True
 
+    @property
+    def observation_space(self):
+        return self.node.observation_space
+
+    @property
+    def action_space(self):
+        return self.node.action_space
+
+    @property
+    def context_space(self):
+        return self.node.context_space
+
+    @property
+    def backend(self):
+        return self.world.backend
+
+    @property
+    def device(self):
+        return self.world.device
+
+    @property
+    def batch_size(self):
+        return self.world.batch_size
+
+    @property
+    def render_mode(self) -> Optional[str]:
+        return self.node.render_mode
+
+    @property
+    def render_fps(self) -> Optional[int]:
+        if self.node.control_timestep is not None:
+            return int(round(1 / self.node.control_timestep))
+        return None
+
     # ========== Env interface ==========
+
+    def reload(
+        self,
+        *,
+        mask: Optional[BArrayType] = None,
+        seed: Optional[int] = None,
+        **kwargs,
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        self.world.reload(seed=seed, mask=mask, **kwargs)
+        for p in sorted(self.node.reload_priorities, reverse=True):
+            self.node.reload(priority=p, seed=seed, mask=mask, **kwargs)
+
+        for p in sorted(self.node.after_reset_priorities, reverse=True):
+            self.node.after_reset(priority=p, mask=mask)
+
+        context = self.node.get_context() if self.node.context_space is not None else None
+        obs = self.node.get_observation() if self.node.observation_space is not None else None
+        info = self.node.get_info() or {}
+        self._first_reset = False
+        return context, obs, info
 
     def reset(
         self,
@@ -65,14 +111,11 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         **kwargs,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
         if self._first_reset:
-            self.world.reload(seed=seed, mask=mask, **kwargs)
-            for p in sorted(self.node.reload_priorities, reverse=True):
-                self.node.reload(priority=p, seed=seed, mask=mask, **kwargs)
-            self._first_reset = False
-        else:
-            self.world.reset(seed=seed, mask=mask, **kwargs)
-            for p in sorted(self.node.reset_priorities, reverse=True):
-                self.node.reset(priority=p, seed=seed, mask=mask, **kwargs)
+            return self.reload(seed=seed, mask=mask, **kwargs)
+
+        self.world.reset(seed=seed, mask=mask, **kwargs)
+        for p in sorted(self.node.reset_priorities, reverse=True):
+            self.node.reset(priority=p, seed=seed, mask=mask, **kwargs)
 
         # after_reset — call at each priority for side effects
         for p in sorted(self.node.after_reset_priorities, reverse=True):
@@ -145,6 +188,8 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         return obs, reward, terminated, truncated, info
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
+        if self.node.can_render:
+            return self.node.render()
         return None
 
     def close(self):

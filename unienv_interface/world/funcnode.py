@@ -1,5 +1,6 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union
 from abc import ABC, abstractmethod
+import numpy as np
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
@@ -31,14 +32,14 @@ class FuncWorldNode(ABC, Generic[
         FuncWorld.reset()
           -> FuncWorldNode.reset(world_state, node_state, priority=...)
           -> FuncWorldNode.after_reset(world_state, node_state, priority=...)
-          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...)
+          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...) / render(...)
 
     Lifecycle — reload flow::
 
         FuncWorld.reload()
           -> FuncWorldNode.reload(world_state, priority=...)
           -> FuncWorldNode.after_reset(world_state, node_state, priority=...)
-          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...)
+          -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...) / render(...)
 
     ``reload`` re-generates the simulation environment (e.g. re-reading assets,
     rebuilding the scene).  This is typically much more expensive than ``reset``
@@ -52,13 +53,14 @@ class FuncWorldNode(ABC, Generic[
           -> FuncWorld.step()
           -> FuncWorldNode.post_environment_step(world_state, node_state, dt, priority=...)
           -> FuncWorldNode.get_observation(world_state, node_state)
-          -> FuncWorldNode.get_reward(...) / get_termination(...) / get_truncation(...) / get_info(...)
+          -> FuncWorldNode.get_reward(...) / get_termination(...) / get_truncation(...) / get_info(...) / render(...)
 
     Implementing a node
     -------------------
     Subclasses should:
 
-    1. Set ``name``, ``world``, and any relevant spaces / signal flags in ``__init__``
+    1. Set ``name``, ``world``, and any relevant spaces / signal flags / render
+       attributes (``render_mode``, ``supported_render_modes``) in ``__init__``
        (or as class-level attributes).
     2. Implement ``initial`` and ``reset`` (both abstract), plus any other lifecycle
        methods the node needs (``pre_environment_step``, ``post_environment_step``, etc.).
@@ -93,6 +95,8 @@ class FuncWorldNode(ABC, Generic[
     has_reward : bool = False
     has_termination_signal : bool = False
     has_truncation_signal : bool = False
+    supported_render_modes : Sequence[str] = ()
+    render_mode : Optional[str] = None
     world : Optional[FuncWorld[WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
     initial_priorities : Set[int] = set()
@@ -109,6 +113,10 @@ class FuncWorldNode(ABC, Generic[
     @property
     def device(self) -> Optional[BDeviceType]:
         return self.world.device
+
+    @property
+    def can_render(self) -> bool:
+        return self.render_mode is not None
 
     @abstractmethod
     def initial(
@@ -244,6 +252,22 @@ class FuncWorldNode(ABC, Generic[
     ) -> Optional[Dict[str, Any]]:
         """
         Get the current info from the environment.
+        """
+        return None
+
+    def render(
+        self,
+        world_state : WorldStateT,
+        node_state : NodeStateT,
+    ) -> Union[
+        np.ndarray, BArrayType,
+        Sequence[Union[np.ndarray, BArrayType]],
+        Dict[str, Union[np.ndarray, BArrayType, Sequence[Union[np.ndarray, BArrayType]]]],
+        None
+    ]:
+        """Render the current state of the node.
+
+        If ``can_render`` is ``False``, this method should not be called.
         """
         return None
     

@@ -1,5 +1,6 @@
 from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union
 from abc import ABC, abstractmethod
+import numpy as np
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
 from unienv_interface.env_base.env import ContextType, ObsType, ActType
@@ -16,14 +17,14 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         World.reset()
           -> WorldNode.reset(priority=...)
           -> WorldNode.after_reset(priority=...)
-          -> WorldNode.get_context() / get_observation() / get_info()
+          -> WorldNode.get_context() / get_observation() / get_info() / render()
 
     Lifecycle — reload flow::
 
         World.reload()
           -> WorldNode.reload(priority=...)
           -> WorldNode.after_reset(priority=...)
-          -> WorldNode.get_context() / get_observation() / get_info()
+          -> WorldNode.get_context() / get_observation() / get_info() / render()
 
     ``reload`` re-generates the simulation environment (e.g. re-reading assets,
     rebuilding the scene).  This is typically much more expensive than ``reset``
@@ -37,13 +38,14 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
           -> World.step()
           -> WorldNode.post_environment_step(dt, priority=...)
           -> WorldNode.get_observation()
-          -> WorldNode.get_reward() / get_termination() / get_truncation() / get_info()
+          -> WorldNode.get_reward() / get_termination() / get_truncation() / get_info() / render()
 
     Implementing a node
     -------------------
     Subclasses should:
 
-    1. Set ``name``, ``world``, and any relevant spaces / signal flags in ``__init__``.
+    1. Set ``name``, ``world``, and any relevant spaces / signal flags / render
+       attributes (``render_mode``, ``supported_render_modes``) in ``__init__``.
     2. Override the lifecycle methods they need (``reset``, ``pre_environment_step``, etc.).
     3. **Populate the corresponding priority sets** for every lifecycle method they
        override.  Callers check these sets before dispatching a method call — a node
@@ -72,6 +74,8 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     has_reward : bool = False
     has_termination_signal : bool = False
     has_truncation_signal : bool = False
+    supported_render_modes : Sequence[str] = ()
+    render_mode : Optional[str] = None
     world : Optional[World[BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
     reset_priorities : Set[int] = set()
@@ -87,6 +91,10 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     @property
     def device(self) -> Optional[BDeviceType]:
         return self.world.device
+
+    @property
+    def can_render(self) -> bool:
+        return self.render_mode is not None
 
     def pre_environment_step(self, dt : Union[float, BArrayType], *, priority : int = 0) -> None:
         """
@@ -134,6 +142,18 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     def get_info(self) -> Optional[Dict[str, Any]]:
         """
         Get optional auxiliary information with this node.
+        """
+        return None
+
+    def render(self) -> Union[
+        np.ndarray, BArrayType,
+        Sequence[Union[np.ndarray, BArrayType]],
+        Dict[str, Union[np.ndarray, BArrayType, Sequence[Union[np.ndarray, BArrayType]]]],
+        None
+    ]:
+        """Render the current state of the node.
+
+        If ``can_render`` is ``False``, this method should not be called.
         """
         return None
 

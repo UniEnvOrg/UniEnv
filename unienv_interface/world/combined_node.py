@@ -19,11 +19,14 @@ class CombinedWorldNode(WorldNode[
     If there is only one child node that supports value and `direct_return` is set to True, the value is returned directly instead of a dictionary.
     """
 
+    supported_render_modes = ('dict', 'auto')
+
     def __init__(
         self,
         name : str,
         nodes : Iterable[WorldNode[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType], Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         direct_return : bool = True,
+        render_mode : Optional[str] = 'dict',
     ):
         nodes = list(nodes)
         if len(nodes) == 0:
@@ -60,6 +63,22 @@ class CombinedWorldNode(WorldNode[
         # Save attributes
         self.name = name
         self.direct_return = direct_return
+
+        # Rendering
+        renderable_nodes = [node for node in nodes if node.can_render]
+        self._renderable_nodes = renderable_nodes
+        self._true_render_mode = render_mode
+        if render_mode == 'auto':
+            if len(renderable_nodes) == 1:
+                self.render_mode = renderable_nodes[0].render_mode
+            elif len(renderable_nodes) > 1:
+                self.render_mode = 'dict'
+            else:
+                self.render_mode = None
+        elif render_mode == 'dict':
+            self.render_mode = 'dict' if renderable_nodes else None
+        else:
+            self.render_mode = render_mode
 
     @staticmethod
     def aggregate_spaces(
@@ -211,7 +230,24 @@ class CombinedWorldNode(WorldNode[
             infos,
             direct_return=False
         )
-    
+
+    def render(self):
+        if not self.can_render:
+            return None
+        if len(self._renderable_nodes) == 1 and self._true_render_mode != 'dict':
+            return self._renderable_nodes[0].render()
+        result = {}
+        for node in self._renderable_nodes:
+            r = node.render()
+            if r is None:
+                continue
+            if isinstance(r, dict):
+                for k, v in r.items():
+                    result[f"{node.name}.{k}"] = v
+            else:
+                result[node.name] = r
+        return result if result else None
+
     def set_next_action(self, action):
         assert self.action_space is not None, "Action space is None, cannot set action."
         if self._action_node_name_direct is not None:
