@@ -27,14 +27,27 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
     @abstractmethod
     def reset(
-        self, 
+        self,
         *,
         seed : Optional[int] = None,
         mask : Optional[BArrayType] = None,
         **kwargs
     ) -> None:
         raise NotImplementedError
-    
+
+    def reload(
+        self,
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> None:
+        """
+        Reload the world. By default, this just calls `reset` with the same parameters.
+        Simulation environments can override this to completely re-read assets and reload the simulation.
+        """
+        self.reset(seed=seed, mask=mask, **kwargs)
+
     def close(self) -> None:
         pass
 

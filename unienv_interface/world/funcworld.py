@@ -49,6 +49,18 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
         """
         raise NotImplementedError
 
+    def reload(
+        self,
+        *,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> WorldStateT:
+        """
+        Reload the world. By default, this just calls `initial` with the same parameters.
+        Simulation environments can override this to completely re-read assets and reload the simulation.
+        """
+        return self.initial(seed=seed, **kwargs)
+
     def close(
         self,
         state : WorldStateT

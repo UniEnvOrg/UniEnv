@@ -1,4 +1,4 @@
-from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
+from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union
 from abc import ABC, abstractmethod
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
@@ -30,6 +30,13 @@ class FuncWorldNode(ABC, Generic[
     has_truncation_signal : bool = False
     world : Optional[FuncWorld[WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
+    initial_priorities : Set[int] = set()
+    reset_priorities : Set[int] = set()
+    reload_priorities : Set[int] = set()
+    after_reset_priorities : Set[int] = set()
+    pre_environment_step_priorities : Set[int] = set()
+    post_environment_step_priorities : Set[int] = set()
+
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.world.backend
@@ -43,10 +50,25 @@ class FuncWorldNode(ABC, Generic[
         self,
         world_state : WorldStateT,
         *,
+        priority : int = 0,
         seed : Optional[int] = None,
         **kwargs
     ) -> Tuple[WorldStateT, NodeStateT]:
         raise NotImplementedError
+
+    def reload(
+        self,
+        world_state : WorldStateT,
+        *,
+        priority : int = 0,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> Tuple[WorldStateT, NodeStateT]:
+        """
+        Reload the node. By default, this just calls `initial` with the same parameters.
+        Simulation environments can override this to completely re-read assets and reload the node.
+        """
+        return self.initial(world_state, priority=priority, seed=seed, **kwargs)
 
     @abstractmethod
     def reset(
@@ -54,6 +76,7 @@ class FuncWorldNode(ABC, Generic[
         world_state : WorldStateT,
         node_state : NodeStateT,
         *,
+        priority : int = 0,
         seed : Optional[int] = None,
         mask : Optional[BArrayType] = None,
         **kwargs
@@ -68,6 +91,7 @@ class FuncWorldNode(ABC, Generic[
         world_state : WorldStateT,
         node_state : NodeStateT,
         *,
+        priority : int = 0,
         mask : Optional[BArrayType] = None
     ) -> Tuple[
         WorldStateT,
@@ -91,7 +115,9 @@ class FuncWorldNode(ABC, Generic[
         self,
         world_state : WorldStateT,
         node_state : NodeStateT,
-        dt : Union[float, BArrayType]
+        dt : Union[float, BArrayType],
+        *,
+        priority : int = 0
     ) -> Tuple[WorldStateT, NodeStateT]:
         """
         This method is called before each environment step.
@@ -160,7 +186,7 @@ class FuncWorldNode(ABC, Generic[
         self,
         world_state : WorldStateT,
         node_state : NodeStateT,
-        action : ActType
+        action : ActType,
     ) -> Tuple[WorldStateT, NodeStateT]:
         """
         Update the next action to be taken by the node.
@@ -174,7 +200,9 @@ class FuncWorldNode(ABC, Generic[
         self,
         world_state : WorldStateT,
         node_state : NodeStateT,
-        dt : Union[float, BArrayType]
+        dt : Union[float, BArrayType],
+        *,
+        priority : int = 0
     ) -> Tuple[WorldStateT, NodeStateT]:
         """
         This method is called after the environment step to update the sensor's internal state.

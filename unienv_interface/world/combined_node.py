@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Mapping, Any, Tuple, Union, Iterable
+from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.utils.control_util import find_best_timestep
@@ -101,10 +101,37 @@ class CombinedWorldNode(WorldNode[
     @property
     def control_timestep(self) -> Optional[float]:
         return self.nodes[0].control_timestep
-    
-    def pre_environment_step(self, dt):
+
+    # ========== Aggregated priority properties ==========
+    @staticmethod
+    def _collect_priorities(nodes, attr_name) -> Set[int]:
+        return set().union(*(getattr(node, attr_name) for node in nodes))
+
+    @property
+    def reset_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'reset_priorities')
+
+    @property
+    def reload_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'reload_priorities')
+
+    @property
+    def after_reset_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'after_reset_priorities')
+
+    @property
+    def pre_environment_step_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'pre_environment_step_priorities')
+
+    @property
+    def post_environment_step_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'post_environment_step_priorities')
+
+    # ========== Lifecycle methods ==========
+    def pre_environment_step(self, dt, *, priority : int = 0):
         for node in self.nodes:
-            node.pre_environment_step(dt)
+            if priority in node.pre_environment_step_priorities:
+                node.pre_environment_step(dt, priority=priority)
     
     def get_observation(self):
         assert self.observation_space is not None, "Observation space is None, cannot get observation."
@@ -188,32 +215,46 @@ class CombinedWorldNode(WorldNode[
                     assert node.name in action, f"Action for node {node.name} is missing."
                     node.set_next_action(action[node.name])
     
-    def post_environment_step(self, dt):
+    def post_environment_step(self, dt, *, priority : int = 0):
         for node in self.nodes:
-            node.post_environment_step(dt)
+            if priority in node.post_environment_step_priorities:
+                node.post_environment_step(dt, priority=priority)
     
-    def reset(self, *, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+    def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
         for node in self.nodes:
-            node.reset(
-                seed=seed,
-                mask=mask,
-                **pernode_kwargs.get(node.name, {})
-            )
-    
-    def after_reset(self, *, mask = None):
+            if priority in node.reset_priorities:
+                node.reset(
+                    priority=priority,
+                    seed=seed,
+                    mask=mask,
+                    **pernode_kwargs.get(node.name, {})
+                )
+
+    def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+        for node in self.nodes:
+            if priority in node.reload_priorities:
+                node.reload(
+                    priority=priority,
+                    seed=seed,
+                    mask=mask,
+                    **pernode_kwargs.get(node.name, {})
+                )
+
+    def after_reset(self, *, priority : int = 0, mask = None):
         contexts = {}
         observations = {}
         infos = {}
 
 
         for node in self.nodes:
-            context, observation, info = node.after_reset(mask=mask)
-            if context is not None:
-                contexts[node.name] = context
-            if observation is not None:
-                observations[node.name] = observation
-            if info is not None:
-                infos[node.name] = info
+            if priority in node.after_reset_priorities:
+                context, observation, info = node.after_reset(priority=priority, mask=mask)
+                if context is not None:
+                    contexts[node.name] = context
+                if observation is not None:
+                    observations[node.name] = observation
+                if info is not None:
+                    infos[node.name] = info
 
         return self.aggregate_data(
             contexts,

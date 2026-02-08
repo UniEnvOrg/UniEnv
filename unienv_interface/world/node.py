@@ -1,4 +1,4 @@
-from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Type, Union
+from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union
 from abc import ABC, abstractmethod
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
@@ -25,6 +25,12 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     has_truncation_signal : bool = False
     world : Optional[World[BArrayType, BDeviceType, BDtypeType, BRNGType]] = None
 
+    reset_priorities : Set[int] = set()
+    reload_priorities : Set[int] = set()
+    after_reset_priorities : Set[int] = set()
+    pre_environment_step_priorities : Set[int] = set()
+    post_environment_step_priorities : Set[int] = set()
+
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.world.backend
@@ -33,7 +39,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     def device(self) -> Optional[BDeviceType]:
         return self.world.device
 
-    def pre_environment_step(self, dt : Union[float, BArrayType]) -> None:
+    def pre_environment_step(self, dt : Union[float, BArrayType], *, priority : int = 0) -> None:
         """
         This method is called before the environment step
         Args:
@@ -84,7 +90,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         """
         raise NotImplementedError
 
-    def post_environment_step(self, dt : Union[float, BArrayType]) -> None:
+    def post_environment_step(self, dt : Union[float, BArrayType], *, priority : int = 0) -> None:
         """
         This method is called after the environment step to update the sensor's internal state.
         Args:
@@ -95,6 +101,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     def reset(
         self,
         *,
+        priority : int = 0,
         seed : Optional[int] = None,
         mask : Optional[BArrayType] = None,
         **kwargs
@@ -105,9 +112,24 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         """
         pass
 
+    def reload(
+        self,
+        *,
+        priority : int = 0,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> None:
+        """
+        Reload the node. By default, this just calls `reset` with the same parameters.
+        Simulation environments can override this to completely re-read assets and reload the node.
+        """
+        self.reset(priority=priority, seed=seed, mask=mask, **kwargs)
+
     def after_reset(
         self,
         *,
+        priority : int = 0,
         mask : Optional[BArrayType] = None,
     ) -> Tuple[Optional[ContextType], Optional[ObsType], Optional[Dict[str, Any]]]:
         """
@@ -117,7 +139,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
             observation: The optional observation of the node after reset.
             info: The auxiliary information of the node after reset.
         """
-        self.post_environment_step(self.control_timestep)
+        self.post_environment_step(self.control_timestep, priority=priority)
         return None, self.get_observation(), self.get_info()
 
     def close(self) -> None:

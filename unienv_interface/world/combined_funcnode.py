@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Tuple, Union, Iterable, Mapping
+from typing import Optional, Dict, Set, Any, Tuple, Union, Iterable, Mapping
 
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
@@ -105,18 +105,64 @@ class CombinedFuncWorldNode(FuncWorldNode[
 	def control_timestep(self):  # type: ignore[override]
 		return self.nodes[0].control_timestep
 
+	# ========== Aggregated priority properties ==========
+	@staticmethod
+	def _collect_priorities(nodes, attr_name) -> Set[int]:
+		return set().union(*(getattr(node, attr_name) for node in nodes))
+
+	@property
+	def initial_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'initial_priorities')
+
+	@property
+	def reset_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'reset_priorities')
+
+	@property
+	def reload_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'reload_priorities')
+
+	@property
+	def after_reset_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'after_reset_priorities')
+
+	@property
+	def pre_environment_step_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'pre_environment_step_priorities')
+
+	@property
+	def post_environment_step_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'post_environment_step_priorities')
+
 	# ========== Lifecycle methods ==========
 	def initial(
 		self,
 		world_state: WorldStateT,
 		*,
+		priority: int = 0,
 		seed: Optional[int] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_states: CombinedNodeStateT = {}
 		for node in self.nodes:
-			world_state, node_state = node.initial(world_state, seed=seed, **pernode_kwargs.get(node.name, {}))
-			node_states[node.name] = node_state
+			if priority in node.initial_priorities:
+				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				node_states[node.name] = node_state
+		return world_state, node_states
+
+	def reload(
+		self,
+		world_state: WorldStateT,
+		*,
+		priority: int = 0,
+		seed: Optional[int] = None,
+		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
+	) -> Tuple[WorldStateT, CombinedNodeStateT]:
+		node_states: CombinedNodeStateT = {}
+		for node in self.nodes:
+			if priority in node.reload_priorities:
+				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				node_states[node.name] = node_state
 		return world_state, node_states
 
 	def reset(
@@ -124,6 +170,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		world_state: WorldStateT,
 		node_state: CombinedNodeStateT,
 		*,
+		priority: int = 0,
 		seed: Optional[int] = None,
 		mask: Optional[BArrayType] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
@@ -131,15 +178,17 @@ class CombinedFuncWorldNode(FuncWorldNode[
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
 		for node in self.nodes:
-			ns = node_state[node.name]
-			world_state, ns = node.reset(
-				world_state,
-				ns,
-				seed=seed,
-				mask=mask,
-				**pernode_kwargs.get(node.name, {}),
-			)
-			node_state[node.name] = ns
+			if priority in node.reset_priorities:
+				ns = node_state[node.name]
+				world_state, ns = node.reset(
+					world_state,
+					ns,
+					priority=priority,
+					seed=seed,
+					mask=mask,
+					**pernode_kwargs.get(node.name, {}),
+				)
+				node_state[node.name] = ns
 		return world_state, node_state
 
 	def after_reset(
@@ -147,6 +196,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		world_state: WorldStateT,
 		node_state: CombinedNodeStateT,
 		*,
+		priority: int = 0,
 		mask: Optional[BArrayType] = None,
 	) -> Tuple[
 		WorldStateT,
@@ -161,15 +211,16 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		infos: Dict[str, Any] = {}
 
 		for node in self.nodes:
-			ns = node_state[node.name]
-			world_state, ns, ctx, obs, info = node.after_reset(world_state, ns, mask=mask)
-			node_state[node.name] = ns
-			if ctx is not None:
-				contexts[node.name] = ctx
-			if obs is not None:
-				observations[node.name] = obs
-			if info is not None:
-				infos[node.name] = info
+			if priority in node.after_reset_priorities:
+				ns = node_state[node.name]
+				world_state, ns, ctx, obs, info = node.after_reset(world_state, ns, priority=priority, mask=mask)
+				node_state[node.name] = ns
+				if ctx is not None:
+					contexts[node.name] = ctx
+				if obs is not None:
+					observations[node.name] = obs
+				if info is not None:
+					infos[node.name] = info
 
 		return (
 			world_state,
@@ -184,12 +235,15 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		world_state: WorldStateT,
 		node_state: CombinedNodeStateT,
 		dt: Union[float, BArrayType],
+		*,
+		priority: int = 0,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
 		for node in self.nodes:
-			ns = node_state[node.name]
-			world_state, ns = node.pre_environment_step(world_state, ns, dt)
-			node_state[node.name] = ns
+			if priority in node.pre_environment_step_priorities:
+				ns = node_state[node.name]
+				world_state, ns = node.pre_environment_step(world_state, ns, dt, priority=priority)
+				node_state[node.name] = ns
 		return world_state, node_state
 
 	def set_next_action(
@@ -199,7 +253,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		action: CombinedDataT,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		assert self.action_space is not None, "Action space is None, cannot set action."
-		
+
 		node_state = node_state.copy()
 		if self._action_node_name_direct is not None:
 			# Only one actionable node
@@ -224,12 +278,15 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		world_state: WorldStateT,
 		node_state: CombinedNodeStateT,
 		dt: Union[float, BArrayType],
+		*,
+		priority: int = 0,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
 		for node in self.nodes:
-			ns = node_state[node.name]
-			world_state, ns = node.post_environment_step(world_state, ns, dt)
-			node_state[node.name] = ns
+			if priority in node.post_environment_step_priorities:
+				ns = node_state[node.name]
+				world_state, ns = node.post_environment_step(world_state, ns, dt, priority=priority)
+				node_state[node.name] = ns
 		return world_state, node_state
 
 	def close(self, world_state: WorldStateT, node_state: CombinedNodeStateT) -> WorldStateT:  # type: ignore[override]
