@@ -21,7 +21,7 @@ gymnasium = [
     "gymnasium>=0.29.0",
 ]
 video = [
-    "moviepy>=2.1"
+    "moviepy>=2.1",
 ]
 
 [project.urls]
