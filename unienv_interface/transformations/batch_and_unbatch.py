@@ -42,7 +42,12 @@ class BatchifyTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "BatchifyTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "BatchifyTransformation":
         return cls(
             axis=json_data.get("axis", 0),
         )
@@ -96,7 +101,12 @@ class UnBatchifyTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "UnBatchifyTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "UnBatchifyTransformation":
         return cls(
             axis=json_data.get("axis", 0),
         )

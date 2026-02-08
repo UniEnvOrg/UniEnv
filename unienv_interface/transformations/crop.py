@@ -93,18 +93,30 @@ class CropTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "CropTransformation":
-        def deserialize_value(value_data):
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "CropTransformation":
+        def deserialize_value(value_data, override_backend: Optional[ComputeBackend] = None, override_device: Optional[BDeviceType] = None):
             if value_data is None:
                 return None, None
             if value_data.get("scalar", False):
                 return None, value_data["value"]
             else:
-                backend = deserialize_backend(value_data["backend"])
-                return backend, backend.from_numpy(np.array(value_data['value']))
+                # Use provided backend if available, otherwise deserialize from saved backend
+                if override_backend is not None:
+                     backend = override_backend
+                else:
+                    backend = deserialize_backend(value_data["backend"])
+                value = backend.from_numpy(np.array(value_data['value']))
+                if override_device is not None:
+                    value = backend.to_device(value, override_device)
+                return backend, value
 
-        _, crop_low = deserialize_value(json_data["crop_low"])
-        _, crop_high = deserialize_value(json_data["crop_high"])
+        _, crop_low = deserialize_value(json_data["crop_low"], backend, device)
+        _, crop_high = deserialize_value(json_data["crop_high"], backend, device)
 
         return cls(
             crop_low=crop_low,

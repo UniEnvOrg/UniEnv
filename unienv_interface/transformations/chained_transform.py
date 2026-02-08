@@ -74,10 +74,15 @@ class ChainedTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "ChainedTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "ChainedTransformation":
         return cls(
             transformations=[
-                tsu.json_to_transformation(t_data)
+                tsu.json_to_transformation(t_data, backend=backend, device=device)
                 for t_data in json_data["transformations"]
             ]
         )

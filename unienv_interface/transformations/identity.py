@@ -23,5 +23,10 @@ class IdentityTransformation(DataTransformation):
         }
     
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "IdentityTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "IdentityTransformation":
         return cls()

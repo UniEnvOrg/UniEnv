@@ -149,29 +149,41 @@ class RescaleTransformation(DataTransformation):
         return result
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "RescaleTransformation":
-        def deserialize_value(value_data):
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "RescaleTransformation":
+        def deserialize_value(value_data, override_backend: Optional[ComputeBackend] = None, override_device: Optional[BDeviceType] = None):
             if value_data is None:
                 return None, None
             if value_data.get("scalar", False):
                 return None, value_data["value"]
             else:
-                backend = deserialize_backend(value_data["backend"])
-                return backend, backend.from_numpy(np.array(value_data['value']))
+                # Use provided backend if available, otherwise deserialize from saved backend
+                if override_backend is not None:
+                    value_backend = override_backend
+                else:
+                    value_backend = deserialize_backend(value_data["backend"])
+                value = value_backend.from_numpy(np.array(value_data['value']))
+                if override_device is not None:
+                    value = value_backend.to_device(value, override_device)
+                return value_backend, value
 
         # Deserialize dtype from string if present
         # The dtype will be converted to the appropriate backend-specific dtype 
         # when the transformation is actually applied
         
-        new_low_backend, new_low = deserialize_value(json_data["new_low"])
-        new_high_backend, new_high = deserialize_value(json_data["new_high"])
-        nan_to_backend, nan_to = deserialize_value(json_data.get("nan_to"))
-        backend = new_low_backend or new_high_backend or nan_to_backend
+        new_low_backend, new_low = deserialize_value(json_data["new_low"], backend, device)
+        new_high_backend, new_high = deserialize_value(json_data["new_high"], backend, device)
+        nan_to_backend, nan_to = deserialize_value(json_data.get("nan_to"), backend, device)
+        result_backend = backend or new_low_backend or new_high_backend or nan_to_backend
 
         new_dtype = None
-        if json_data.get("new_dtype") is not None and backend is not None:
+        if json_data.get("new_dtype") is not None and result_backend is not None:
             # Store as numpy dtype for now - will be converted when applied
-            new_dtype = deserialize_dtype(backend, json_data["new_dtype"])
+            new_dtype = deserialize_dtype(result_backend, json_data["new_dtype"])
 
         return cls(
             new_low=new_low,

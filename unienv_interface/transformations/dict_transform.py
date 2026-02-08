@@ -175,10 +175,15 @@ class DictTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "DictTransformation":
         return cls(
             mapping={
-                key: tsu.json_to_transformation(transformation_data)
+                key: tsu.json_to_transformation(transformation_data, backend=backend, device=device)
                 for key, transformation_data in json_data["mapping"].items()
             },
             ignore_missing_keys=json_data.get("ignore_missing_keys", False),

@@ -134,7 +134,12 @@ class DictIncludeKeyTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictIncludeKeyTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "DictIncludeKeyTransformation":
         return cls(
             enabled_keys=json_data["enabled_keys"],
             nested_separator=json_data.get("nested_separator", "/"),
@@ -203,7 +208,12 @@ class DictExcludeKeyTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DictExcludeKeyTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "DictExcludeKeyTransformation":
         return cls(
             excluded_keys=json_data["excluded_keys"],
             nested_separator=json_data.get("nested_separator", "/"),

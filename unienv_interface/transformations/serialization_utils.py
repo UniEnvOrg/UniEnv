@@ -3,9 +3,10 @@ Serialization utilities for DataTransformations.
 
 Provides functions to serialize/deserialize DataTransformation objects to/from JSON-compatible dictionaries.
 """
-from typing import Dict, Any, Type
+from typing import Dict, Any, Type, Optional
 
 from unienv_interface.utils.symbol_util import get_class_from_full_name
+from unienv_interface.backends import ComputeBackend, BDeviceType
 from .transformation import DataTransformation
 
 __all__ = [
@@ -27,12 +28,18 @@ def transformation_to_json(transformation: DataTransformation) -> Dict[str, Any]
     return transformation.serialize()
 
 
-def json_to_transformation(json_data: Dict[str, Any]) -> DataTransformation:
+def json_to_transformation(
+    json_data: Dict[str, Any],
+    backend: Optional[ComputeBackend] = None,
+    device: Optional[BDeviceType] = None,
+) -> DataTransformation:
     """
     Deserialize a DataTransformation from a JSON-compatible dictionary.
 
     Args:
         json_data: The dictionary containing the transformation data.
+        backend: Optional backend to use for deserialization (for backend-specific data)
+        device: Optional device to use for deserialization (for device-specific data)
 
     Returns:
         DataTransformation: The deserialized transformation.
@@ -42,4 +49,4 @@ def json_to_transformation(json_data: Dict[str, Any]) -> DataTransformation:
         raise ValueError(f"JSON data must contain 'type' field: {json_data}")
 
     transformation_class: Type[DataTransformation] = get_class_from_full_name(type_name)
-    return transformation_class.deserialize_from(json_data)
+    return transformation_class.deserialize_from(json_data, backend=backend, device=device)

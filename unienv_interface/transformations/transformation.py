@@ -59,13 +59,20 @@ class DataTransformation(abc.ABC):
     
     @classmethod
     @abc.abstractmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "DataTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "DataTransformation":
         """
         Deserialize a transformation from a JSON-compatible dictionary.
-        
+
         Args:
             json_data: The dictionary containing the transformation data
-            
+            backend: Optional backend to use for deserialization (for backend-specific data)
+            device: Optional device to use for deserialization (for device-specific data)
+
         Returns:
             DataTransformation: A new instance of the transformation
         """

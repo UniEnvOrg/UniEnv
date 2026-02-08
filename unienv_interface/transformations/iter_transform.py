@@ -104,9 +104,14 @@ class IterativeTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "IterativeTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "IterativeTransformation":
         return cls(
-            transformation=tsu.json_to_transformation(json_data["transformation"]),
+            transformation=tsu.json_to_transformation(json_data["transformation"], backend=backend, device=device),
             is_leaf_node_fn=deserialize_function(json_data.get("is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
             inv_is_leaf_node_fn=deserialize_function(json_data.get("inv_is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
         )

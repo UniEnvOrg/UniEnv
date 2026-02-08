@@ -115,7 +115,12 @@ class ImageResizeTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data: Dict[str, Any]) -> "ImageResizeTransformation":
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        backend: Optional[ComputeBackend] = None,
+        device: Optional[BDeviceType] = None,
+    ) -> "ImageResizeTransformation":
         return cls(
             new_height=json_data["new_height"],
             new_width=json_data["new_width"],
