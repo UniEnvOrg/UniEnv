@@ -28,9 +28,24 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         with:
-          model: openai/default-coding
+          model: llmapi/default-coding
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENCODE_CONFIG_CONTENT: >
-            {"provider":{"openai":{"options":{"apiKey":"{env:OPENAI_API_KEY}","baseURL":"{env:OPENAI_BASE_URL}"}}}}
+            {
+              "$schema":"https://opencode.ai/config.json",
+              "provider":{
+                "myllm":{
+                  "npm":"@ai-sdk/openai-compatible",
+                  "name":"My Private Endpoint",
+                  "options":{
+                    "baseURL":"{env:OPENAI_BASE_URL}",
+                    "apiKey":"{env:OPENAI_API_KEY}"
+                  },
+                  "models":{
+                    "default-coding":{}
+                  }
+                }
+              }
+            }
