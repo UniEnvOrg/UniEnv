@@ -13,7 +13,7 @@
           "name": "Default coding model",
           "limit": {
             "context": 200000,
-            "output": 65536
+            "output": 56000
           }
         }
       }
