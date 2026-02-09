@@ -49,12 +49,26 @@ class FuncWorldEnv(FuncEnv[
 			f"Control timestep {self.node.control_timestep} is not compatible " \
 			f"with world timestep {world.world_timestep}."
 
-		# Sub-stepping
-		if self.node.control_timestep is not None and world.world_timestep is not None:
-			self._n_substeps = round(self.node.control_timestep / world.world_timestep)
+		# Two-level sub-stepping: update_timestep sits between world and control
+		update_ts = self.node.effective_update_timestep
+		control_ts = self.node.control_timestep
+		world_ts = world.world_timestep
+
+		assert world.is_control_timestep_compatible(update_ts), \
+			f"Update timestep {update_ts} is not compatible with world timestep {world_ts}."
+
+		if control_ts is not None and update_ts is not None:
+			self._n_update_substeps = round(control_ts / update_ts)
 		else:
-			self._n_substeps = 1
-		self._control_dt = self.node.control_timestep or world.world_timestep
+			self._n_update_substeps = 1
+
+		if update_ts is not None and world_ts is not None:
+			self._n_world_substeps = round(update_ts / world_ts)
+		else:
+			self._n_world_substeps = 1
+
+		self._update_dt = update_ts or world_ts
+		self._control_dt = control_ts or update_ts or world_ts
 
 	@property
 	def observation_space(self):
@@ -196,25 +210,22 @@ class FuncWorldEnv(FuncEnv[
 		if self.node.action_space is not None:
 			world_state, node_state = self.node.set_next_action(world_state, node_state, action)
 
-		# 2. Pre-environment step (once, before all sub-steps)
-		for p in sorted(self.node.pre_environment_step_priorities, reverse=True):
-			world_state, node_state = self.node.pre_environment_step(
-				world_state, node_state, self._control_dt, priority=p
-			)
-
-		# 3. World sub-steps
+		# 2. Update-level substep loop
 		actual_dt = None
-		for _ in range(self._n_substeps):
-			world_state, actual_dt = self.world.step(world_state)
+		for _ in range(self._n_update_substeps):
+			for p in sorted(self.node.pre_environment_step_priorities, reverse=True):
+				world_state, node_state = self.node.pre_environment_step(
+					world_state, node_state, self._update_dt, priority=p
+				)
+			for _ in range(self._n_world_substeps):
+				world_state, actual_dt = self.world.step(world_state)
+			post_dt = self._update_dt if self._update_dt is not None else actual_dt
+			for p in sorted(self.node.post_environment_step_priorities, reverse=True):
+				world_state, node_state = self.node.post_environment_step(
+					world_state, node_state, post_dt, priority=p
+				)
 
-		# 4. Post-environment step (once, after all sub-steps)
-		post_dt = self._control_dt if self._control_dt is not None else actual_dt
-		for p in sorted(self.node.post_environment_step_priorities, reverse=True):
-			world_state, node_state = self.node.post_environment_step(
-				world_state, node_state, post_dt, priority=p
-			)
-
-		# 5. Read results
+		# 3. Read results
 		obs = self.node.get_observation(world_state, node_state) if self.node.observation_space is not None else None
 
 		if self.node.has_reward:

@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable
+from math import lcm
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.utils.control_util import find_best_timestep
@@ -36,7 +37,6 @@ class CombinedWorldNode(WorldNode[
         first_node = nodes[0]
         for node in nodes[1:]:
             assert node.world is first_node.world, "All nodes must belong to the same world."
-            assert node.control_timestep == first_node.control_timestep, "All nodes must have the same control timestep."
         # Check that all nodes have unique names
         names = [node.name for node in nodes]
         if len(names) != len(set(names)):
@@ -80,6 +80,51 @@ class CombinedWorldNode(WorldNode[
         else:
             self.render_mode = render_mode
 
+        # Multi-frequency validation + precomputation
+        eff_steps = [n.effective_update_timestep for n in nodes if n.effective_update_timestep is not None]
+        ctrls = [n.control_timestep for n in nodes if n.control_timestep is not None]
+
+        if eff_steps:
+            self._smallest_update_ts = min(eff_steps)
+            for node in nodes:
+                es = node.effective_update_timestep
+                if es is not None:
+                    r = es / self._smallest_update_ts
+                    assert abs(r - round(r)) < 1e-9, \
+                        f"Node {node.name} update_timestep ({es}) not integer multiple of smallest ({self._smallest_update_ts})"
+        else:
+            self._smallest_update_ts = None
+
+        if ctrls:
+            self._smallest_control_ts = min(ctrls)
+            largest_ctrl = max(ctrls)
+            for node in nodes:
+                if node.control_timestep is not None:
+                    r = largest_ctrl / node.control_timestep
+                    assert abs(r - round(r)) < 1e-9, \
+                        f"Largest control ({largest_ctrl}) not integer multiple of {node.name}'s ({node.control_timestep})"
+        else:
+            self._smallest_control_ts = None
+
+        # Precompute routing ratios
+        self._update_ratios = {}
+        self._action_ratios = {}
+        for node in nodes:
+            es = node.effective_update_timestep
+            self._update_ratios[node.name] = round(es / self._smallest_update_ts) if (es and self._smallest_update_ts) else 1
+            ct = node.control_timestep
+            self._action_ratios[node.name] = round(ct / self._smallest_control_ts) if (ct and self._smallest_control_ts) else 1
+
+        # Wrapping periods (LCM of ratios) to keep counters bounded
+        self._update_period = lcm(*self._update_ratios.values()) if self._update_ratios else 1
+        self._action_period = lcm(*self._action_ratios.values()) if self._action_ratios else 1
+
+        # Substep counters
+        self._pre_substeps = 0
+        self._post_substeps = 0
+        self._action_substeps = 0
+        self._cached_actions = {}
+
     @staticmethod
     def aggregate_spaces(
         spaces : Dict[str, Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]],
@@ -119,7 +164,15 @@ class CombinedWorldNode(WorldNode[
     
     @property
     def control_timestep(self) -> Optional[float]:
-        return self.nodes[0].control_timestep
+        return self._smallest_control_ts
+
+    @property
+    def update_timestep(self) -> Optional[float]:
+        return self._smallest_update_ts
+
+    @property
+    def effective_update_timestep(self) -> Optional[float]:
+        return self._smallest_update_ts
 
     # ========== Aggregated priority properties ==========
     @staticmethod
@@ -148,9 +201,15 @@ class CombinedWorldNode(WorldNode[
 
     # ========== Lifecycle methods ==========
     def pre_environment_step(self, dt, *, priority : int = 0):
+        all_prios = self.pre_environment_step_priorities
+        if all_prios and priority == max(all_prios):
+            self._pre_substeps = (self._pre_substeps % self._update_period) + 1
+
         for node in self.nodes:
             if priority in node.pre_environment_step_priorities:
-                node.pre_environment_step(dt, priority=priority)
+                ratio = self._update_ratios[node.name]
+                if (self._pre_substeps - 1) % ratio == 0:
+                    node.pre_environment_step(node.effective_update_timestep, priority=priority)
     
     def get_context(self):
         assert self.context_space is not None, "Context space is None, cannot get context."
@@ -250,22 +309,35 @@ class CombinedWorldNode(WorldNode[
 
     def set_next_action(self, action):
         assert self.action_space is not None, "Action space is None, cannot set action."
+        self._action_substeps = (self._action_substeps % self._action_period) + 1
+
         if self._action_node_name_direct is not None:
-            for node in self.nodes:
-                if node.name == self._action_node_name_direct:
-                    node.set_next_action(action)
-                    break
+            child_actions = {self._action_node_name_direct: action}
         else:
             assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
-            for node in self.nodes:
-                if node.action_space is not None:
-                    assert node.name in action, f"Action for node {node.name} is missing."
-                    node.set_next_action(action[node.name])
+            child_actions = action
+
+        for node in self.nodes:
+            if node.action_space is not None:
+                if node.name in child_actions:
+                    self._cached_actions[node.name] = child_actions[node.name]
+                ratio = self._action_ratios[node.name]
+                if (self._action_substeps - 1) % ratio == 0:
+                    node.set_next_action(self._cached_actions[node.name])
     
     def post_environment_step(self, dt, *, priority : int = 0):
+        all_prios = self.post_environment_step_priorities
+        if all_prios and priority == max(all_prios):
+            self._post_substeps = (self._post_substeps % self._update_period) + 1
+
         for node in self.nodes:
             if priority in node.post_environment_step_priorities:
-                node.post_environment_step(dt, priority=priority)
+                ratio = self._update_ratios[node.name]
+                if (self._post_substeps - 1) % ratio == 0:
+                    node.post_environment_step(node.effective_update_timestep, priority=priority)
+
+        if all_prios and priority == max(all_prios):
+            assert self._pre_substeps == self._post_substeps
     
     def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
         for node in self.nodes:
@@ -288,6 +360,13 @@ class CombinedWorldNode(WorldNode[
                 )
 
     def after_reset(self, *, priority : int = 0, mask = None):
+        all_prios = self.after_reset_priorities
+        if all_prios and priority == max(all_prios):
+            self._pre_substeps = 0
+            self._post_substeps = 0
+            self._action_substeps = 0
+            self._cached_actions.clear()
+
         for node in self.nodes:
             if priority in node.after_reset_priorities:
                 node.after_reset(priority=priority, mask=mask)

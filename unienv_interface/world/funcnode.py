@@ -89,6 +89,7 @@ class FuncWorldNode(ABC, Generic[
 
     name : str
     control_timestep : Optional[float] = None
+    update_timestep : Optional[float] = None
     context_space : Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
     observation_space : Optional[Space[ObsType, BDeviceType, BDtypeType, BRNGType]] = None
     action_space : Optional[Space[ActType, BDeviceType, BDtypeType, BRNGType]] = None
@@ -117,6 +118,10 @@ class FuncWorldNode(ABC, Generic[
     @property
     def can_render(self) -> bool:
         return self.render_mode is not None
+
+    @property
+    def effective_update_timestep(self) -> Optional[float]:
+        return self.update_timestep if self.update_timestep is not None else self.control_timestep
 
     @abstractmethod
     def initial(

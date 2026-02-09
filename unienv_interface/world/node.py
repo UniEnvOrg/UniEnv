@@ -68,6 +68,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
 
     name : str
     control_timestep : Optional[float] = None
+    update_timestep : Optional[float] = None
     context_space : Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None
     observation_space : Optional[Space[ObsType, BDeviceType, BDtypeType, BRNGType]] = None
     action_space : Optional[Space[ActType, BDeviceType, BDtypeType, BRNGType]] = None
@@ -95,6 +96,10 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     @property
     def can_render(self) -> bool:
         return self.render_mode is not None
+
+    @property
+    def effective_update_timestep(self) -> Optional[float]:
+        return self.update_timestep if self.update_timestep is not None else self.control_timestep
 
     def pre_environment_step(self, dt : Union[float, BArrayType], *, priority : int = 0) -> None:
         """
@@ -212,7 +217,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         This method is called after all ``WorldNode``s has been called with ``reset`` (e.g. the environment reset is effectively done).
         Use ``get_context``, ``get_observation``, and ``get_info`` to read the post-reset state.
         """
-        self.post_environment_step(self.control_timestep, priority=priority)
+        self.post_environment_step(self.effective_update_timestep, priority=priority)
 
     def close(self) -> None:
         pass
