@@ -28,7 +28,9 @@ jobs:
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         with:
-          model: default-coding
+          model: openai/default-coding
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENCODE_CONFIG_CONTENT: >
+            {"provider":{"openai":{"options":{"apiKey":"{env:OPENAI_API_KEY}","baseURL":"{env:OPENAI_BASE_URL}"}}}}
