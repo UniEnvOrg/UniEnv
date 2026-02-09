@@ -5,34 +5,48 @@ import dataclasses
 
 from unienv_interface.space import Space
 from unienv_interface.space import batch_utils as sbu, flatten_utils as sfu
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import (
+    ComputeBackend,
+    BArrayType,
+    BDeviceType,
+    BDtypeType,
+    BRNGType,
+)
 
-DataT = TypeVar('DataT')
+DataT = TypeVar("DataT")
+
 
 @dataclasses.dataclass(frozen=True)
-class SpaceDataQueueState(Generic[DataT]):
-    data: DataT # (L, B, ...) or (L, ...)
+class FrameStackQueueState(Generic[DataT]):
+    data: DataT  # (L, B, ...) or (L, ...)
 
-    def replace(self, **changes: Any) -> 'SpaceDataQueueState':
+    def replace(self, **changes: Any) -> "FrameStackQueueState":
         return dataclasses.replace(self, **changes)
 
-class FuncSpaceDataQueue(
+
+class FuncFrameStackQueue(
     Generic[DataT, BArrayType, BDeviceType, BDtypeType, BRNGType]
 ):
     def __init__(
         self,
-        space : Space[DataT, BDeviceType, BDtypeType, BRNGType],
-        batch_size : Optional[int],
+        space: Space[DataT, BDeviceType, BDtypeType, BRNGType],
+        batch_size: Optional[int],
         maxlen: int,
     ) -> None:
         assert maxlen > 0, "Max length must be greater than 0"
-        assert batch_size is None or batch_size > 0, "Batch size must be greater than 0 if provided"
-        assert batch_size is None or sbu.batch_size(space) == batch_size, "Batch size must match the space's batch size if provided"
+        assert batch_size is None or batch_size > 0, (
+            "Batch size must be greater than 0 if provided"
+        )
+        assert batch_size is None or sbu.batch_size(space) == batch_size, (
+            "Batch size must match the space's batch size if provided"
+        )
         self.single_space = space
-        self.stacked_space = sbu.batch_space(space, maxlen) # (L, ...) or (L, B, ...)
-        self.output_space = sbu.swap_batch_dims(
-            self.stacked_space, 0, 1
-        ) if batch_size is not None else self.stacked_space # (B, L, ...) or (L, ...)
+        self.stacked_space = sbu.batch_space(space, maxlen)  # (L, ...) or (L, B, ...)
+        self.output_space = (
+            sbu.swap_batch_dims(self.stacked_space, 0, 1)
+            if batch_size is not None
+            else self.stacked_space
+        )  # (B, L, ...) or (L, ...)
         self._maxlen = maxlen
         self._batch_size = batch_size
 
@@ -47,83 +61,62 @@ class FuncSpaceDataQueue(
     @property
     def backend(self) -> ComputeBackend:
         return self.single_space.backend
-    
+
     @property
     def device(self) -> Optional[BDeviceType]:
         return self.single_space.device
-    
+
     def init(
         self,
-        initial_data : DataT,
-    ) -> SpaceDataQueueState:
+        initial_data: DataT,
+    ) -> FrameStackQueueState:
         return self.reset(
-            SpaceDataQueueState(self.stacked_space.create_empty()),
-            initial_data
+            FrameStackQueueState(self.stacked_space.create_empty()), initial_data
         )
 
     def reset(
-        self, 
-        state : SpaceDataQueueState,
-        initial_data : DataT,
-        mask : Optional[BArrayType] = None,
-    ) -> SpaceDataQueueState:
-        assert self.batch_size is None or mask is None, \
+        self,
+        state: FrameStackQueueState,
+        initial_data: DataT,
+        mask: Optional[BArrayType] = None,
+    ) -> FrameStackQueueState:
+        assert self.batch_size is None or mask is None, (
             "Mask should not be provided if batch size is empty"
-        index = (
-            slice(None), mask
-        ) if mask is not None else slice(None)
-        
-        expanded_data = sbu.get_at( # Add a singleton horizon dimension to the data
-            self.single_space,
-            initial_data,
-            None
+        )
+        index = (slice(None), mask) if mask is not None else slice(None)
+
+        expanded_data = sbu.get_at(  # Add a singleton horizon dimension to the data
+            self.single_space, initial_data, None
         )
         return state.replace(
-            data=sbu.set_at(
-                self.stacked_space,
-                state.data,
-                index,
-                expanded_data
-            )
+            data=sbu.set_at(self.stacked_space, state.data, index, expanded_data)
         )
 
-    def add(self, state : SpaceDataQueueState, data : DataT) -> SpaceDataQueueState:
+    def add(self, state: FrameStackQueueState, data: DataT) -> FrameStackQueueState:
         new_data = self.backend.map_fn_over_arrays(
             state.data,
             lambda x: self.backend.roll(x, shift=-1, axis=0),
         )
-        new_data = sbu.set_at(
-            self.stacked_space,
-            new_data,
-            -1,
-            data
-        )
+        new_data = sbu.set_at(self.stacked_space, new_data, -1, data)
         return state.replace(data=new_data)
-    
-    def get_output_data(self, state : SpaceDataQueueState) -> DataT:
+
+    def get_output_data(self, state: FrameStackQueueState) -> DataT:
         if self.batch_size is None:
             return state.data
         else:
             return sbu.swap_batch_dims_in_data(
-                self.backend,
-                state.data,
-                0, 1
-            ) # (L, B, ...) -> (B, L, ...)
+                self.backend, state.data, 0, 1
+            )  # (L, B, ...) -> (B, L, ...)
 
-class SpaceDataQueue(
-    Generic[DataT, BArrayType, BDeviceType, BDtypeType, BRNGType]
-):
+
+class FrameStackQueue(Generic[DataT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
-        space : Space[DataT, BDeviceType, BDtypeType, BRNGType],
-        batch_size : Optional[int],
+        space: Space[DataT, BDeviceType, BDtypeType, BRNGType],
+        batch_size: Optional[int],
         maxlen: int,
     ) -> None:
-        self.func_queue = FuncSpaceDataQueue(
-            space,
-            batch_size,
-            maxlen
-        )
+        self.func_queue = FuncFrameStackQueue(space, batch_size, maxlen)
         self.state = None
 
     @property
@@ -137,7 +130,7 @@ class SpaceDataQueue(
     @property
     def output_space(self) -> Space[DataT, BDeviceType, BDtypeType, BRNGType]:
         return self.func_queue.output_space
-    
+
     @property
     def maxlen(self) -> int:
         return self.func_queue.maxlen
@@ -145,7 +138,6 @@ class SpaceDataQueue(
     @property
     def batch_size(self) -> Optional[int]:
         return self.func_queue.batch_size
-    
 
     @property
     def backend(self) -> ComputeBackend:
@@ -157,28 +149,21 @@ class SpaceDataQueue(
 
     def reset(
         self,
-        initial_data : DataT,
-        mask : Optional[BArrayType] = None,
+        initial_data: DataT,
+        mask: Optional[BArrayType] = None,
     ) -> None:
         if self.state is None:
             assert mask is None, "Mask should not be provided on the first reset"
             self.state = self.func_queue.init(initial_data)
         else:
-            self.state = self.func_queue.reset(
-                self.state,
-                initial_data,
-                mask
-            )
-        
-    def add(self, data : DataT) -> None:
+            self.state = self.func_queue.reset(self.state, initial_data, mask)
+
+    def add(self, data: DataT) -> None:
         assert self.state is not None, "Data queue must be reset before adding data"
-        self.state = self.func_queue.add(
-            self.state,
-            data
-        )
+        self.state = self.func_queue.add(self.state, data)
 
     def get_output_data(self) -> DataT:
-        assert self.state is not None, "Data queue must be reset before getting output data"
-        return self.func_queue.get_output_data(
-            self.state
+        assert self.state is not None, (
+            "Data queue must be reset before getting output data"
         )
+        return self.func_queue.get_output_data(self.state)
