@@ -29,6 +29,6 @@ jobs:
         uses: anomalyco/opencode/github@latest
         with:
           model: default-coding
-          base_url: https://llm-api.quantumcookie.xyz/v1
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
