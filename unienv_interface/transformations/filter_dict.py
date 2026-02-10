@@ -125,7 +125,7 @@ class DictIncludeKeyTransformation(DataTransformation):
     def serialize(self) -> Dict[str, Any]:
         return {
             "type": get_full_class_name(type(self)),
-            "enabled_keys": list(self._enabled_keys),
+            "enabled_keys": sorted(list(self._enabled_keys)),
             "nested_separator": self.nested_separator,
             "ignore_missing_keys": self.ignore_missing_keys,
         }
@@ -199,7 +199,7 @@ class DictExcludeKeyTransformation(DataTransformation):
     def serialize(self) -> Dict[str, Any]:
         return {
             "type": get_full_class_name(type(self)),
-            "excluded_keys": list(self._excluded_keys),
+            "excluded_keys": sorted(list(self._excluded_keys)),
             "nested_separator": self.nested_separator,
             "ignore_missing_keys": self.ignore_missing_keys,
         }
