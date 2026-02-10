@@ -412,3 +412,104 @@ class TestDataCollectionEnvWrapper:
 
         transitions = wrapped.get_transitions()
         assert len(transitions) == 0
+
+    def test_step_id_tracking_single_env(self):
+        """Test that step_id is tracked correctly in single environment."""
+        env = MockEnv(batch_size=None)
+        wrapped = DataCollectionEnvWrapper(env)
+
+        # Reset and take multiple steps
+        context, obs, info = wrapped.reset()
+
+        for i in range(5):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        transitions = wrapped.get_transitions()
+        assert len(transitions) == 5
+        
+        # Check that step_ids are sequential
+        for i, transition in enumerate(transitions):
+            assert "step_id" in transition
+            assert transition["step_id"] == i
+
+    def test_step_id_tracking_batched_env(self):
+        """Test that step_id is tracked correctly in batched environment."""
+        batch_size = 4
+        env = MockEnv(batch_size=batch_size)
+        wrapped = DataCollectionEnvWrapper(env)
+
+        # Reset and take multiple steps
+        context, obs, info = wrapped.reset()
+
+        for i in range(5):
+            action = np.random.randn(batch_size, 2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        trajectories = wrapped.get_trajectories(batch_as_list=True)
+        assert len(trajectories) == batch_size
+        
+        # Check that each trajectory has sequential step_ids
+        for traj in trajectories:
+            assert len(traj) == 5
+            for i, transition in enumerate(traj):
+                assert "step_id" in transition
+                assert transition["step_id"] == i
+
+    def test_step_id_reset_on_done(self):
+        """Test that step_id resets when episode ends."""
+        env = MockEnv(batch_size=None)
+        wrapped = DataCollectionEnvWrapper(env)
+
+        # First episode - take 3 steps
+        context, obs, info = wrapped.reset()
+        for i in range(3):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        # Reset (simulating episode end)
+        context, obs, info = wrapped.reset()
+        
+        # Second episode - take 2 steps
+        for i in range(2):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        # Get all transitions
+        all_transitions = wrapped.get_transitions()
+        assert len(all_transitions) == 5
+        
+        # First 3 should have step_ids 0, 1, 2
+        for i in range(3):
+            assert all_transitions[i]["step_id"] == i
+        
+        # Last 2 should have step_ids 0, 1 (reset after episode end)
+        for i in range(2):
+            assert all_transitions[3 + i]["step_id"] == i
+
+    def test_trajectory_replay_buffer_detection(self):
+        """Test detection of TrajectoryReplayBuffer."""
+        env = MockEnv(batch_size=None)
+        
+        # Test without batch
+        wrapped = DataCollectionEnvWrapper(env)
+        assert wrapped._batch is None
+        assert wrapped._is_trajectory_buffer is False
+        
+        # Test with mock TrajectoryReplayBuffer
+        class MockTrajectoryReplayBuffer:
+            pass
+        
+        mock_buffer = MockTrajectoryReplayBuffer()
+        wrapped_with_buffer = DataCollectionEnvWrapper(env, batch=mock_buffer)
+        assert wrapped_with_buffer._batch is mock_buffer
+        assert wrapped_with_buffer._is_trajectory_buffer is True
+        
+        # Test with non-TrajectoryReplayBuffer
+        class SomeOtherBuffer:
+            pass
+        
+        other_buffer = SomeOtherBuffer()
+        wrapped_other = DataCollectionEnvWrapper(env, batch=other_buffer)
+        assert wrapped_other._batch is other_buffer
+        assert wrapped_other._is_trajectory_buffer is False
