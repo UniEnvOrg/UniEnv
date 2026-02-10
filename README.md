@@ -28,6 +28,31 @@ You can install optional dependencies such as `gymnasium` (for Gymnasium-compati
 pip install unienv[gymnasium,video]
 ```
 
+## Local Developments
+
+### Development Environment Setup
+
+To perform development on your local machine, you need to clone the repository and install the package in editable mode.
+
+```bash
+git clone https://github.com/UniEnvOrg/UniEnv
+cd UniEnv
+pip install numpy
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu # You can choose to either install cpu version or cuda version, up to you
+pip install jax # same for jax
+python -m pip install pytest
+python -m pip install tensordict h5py opencv-python
+pip install -e .[dev,gymnasium,video]
+```
+
+### Before commiting
+
+Make sure all unit tests pass and your added code compiles before commiting or making a PR. You can run the tests with
+
+```bash
+pytest
+```
+
 ## Cite
 
 If you use UniEnv in your research, please cite it as follows:
