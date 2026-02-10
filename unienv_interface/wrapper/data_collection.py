@@ -1,9 +1,10 @@
 from typing import Any, Optional, Dict, List, Tuple
 from unienv_interface.env_base.env import Env
+from unienv_interface.env_base.wrapper import Wrapper
 from unienv_interface.utils.space_data_queue import SpaceDataQueue
 
 
-class DataCollectionEnvWrapper(Env):
+class DataCollectionEnvWrapper(Wrapper):
     """
     Environment wrapper for collecting trajectory data.
 
@@ -37,26 +38,14 @@ class DataCollectionEnvWrapper(Env):
             batch: Optional batch storage (e.g., TrajectoryReplayBuffer). If provided,
                    episode context will be stored when using TrajectoryReplayBuffer.
         """
-        self.env = env
+        super().__init__(env)
         self.store_on_step = store_on_step
         self._batch = batch
         
         # Check if batch is a TrajectoryReplayBuffer
         self._is_trajectory_buffer = self._check_is_trajectory_buffer(batch)
 
-        # Inherit attributes from wrapped environment
-        self.action_space = env.action_space
-        self.observation_space = env.observation_space
-        self.context_space = env.context_space
-        self.backend = env.backend
-        self.device = env.device
-        self.metadata = env.metadata
-        self.render_mode = env.render_mode
-        self.render_fps = env.render_fps
-        self.rng = env.rng
-
         # batch_size from inner env: None = single, int = batched
-        self.batch_size = env.batch_size
         self._num_envs = 1 if env.batch_size is None else env.batch_size
 
         # Setup data collection spaces
@@ -258,11 +247,3 @@ class DataCollectionEnvWrapper(Env):
         self._data_queue.clear()
         self._prev_obs = None
         self._prev_context = None
-
-    def render(self):
-        """Delegate to wrapped environment."""
-        return self.env.render()
-
-    def close(self):
-        """Close wrapped environment."""
-        return self.env.close()
