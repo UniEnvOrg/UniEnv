@@ -1,5 +1,4 @@
 from typing import Dict, Any, Optional, Tuple, Union, Generic, SupportsFloat, Type, Sequence
-import gymnasium as gym
 import numpy as np
 import copy
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
