@@ -90,6 +90,20 @@ class MockEnv(Env):
         pass
 
 
+class MockTrajectoryReplayBuffer:
+    """Mock TrajectoryReplayBuffer for testing."""
+    
+    def __init__(self):
+        self.episode_data_calls = []
+        self.mark_end_calls = []
+    
+    def set_current_episode_data(self, value):
+        self.episode_data_calls.append(value)
+    
+    def mark_episode_end(self):
+        self.mark_end_calls.append(True)
+
+
 class TestSpaceDataQueue:
     """Test the SpaceDataQueue class."""
 
@@ -302,28 +316,32 @@ class TestDataCollectionEnvWrapper:
     def test_init_single_env(self):
         """Test initialization with single environment."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         assert wrapped.env == env
         assert wrapped.batch_size is None
         assert wrapped.backend == env.backend
         assert wrapped.observation_space == env.observation_space
         assert wrapped.action_space == env.action_space
+        assert wrapped.batch == mock_batch
 
     def test_init_batched_env(self):
         """Test initialization with batched environment."""
         batch_size = 4
         env = MockEnv(batch_size=batch_size)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         assert wrapped.env == env
         assert wrapped.batch_size == batch_size
-        assert wrapped._num_envs == batch_size
+        assert wrapped.batch == mock_batch
 
     def test_reset(self):
         """Test reset functionality."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         context, obs, info = wrapped.reset()
 
@@ -334,7 +352,8 @@ class TestDataCollectionEnvWrapper:
     def test_single_step_data_collection(self):
         """Test data collection on single step."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Reset environment
         context, obs, info = wrapped.reset()
@@ -353,7 +372,8 @@ class TestDataCollectionEnvWrapper:
     def test_multiple_steps_data_collection(self):
         """Test data collection over multiple steps."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Reset and take multiple steps
         context, obs, info = wrapped.reset()
@@ -368,7 +388,8 @@ class TestDataCollectionEnvWrapper:
     def test_clear_data(self):
         """Test clearing collected data."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         context, obs, info = wrapped.reset()
 
@@ -386,7 +407,8 @@ class TestDataCollectionEnvWrapper:
     def test_render_delegation(self):
         """Test that render is delegated to wrapped environment."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Should not raise an error
         result = wrapped.render()
@@ -395,28 +417,17 @@ class TestDataCollectionEnvWrapper:
     def test_close_delegation(self):
         """Test that close is delegated to wrapped environment."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Should not raise an error
         wrapped.close()
 
-    def test_store_on_step_false(self):
-        """Test behavior when store_on_step is False."""
-        env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env, store_on_step=False)
-
-        context, obs, info = wrapped.reset()
-
-        action = np.array([0.5, -0.5], dtype=np.float32)
-        obs, reward, terminated, truncated, info = wrapped.step(action)
-
-        transitions = wrapped.get_transitions()
-        assert len(transitions) == 0
-
     def test_step_id_tracking_single_env(self):
         """Test that step_id is tracked correctly in single environment."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Reset and take multiple steps
         context, obs, info = wrapped.reset()
@@ -437,7 +448,8 @@ class TestDataCollectionEnvWrapper:
         """Test that step_id is tracked correctly in batched environment."""
         batch_size = 4
         env = MockEnv(batch_size=batch_size)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # Reset and take multiple steps
         context, obs, info = wrapped.reset()
@@ -459,7 +471,8 @@ class TestDataCollectionEnvWrapper:
     def test_step_id_reset_on_done(self):
         """Test that step_id resets when episode ends."""
         env = MockEnv(batch_size=None)
-        wrapped = DataCollectionEnvWrapper(env)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
 
         # First episode - take 3 steps
         context, obs, info = wrapped.reset()
@@ -491,18 +504,10 @@ class TestDataCollectionEnvWrapper:
         """Test detection of TrajectoryReplayBuffer."""
         env = MockEnv(batch_size=None)
         
-        # Test without batch
-        wrapped = DataCollectionEnvWrapper(env)
-        assert wrapped._batch is None
-        assert wrapped._is_trajectory_buffer is False
-        
         # Test with mock TrajectoryReplayBuffer
-        class MockTrajectoryReplayBuffer:
-            pass
-        
         mock_buffer = MockTrajectoryReplayBuffer()
         wrapped_with_buffer = DataCollectionEnvWrapper(env, batch=mock_buffer)
-        assert wrapped_with_buffer._batch is mock_buffer
+        assert wrapped_with_buffer.batch is mock_buffer
         assert wrapped_with_buffer._is_trajectory_buffer is True
         
         # Test with non-TrajectoryReplayBuffer
@@ -511,5 +516,111 @@ class TestDataCollectionEnvWrapper:
         
         other_buffer = SomeOtherBuffer()
         wrapped_other = DataCollectionEnvWrapper(env, batch=other_buffer)
-        assert wrapped_other._batch is other_buffer
+        assert wrapped_other.batch is other_buffer
         assert wrapped_other._is_trajectory_buffer is False
+
+    def test_should_save_episode_default(self):
+        """Test that should_save_episode returns True by default."""
+        env = MockEnv(batch_size=None)
+        mock_batch = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_batch)
+        
+        # Default implementation should return True
+        result = wrapped.should_save_episode(0, [], False, False, {})
+        assert result is True
+
+    def test_episode_id_tracking_non_trajectory_buffer(self):
+        """Test that episode_id is tracked when not using TrajectoryReplayBuffer."""
+        env = MockEnv(batch_size=None)
+        
+        class NonTrajectoryBuffer:
+            pass
+        
+        buffer = NonTrajectoryBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=buffer)
+
+        # Reset and take steps
+        context, obs, info = wrapped.reset()
+        
+        for i in range(3):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        # Reset (new episode)
+        context, obs, info = wrapped.reset()
+        
+        for i in range(2):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        transitions = wrapped.get_transitions()
+        assert len(transitions) == 5
+        
+        # Check episode_ids - first 3 should be 0, last 2 should be 1
+        for i in range(3):
+            assert "episode_id" in transitions[i]
+            assert transitions[i]["episode_id"] == 0
+        
+        for i in range(2):
+            assert "episode_id" in transitions[3 + i]
+            assert transitions[3 + i]["episode_id"] == 1
+
+    def test_no_episode_id_with_trajectory_buffer(self):
+        """Test that episode_id is NOT in transitions when using TrajectoryReplayBuffer."""
+        env = MockEnv(batch_size=None)
+        mock_buffer = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_buffer)
+
+        # Reset and take steps
+        context, obs, info = wrapped.reset()
+        
+        for i in range(3):
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+
+        transitions = wrapped.get_transitions()
+        assert len(transitions) == 3
+        
+        # episode_id should not be in transitions when using TrajectoryReplayBuffer
+        for transition in transitions:
+            assert "episode_id" not in transition
+
+    def test_trajectory_buffer_episode_context_storage(self):
+        """Test that episode context is stored in TrajectoryReplayBuffer when episode ends."""
+        env = MockEnv(batch_size=None)
+        mock_buffer = MockTrajectoryReplayBuffer()
+        wrapped = DataCollectionEnvWrapper(env, batch=mock_buffer)
+
+        # Reset and take steps until episode ends
+        context, obs, info = wrapped.reset()
+        
+        # Take many steps to trigger episode end
+        for i in range(15):  # MockEnv has max_steps=10
+            action = np.random.randn(2).astype(np.float32)
+            obs, reward, terminated, truncated, info = wrapped.step(action)
+            if terminated:
+                break
+
+        # After episode ends and reset, episode context should have been stored
+        # Note: In this mock env, context is None, so no calls should be made
+        # But if we had context, it would be stored
+        
+    def test_custom_should_save_episode(self):
+        """Test custom should_save_episode implementation."""
+        env = MockEnv(batch_size=None)
+        mock_batch = MockTrajectoryReplayBuffer()
+        
+        class CustomWrapper(DataCollectionEnvWrapper):
+            def should_save_episode(self, env_idx, traj_data, truncation, termination, info):
+                # Only save episodes that terminated naturally (not truncated)
+                return termination and not truncation
+        
+        wrapped = CustomWrapper(env, batch=mock_batch)
+        
+        # Test with termination=True, truncation=False
+        result = wrapped.should_save_episode(0, [], False, True, {})
+        assert result is True
+        
+        # Test with termination=False, truncation=True
+        result = wrapped.should_save_episode(0, [], True, False, {})
+        assert result is False

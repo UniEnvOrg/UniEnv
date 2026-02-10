@@ -2,6 +2,8 @@ from typing import Any, Optional, Dict, List, Tuple
 from unienv_interface.env_base.env import Env
 from unienv_interface.env_base.wrapper import Wrapper
 from unienv_interface.utils.space_data_queue import SpaceDataQueue
+from unienv_data.replay_buffer import TrajectoryReplayBuffer
+from unienv_interface.space.space_utils import batch_utils as sbu
 
 
 class DataCollectionEnvWrapper(Wrapper):
@@ -22,31 +24,25 @@ class DataCollectionEnvWrapper(Wrapper):
     def __init__(
         self,
         env: Env,
+        batch: Any,
         additional_data_spaces: Optional[Dict[str, Any]] = None,
-        store_on_step: bool = True,
-        batch: Optional[Any] = None,
     ):
         """
         Initialize the data collection wrapper.
 
         Args:
             env: The base UniEnv environment to wrap
+            batch: Batch storage (e.g., TrajectoryReplayBuffer). Episode context will 
+                   be stored when using TrajectoryReplayBuffer.
             additional_data_spaces: Additional data fields to collect beyond
                                    observation, action, reward, terminated, truncated
                                    e.g., {'context': env.context_space}
-            store_on_step: Whether to store data immediately on each step
-            batch: Optional batch storage (e.g., TrajectoryReplayBuffer). If provided,
-                   episode context will be stored when using TrajectoryReplayBuffer.
         """
         super().__init__(env)
-        self.store_on_step = store_on_step
-        self._batch = batch
+        self.batch = batch
         
         # Check if batch is a TrajectoryReplayBuffer
-        self._is_trajectory_buffer = self._check_is_trajectory_buffer(batch)
-
-        # batch_size from inner env: None = single, int = batched
-        self._num_envs = 1 if env.batch_size is None else env.batch_size
+        self._is_trajectory_buffer = isinstance(batch, TrajectoryReplayBuffer)
 
         # Setup data collection spaces
         self._data_spaces = {
@@ -55,7 +51,13 @@ class DataCollectionEnvWrapper(Wrapper):
             "reward": None,  # Scalar, handled specially
             "terminated": None,  # Scalar boolean
             "truncated": None,  # Scalar boolean
+            "step_id": None,  # Scalar integer
         }
+        
+        # Add episode_id if not using TrajectoryReplayBuffer (it stores its own)
+        if not self._is_trajectory_buffer:
+            self._data_spaces["episode_id"] = None  # Scalar integer
+            
         if additional_data_spaces:
             self._data_spaces.update(additional_data_spaces)
 
@@ -69,15 +71,40 @@ class DataCollectionEnvWrapper(Wrapper):
         self._prev_obs: Optional[Any] = None
         self._prev_context: Optional[Any] = None
         
-        # Track step_id for each environment (for batched envs)
-        self._step_ids: Optional[List[int]] = None
-    
-    def _check_is_trajectory_buffer(self, batch: Optional[Any]) -> bool:
-        """Check if the provided batch is a TrajectoryReplayBuffer."""
-        if batch is None:
-            return False
-        # Avoid circular imports by checking class name
-        return type(batch).__name__ == "TrajectoryReplayBuffer"
+        # Track step_id for each environment (backend array)
+        self._step_ids: Optional[Any] = None
+        
+        # Track episode_id counter (integer, incremented per episode)
+        self._episode_id: int = 0
+        
+        # Track episode_id for each environment (backend array)
+        self._episode_ids: Optional[Any] = None
+
+    def should_save_episode(
+        self, 
+        env_idx: int, 
+        traj_data: List[Dict[str, Any]], 
+        truncation: bool, 
+        termination: bool, 
+        info: Dict[str, Any]
+    ) -> bool:
+        """
+        Determine whether to save an episode's trajectory data.
+        
+        Override this method to implement custom filtering logic, e.g.,
+        only storing successful demonstrations.
+        
+        Args:
+            env_idx: Index of the environment (for batched envs)
+            traj_data: List of transition dictionaries for this episode
+            truncation: Whether the episode was truncated
+            termination: Whether the episode terminated naturally
+            info: Info dict from the final step
+            
+        Returns:
+            True if the episode should be saved, False otherwise
+        """
+        return True
 
     def reset(self, *, mask=None, seed=None, **kwargs):
         """
@@ -90,19 +117,64 @@ class DataCollectionEnvWrapper(Wrapper):
         # Reset data queue (with mask for partial resets)
         self._data_queue.reset(mask=mask)
 
-        # Initialize or reset step_ids
+        # Initialize step_ids as backend array
         if self._step_ids is None:
-            self._step_ids = [0] * self._num_envs
+            if self.batch_size is None:
+                self._step_ids = self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+            else:
+                self._step_ids = self.backend.zeros(
+                    (self.batch_size,), 
+                    dtype=self.backend.default_integer_dtype, 
+                    device=self.device
+                )
+        
+        # Initialize episode_ids as backend array
+        if self._episode_ids is None and not self._is_trajectory_buffer:
+            if self.batch_size is None:
+                self._episode_ids = self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+            else:
+                self._episode_ids = self.backend.zeros(
+                    (self.batch_size,), 
+                    dtype=self.backend.default_integer_dtype, 
+                    device=self.device
+                )
         
         if mask is not None:
             # Partial reset: reset step_ids for masked environments
             mask_arr = self.backend.asarray(mask)
-            reset_indices = self.backend.nonzero(mask_arr).tolist()
-            for idx in reset_indices:
-                self._step_ids[idx] = 0
+            reset_indices = self.backend.nonzero(mask_arr)
+            for i in range(reset_indices.shape[0]):
+                idx = int(reset_indices[i])
+                self._step_ids = self.backend.index_update(
+                    self._step_ids, 
+                    idx, 
+                    self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+                )
+                if not self._is_trajectory_buffer:
+                    self._episode_ids = self.backend.index_update(
+                        self._episode_ids,
+                        idx,
+                        self.backend.asarray(self._episode_id, dtype=self.backend.default_integer_dtype)
+                    )
         else:
-            # Full reset: reset all step_ids
-            self._step_ids = [0] * self._num_envs
+            # Full reset: reset all step_ids and assign new episode_ids
+            if self.batch_size is None:
+                self._step_ids = self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+                if not self._is_trajectory_buffer:
+                    self._episode_ids = self.backend.asarray(self._episode_id, dtype=self.backend.default_integer_dtype)
+            else:
+                self._step_ids = self.backend.zeros(
+                    (self.batch_size,), 
+                    dtype=self.backend.default_integer_dtype, 
+                    device=self.device
+                )
+                if not self._is_trajectory_buffer:
+                    self._episode_ids = self.backend.full(
+                        (self.batch_size,),
+                        self._episode_id,
+                        dtype=self.backend.default_integer_dtype,
+                        device=self.device
+                    )
 
         # Store initial observation
         self._prev_obs = obs
@@ -123,93 +195,102 @@ class DataCollectionEnvWrapper(Wrapper):
         # Execute step in wrapped environment
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        if self.store_on_step:
-            # Build transition data
-            transition = {
-                "observation": self._prev_obs,
-                "action": action,
-                "reward": reward,
-                "terminated": terminated,
-                "truncated": truncated,
-            }
+        # Build transition data
+        transition = {
+            "observation": self._prev_obs,
+            "action": action,
+            "reward": reward,
+            "terminated": terminated,
+            "truncated": truncated,
+            "step_id": self._step_ids,
+        }
+        
+        # Add episode_id if not using TrajectoryReplayBuffer
+        if not self._is_trajectory_buffer:
+            transition["episode_id"] = self._episode_ids
 
-            # Add context if available
-            if self._prev_context is not None:
-                transition["context"] = self._prev_context
+        # Add any additional fields from info
+        transition["info"] = info
 
-            # Add any additional fields from info
-            transition["info"] = info
+        # Add to queue
+        self._data_queue.add(transition)
+        
+        # Post-step check: store episode context if episodes ended
+        self._post_step_check(terminated, truncated, info)
 
-            # Add step_id for each environment
-            if self.batch_size is None:
-                assert self._step_ids is not None
-                transition["step_id"] = self._step_ids[0]
-                self._step_ids[0] += 1
-            else:
-                # For batched envs, step_id is a list/array
-                assert self._step_ids is not None
-                transition["step_id"] = self.backend.asarray(self._step_ids, dtype=self.backend.default_integer_dtype, device=self.device)
-                # Increment step_ids for environments that are not done
-                done = self.backend.logical_or(terminated, truncated)
-                for i in range(self._num_envs):
-                    if not done[i]:
-                        self._step_ids[i] += 1
-                    else:
-                        self._step_ids[i] = 0
-
-            # Add to queue
-            self._data_queue.add(transition)
-            
-            # If using TrajectoryReplayBuffer and episode ended, store episode context
-            if self._is_trajectory_buffer and self._batch is not None:
-                self._store_episode_context_if_done(terminated, truncated)
-
-            # Store current obs for next transition
-            self._prev_obs = obs
+        # Store current obs for next transition
+        self._prev_obs = obs
 
         return obs, reward, terminated, truncated, info
     
-    def _store_episode_context_if_done(self, terminated, truncated) -> None:
+    def _post_step_check(self, terminated, truncated, info) -> None:
         """
-        Store episode context in TrajectoryReplayBuffer if episodes have ended.
+        Post-step processing: update step_ids, episode_ids, and store episode context.
         
-        This method checks if any environments have finished episodes and stores
-        the episode context (if available) in the TrajectoryReplayBuffer.
+        This method handles:
+        - Incrementing step_ids for active episodes
+        - Resetting step_ids and updating episode_ids for finished episodes
+        - Storing episode context in TrajectoryReplayBuffer when episodes end
         """
-        assert self._batch is not None, "Batch must be provided to store episode context"
-        
         if self.batch_size is None:
             # Single environment
             done = terminated or truncated
-            if done and self._prev_context is not None:
-                # Type ignore: we know _batch has these methods because _is_trajectory_buffer is True
-                self._batch.set_current_episode_data(self._prev_context)  # type: ignore
-                self._batch.mark_episode_end()  # type: ignore
+            if done:
+                # Check if we should save this episode
+                if self.should_save_episode(0, [], truncated, terminated, info):
+                    # Store episode context if using TrajectoryReplayBuffer
+                    if self._is_trajectory_buffer and self._prev_context is not None:
+                        self.batch.set_current_episode_data(self._prev_context)
+                        self.batch.mark_episode_end()
+                
+                # Reset step_id and increment episode_id
+                self._step_ids = self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+                if not self._is_trajectory_buffer:
+                    self._episode_id += 1
+                    self._episode_ids = self.backend.asarray(self._episode_id, dtype=self.backend.default_integer_dtype)
+            else:
+                # Increment step_id
+                self._step_ids = self._step_ids + self.backend.asarray(1, dtype=self.backend.default_integer_dtype)
         else:
             # Batched environment
             done = self.backend.logical_or(terminated, truncated)
+            
             if self.backend.any(done):
-                # For batched envs, we need to handle each environment separately
-                # Only store episode context if we have it and episodes ended
-                if self._prev_context is not None:
-                    # Get indices of done environments
-                    done_indices = self.backend.nonzero(done).tolist()
-                    for idx in done_indices:
-                        # Extract context for this specific environment
-                        env_context = self._get_env_item(self._prev_context, idx)
-                        # Type ignore: we know _batch has these methods because _is_trajectory_buffer is True
-                        self._batch.set_current_episode_data(env_context)  # type: ignore
-                        self._batch.mark_episode_end()  # type: ignore
-    
-    def _get_env_item(self, data: Any, idx: int) -> Any:
-        """Extract item at index from batched data structure."""
-        if isinstance(data, dict):
-            return {k: self._get_env_item(v, idx) for k, v in data.items()}
-        elif isinstance(data, (list, tuple)):
-            return data[idx]
-        else:
-            # Assume array with batch dimension
-            return data[idx]
+                # Handle finished episodes
+                done_indices = self.backend.nonzero(done)
+                for i in range(done_indices.shape[0]):
+                    idx = int(done_indices[i])
+                    
+                    # Check if we should save this episode
+                    # For batched envs, we don't have the full trajectory yet, so pass empty list
+                    # Users can override should_save_episode to use info for filtering
+                    if self.should_save_episode(idx, [], bool(truncated[idx]), bool(terminated[idx]), info):
+                        # Store episode context if using TrajectoryReplayBuffer
+                        if self._is_trajectory_buffer and self._prev_context is not None:
+                            env_context = sbu.get_at(self.env.context_space, self._prev_context, idx)
+                            self.batch.set_current_episode_data(env_context)
+                            self.batch.mark_episode_end()
+                    
+                    # Reset step_id and assign new episode_id for this env
+                    self._step_ids = self.backend.index_update(
+                        self._step_ids,
+                        idx,
+                        self.backend.asarray(0, dtype=self.backend.default_integer_dtype)
+                    )
+                    if not self._is_trajectory_buffer:
+                        self._episode_id += 1
+                        self._episode_ids = self.backend.index_update(
+                            self._episode_ids,
+                            idx,
+                            self.backend.asarray(self._episode_id, dtype=self.backend.default_integer_dtype)
+                        )
+            
+            # Increment step_ids for environments that are not done
+            self._step_ids = self.backend.where(
+                done,
+                self._step_ids,
+                self._step_ids + self.backend.asarray(1, dtype=self.backend.default_integer_dtype)
+            )
 
     def get_trajectories(self, batch_as_list: bool = True):
         """
