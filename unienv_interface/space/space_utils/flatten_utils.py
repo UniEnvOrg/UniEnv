@@ -225,7 +225,7 @@ def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_
 @flatten_data.register(DictSpace)
 def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> BArrayType:
     to_concat = []
-    for key, subspace in space.spaces.items():
+    for key, subspace in sorted(space.spaces.items(), key=lambda x: x[0]):
         flat_sample = flatten_data(subspace, data[key], start_dim)
         flat_dim_data = flat_dim(subspace, start_dim)
         assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}, original data {data[key].shape}, original space {subspace}"
@@ -237,7 +237,7 @@ def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], sta
 def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> Any:
     result = {}
     start = 0
-    for key, subspace in space.spaces.items():
+    for key, subspace in sorted(space.spaces.items(), key=lambda x: x[0]):
         end = start + flat_dim(subspace, start_dim)
         part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.device(data))
         part_data = space.backend.take(data, part_idx, axis=start_dim)
