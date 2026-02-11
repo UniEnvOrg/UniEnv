@@ -193,6 +193,27 @@ class ImageCompressTransformation(DataTransformation):
         if 'last_channel' not in state:
             self.last_channel = True
 
+    def serialize(self):
+        return {
+            "init_quality": self.init_quality,
+            "max_size_bytes": self.max_size_bytes,
+            "compression_ratio": self.compression_ratio,
+            "mode": self.mode,
+            "format": self.format,
+            "last_channel": self.last_channel,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data, backend = None, device = None):
+        return cls(
+            init_quality=json_data.get("init_quality", 70),
+            max_size_bytes=json_data.get("max_size_bytes", None),
+            compression_ratio=json_data.get("compression_ratio", None),
+            mode=json_data.get("mode", None),
+            format=json_data.get("format", "JPEG"),
+            last_channel=json_data.get("last_channel", True),
+        )
+
 class ImageDecompressTransformation(DataTransformation):
     has_inverse = True
     
@@ -286,4 +307,23 @@ class ImageDecompressTransformation(DataTransformation):
             mode=self.mode,
             format=self.format if self.format is not None else "JPEG",
             last_channel=self.target_channels is not None,
+        )
+    
+    def serialize(self):
+        return {
+            "target_height": self.target_height,
+            "target_width": self.target_width,
+            "target_channels": self.target_channels,
+            "mode": self.mode,
+            "format": self.format,
+        }
+
+    @classmethod
+    def deserialize_from(cls, json_data, backend = None, device = None):
+        return cls(
+            target_height=json_data["target_height"],
+            target_width=json_data["target_width"],
+            target_channels=json_data.get("target_channels", 3),
+            mode=json_data.get("mode", None),
+            format=json_data.get("format", None),
         )
