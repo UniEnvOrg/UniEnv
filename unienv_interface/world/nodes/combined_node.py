@@ -1,16 +1,18 @@
-from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable
+from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable, Generic
 from math import lcm
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.utils.control_util import find_best_timestep
 
-from .world import World
-from .node import WorldNode, ContextType, ObsType, ActType
+from ..world import World
+from ..node import WorldNode, ContextType, ObsType, ActType
 
 CombinedDataT = Union[Dict[str, Any], BArrayType]
 
 class CombinedWorldNode(WorldNode[
     Optional[CombinedDataT], CombinedDataT, CombinedDataT,
+    BArrayType, BDeviceType, BDtypeType, BRNGType
+], Generic[
     BArrayType, BDeviceType, BDtypeType, BRNGType
 ]):
     """
@@ -25,7 +27,7 @@ class CombinedWorldNode(WorldNode[
     def __init__(
         self,
         name : str,
-        nodes : Iterable[WorldNode[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType], Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
+        nodes : Iterable[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         direct_return : bool = True,
         render_mode : Optional[str] = 'dict',
     ):

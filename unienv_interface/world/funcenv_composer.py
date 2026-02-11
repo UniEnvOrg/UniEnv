@@ -7,7 +7,7 @@ from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGT
 
 from .funcworld import FuncWorld, WorldStateT
 from .funcnode import FuncWorldNode, NodeStateT
-from .combined_funcnode import CombinedFuncWorldNode
+from .funcnodes.combined_funcnode import CombinedFuncWorldNode
 
 
 @dataclass

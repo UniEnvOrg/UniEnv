@@ -5,7 +5,7 @@ from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGT
 
 from .world import World
 from .node import WorldNode
-from .combined_node import CombinedWorldNode
+from .nodes.combined_node import CombinedWorldNode
 
 
 class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):

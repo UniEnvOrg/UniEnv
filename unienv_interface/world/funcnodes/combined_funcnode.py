@@ -1,11 +1,11 @@
-from typing import Optional, Dict, Set, Any, Tuple, Union, Iterable, Mapping
+from typing import Optional, Dict, Set, Any, Tuple, Union, Iterable, Mapping, Generic
 from math import lcm
 
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 
-from .funcnode import FuncWorldNode
-from .funcworld import WorldStateT
+from ..funcnode import FuncWorldNode
+from ..funcworld import WorldStateT
 
 CombinedDataT = Union[Dict[str, Any], Any]
 CombinedNodeStateT = Dict[str, Any]
@@ -16,6 +16,8 @@ class CombinedFuncWorldNode(FuncWorldNode[
 	CombinedDataT,             # Observation type
 	CombinedDataT,             # Action type
 	BArrayType, BDeviceType, BDtypeType, BRNGType
+], Generic[
+	WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType
 ]):
 	"""A functional counterpart to `CombinedWorldNode` that composes multiple `FuncWorldNode`s.
 
