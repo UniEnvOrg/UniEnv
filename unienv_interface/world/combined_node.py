@@ -192,6 +192,10 @@ class CombinedWorldNode(WorldNode[
         return self._collect_priorities(self.nodes, 'after_reset_priorities')
 
     @property
+    def after_reload_priorities(self) -> Set[int]:
+        return self._collect_priorities(self.nodes, 'after_reload_priorities')
+
+    @property
     def pre_environment_step_priorities(self) -> Set[int]:
         return self._collect_priorities(self.nodes, 'pre_environment_step_priorities')
 
@@ -370,7 +374,19 @@ class CombinedWorldNode(WorldNode[
         for node in self.nodes:
             if priority in node.after_reset_priorities:
                 node.after_reset(priority=priority, mask=mask)
-    
+
+    def after_reload(self, *, priority : int = 0, mask = None):
+        """Call after_reload on child nodes. Similar to after_reset but for reload flow."""
+        all_prios = self.after_reload_priorities
+        if all_prios and priority == max(all_prios):
+            self._pre_substeps = 0
+            self._post_substeps = 0
+            self._action_substeps = 0
+            self._cached_actions.clear()
+
+        for node in self.nodes:
+            if priority in node.after_reload_priorities:
+                node.after_reload(priority=priority, mask=mask)
 
     def close(self):
         for node in self.nodes:

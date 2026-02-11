@@ -82,6 +82,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
     reset_priorities : Set[int] = set()
     reload_priorities : Set[int] = set()
     after_reset_priorities : Set[int] = set()
+    after_reload_priorities : Set[int] = set()  # NEW: Priority set for after_reload
     pre_environment_step_priorities : Set[int] = set()
     post_environment_step_priorities : Set[int] = set()
 
@@ -217,7 +218,28 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         This method is called after all ``WorldNode``s has been called with ``reset`` (e.g. the environment reset is effectively done).
         Use ``get_context``, ``get_observation``, and ``get_info`` to read the post-reset state.
         """
-        self.post_environment_step(self.effective_update_timestep, priority=priority)
+        pass
+
+    def after_reload(
+        self,
+        *,
+        priority : int = 0,
+        mask : Optional[BArrayType] = None,
+    ) -> None:
+        """
+        This method is called after the world has been rebuilt following a reload.
+        
+        At this point:
+        - All nodes have added their entities during the reload phase
+        - The world scene has been built (simulation is ready)
+        - Nodes can now cache references to entities, geoms, etc.
+        
+        By default, this calls ``after_reset()``. Override if you need specific
+        post-reload initialization that differs from post-reset.
+        
+        Use ``get_context``, ``get_observation``, and ``get_info`` to read the state.
+        """
+        self.after_reset(priority=priority, mask=mask)
 
     def close(self) -> None:
         pass

@@ -104,12 +104,27 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         seed: Optional[int] = None,
         **kwargs,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Reload the environment - reload scene with entities from nodes.
+
+        Flow:
+            1. world.reload()       - World prepares (clear, load assets)
+            2. node.reload()        - Nodes add entities to scene
+            3. world.after_reload() - World compiles scene with all entities
+            4. node.after_reload()  - Nodes cache entity references
+        """
+        # 1. World prepares (clear old state, load assets)
         self.world.reload(seed=seed, mask=mask, **kwargs)
+
+        # 2. Nodes add entities to the scene
         for p in sorted(self.node.reload_priorities, reverse=True):
             self.node.reload(priority=p, seed=seed, mask=mask, **kwargs)
 
-        for p in sorted(self.node.after_reset_priorities, reverse=True):
-            self.node.after_reset(priority=p, mask=mask)
+        # 3. World compiles scene with all entities added by nodes
+        self.world.after_reload(seed=seed, mask=mask, **kwargs)
+
+        # 4. Nodes cache references to entities (now that scene is compiled)
+        for p in sorted(self.node.after_reload_priorities, reverse=True):
+            self.node.after_reload(priority=p, mask=mask)
 
         context = self.node.get_context() if self.node.context_space is not None else None
         obs = self.node.get_observation() if self.node.observation_space is not None else None
@@ -127,15 +142,21 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         if self._first_reset:
             return self.reload(seed=seed, mask=mask, **kwargs)
 
+        # 1. World reset
         self.world.reset(seed=seed, mask=mask, **kwargs)
+        
+        # 2. Nodes reset
         for p in sorted(self.node.reset_priorities, reverse=True):
             self.node.reset(priority=p, seed=seed, mask=mask, **kwargs)
 
-        # after_reset — call at each priority for side effects
+        # 3. World post-reset hook
+        self.world.after_reset(seed=seed, mask=mask, **kwargs)
+        
+        # 4. Nodes post-reset hook
         for p in sorted(self.node.after_reset_priorities, reverse=True):
             self.node.after_reset(priority=p, mask=mask)
 
-        # Read final state
+        # 5. Read final state
         context = self.node.get_context() if self.node.context_space is not None else None
         obs = self.node.get_observation() if self.node.observation_space is not None else None
         info = self.node.get_info() or {}

@@ -36,9 +36,10 @@ class FuncWorldNode(ABC, Generic[
 
     Lifecycle — reload flow::
 
-        FuncWorld.reload()
-          -> FuncWorldNode.reload(world_state, priority=...)
-          -> FuncWorldNode.after_reset(world_state, node_state, priority=...)
+        FuncWorld.reload()          # World prepares (clear, load assets)
+          -> FuncWorldNode.reload(world_state, priority=...)     # Nodes add entities
+        FuncWorld.after_reload()    # World compiles scene
+          -> FuncWorldNode.after_reload(world_state, node_state, priority=...)  # Nodes cache refs
           -> FuncWorldNode.get_context(...) / get_observation(...) / get_info(...) / render(...)
 
     ``reload`` re-generates the simulation environment (e.g. re-reading assets,
@@ -104,6 +105,7 @@ class FuncWorldNode(ABC, Generic[
     reset_priorities : Set[int] = set()
     reload_priorities : Set[int] = set()
     after_reset_priorities : Set[int] = set()
+    after_reload_priorities : Set[int] = set()
     pre_environment_step_priorities : Set[int] = set()
     post_environment_step_priorities : Set[int] = set()
 
@@ -177,6 +179,29 @@ class FuncWorldNode(ABC, Generic[
         Use ``get_context``, ``get_observation``, and ``get_info`` to read the post-reset state.
         """
         return world_state, node_state
+
+    def after_reload(
+        self,
+        world_state : WorldStateT,
+        node_state : NodeStateT,
+        *,
+        priority : int = 0,
+        mask : Optional[BArrayType] = None
+    ) -> Tuple[WorldStateT, NodeStateT]:
+        """
+        This method is called after the world has been rebuilt following a reload.
+        
+        At this point:
+        - All nodes have added their entities during the reload phase
+        - The world scene has been built (simulation is ready)
+        - Nodes can now cache references to entities, geoms, etc.
+        
+        By default, this calls ``after_reset()``. Override if you need specific
+        post-reload initialization that differs from post-reset.
+        
+        Use ``get_context``, ``get_observation``, and ``get_info`` to read the state.
+        """
+        return self.after_reset(world_state, node_state, priority=priority, mask=mask)
 
     def pre_environment_step(
         self,

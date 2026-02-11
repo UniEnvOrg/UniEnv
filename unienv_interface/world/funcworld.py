@@ -57,10 +57,66 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
         **kwargs
     ) -> WorldStateT:
         """
-        Reload the world. By default, this just calls `initial` with the same parameters.
-        Simulation environments can override this to completely re-read assets and reload the simulation.
+        Prepare the world for reloading. This is called BEFORE nodes add entities.
+        
+        Use this hook to:
+        - Clear old scene data
+        - Load asset definitions
+        - Prepare for entities to be added by nodes
+        
+        DO NOT compile the scene here. Compilation happens in `after_reload()` after
+        all nodes have had a chance to add their entities.
+        
+        By default, this just calls `initial` with the same parameters.
+        Simulation environments should override this to prepare for entity addition.
+        
+        The reload flow is:
+            1. world.reload()       # World prepares (clear, load assets)
+            2. node.reload()        # Nodes add entities to scene
+            3. world.after_reload() # World compiles scene with all entities
+            4. node.after_reload()  # Nodes cache references
         """
         return self.initial(seed=seed, **kwargs)
+
+    def after_reset(
+        self,
+        state : WorldStateT,
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> WorldStateT:
+        """
+        Called after `reset()` completes.
+        
+        Use this hook to perform post-reset initialization.
+        Returns the (possibly modified) world state.
+        """
+        return state
+
+    def after_reload(
+        self,
+        state : WorldStateT,
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> WorldStateT:
+        """
+        Compile the world scene AFTER all nodes have added their entities.
+        
+        This is where the actual scene compilation should happen, since nodes
+        have already added their entities during the `reload()` phase.
+        
+        Use this hook to:
+        - Compile the simulation scene
+        - Cache references to entities
+        - Perform validation that requires the compiled scene
+        - Initialize state that depends on the final scene configuration
+        
+        Returns the (possibly modified) world state.
+        """
+        return state
 
     def close(
         self,

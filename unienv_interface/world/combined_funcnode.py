@@ -197,6 +197,10 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		return self._collect_priorities(self.nodes, 'after_reset_priorities')
 
 	@property
+	def after_reload_priorities(self) -> Set[int]:
+		return self._collect_priorities(self.nodes, 'after_reload_priorities')
+
+	@property
 	def pre_environment_step_priorities(self) -> Set[int]:
 		return self._collect_priorities(self.nodes, 'pre_environment_step_priorities')
 
@@ -289,6 +293,30 @@ class CombinedFuncWorldNode(FuncWorldNode[
 			if priority in node.after_reset_priorities:
 				ns = node_state[node.name]
 				world_state, ns = node.after_reset(world_state, ns, priority=priority, mask=mask)
+				node_state[node.name] = ns
+		return world_state, node_state
+
+	def after_reload(
+		self,
+		world_state: WorldStateT,
+		node_state: CombinedNodeStateT,
+		*,
+		priority: int = 0,
+		mask: Optional[BArrayType] = None,
+	) -> Tuple[WorldStateT, CombinedNodeStateT]:
+		"""Call after_reload on child nodes. Similar to after_reset but for reload flow."""
+		node_state = node_state.copy()
+		all_prios = self.after_reload_priorities
+		if all_prios and priority == max(all_prios):
+			node_state[self._COUNTER_PRE] = 0
+			node_state[self._COUNTER_POST] = 0
+			node_state[self._COUNTER_ACTION] = 0
+			node_state[self._CACHED_ACTIONS] = {}
+
+		for node in self.nodes:
+			if priority in node.after_reload_priorities:
+				ns = node_state[node.name]
+				world_state, ns = node.after_reload(world_state, ns, priority=priority, mask=mask)
 				node_state[node.name] = ns
 		return world_state, node_state
 

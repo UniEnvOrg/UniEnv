@@ -113,11 +113,13 @@ class FuncWorldEnv(FuncEnv[
 		seed: Optional[int] = None,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		# 1. World prepares (clear old state, load assets)
 		world_state = self.world.reload(
 			state.world_state,
 			seed=seed, **kwargs
 		)
 
+		# 2. Nodes add entities to the scene
 		node_state = None
 		for p in sorted(self.node.reload_priorities, reverse=True):
 			world_state, ns_p = self.node.reload(world_state, priority=p, seed=seed, **kwargs)
@@ -126,8 +128,15 @@ class FuncWorldEnv(FuncEnv[
 			else:
 				node_state = ns_p
 
-		for p in sorted(self.node.after_reset_priorities, reverse=True):
-			world_state, node_state = self.node.after_reset(
+		# 3. World compiles scene with all entities
+		world_state = self.world.after_reload(
+			world_state,
+			seed=seed, **kwargs
+		)
+
+		# 4. Nodes cache references to entities (now that scene is compiled)
+		for p in sorted(self.node.after_reload_priorities, reverse=True):
+			world_state, node_state = self.node.after_reload(
 				world_state, node_state, priority=p
 			)
 
@@ -173,21 +182,28 @@ class FuncWorldEnv(FuncEnv[
 		mask: Optional[BArrayType] = None,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		# 1. World reset
 		world_state = self.world.reset(state.world_state, seed=seed, mask=mask, **kwargs)
 		node_state = state.node_state
 
+		# 2. Nodes reset
 		for p in sorted(self.node.reset_priorities, reverse=True):
 			world_state, node_state = self.node.reset(
 				world_state, node_state, priority=p, seed=seed, mask=mask, **kwargs
 			)
 
-		# after_reset
+		# 3. World post-reset hook
+		world_state = self.world.after_reset(
+			world_state, seed=seed, mask=mask, **kwargs
+		)
+
+		# 4. Nodes post-reset hook
 		for p in sorted(self.node.after_reset_priorities, reverse=True):
 			world_state, node_state = self.node.after_reset(
 				world_state, node_state, priority=p, mask=mask
 			)
 
-		# Read final state
+		# 5. Read final state
 		context = self.node.get_context(world_state, node_state) if self.node.context_space is not None else None
 		obs = self.node.get_observation(world_state, node_state) if self.node.observation_space is not None else None
 		info = self.node.get_info(world_state, node_state) or {}
