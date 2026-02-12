@@ -64,6 +64,12 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
 
        Multiple priorities (e.g. ``{0, 1}``) allow the same method to be invoked at
        different stages; the caller iterates priorities in the desired order.
+
+    ---
+    Priority conventions (in reload / reset / after_reload / after_reset):
+    - (-200, -100] -> Floor setup, surrounding environment setup
+    - (-100, -50] -> Robot setup
+    - (-50, 0] -> Object setup
     """
 
     name : str
