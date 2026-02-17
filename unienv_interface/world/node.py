@@ -65,11 +65,33 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
        Multiple priorities (e.g. ``{0, 1}``) allow the same method to be invoked at
        different stages; the caller iterates priorities in the desired order.
 
+    Space lifecycle contract
+    ------------------------
+    ``action_space``, ``observation_space``, and ``context_space`` follow a
+    two-phase lifecycle:
+
+    **Phase 1 — construction** (``__init__``):
+        Nodes *should* expose a preliminary space if the dimensionality is known
+        before the scene is built.  For example, an EEF controller always produces a
+        6-D action regardless of the number of robot DOFs, so the space can be set to
+        a ``BoxSpace`` with ``[-inf, inf]`` bounds immediately.  If the dimensionality
+        is genuinely unknown (e.g. a joint-position controller whose DOF count comes
+        from the compiled scene), the space may be ``None`` at this stage.
+
+    **Phase 2 — post-build** (end of ``after_reload``):
+        By the time the lowest-priority ``after_reload`` has returned, every node
+        **must** have set its final, tightly-bounded spaces.  ``CombinedWorldNode``
+        calls ``_refresh_spaces()`` at this point so that the aggregated spaces seen
+        by the environment composer reflect the true, post-build state.
     ---
     Priority conventions (in reload / reset / after_reload / after_reset):
-    - (-200, -100] -> Floor setup, surrounding environment setup
-    - (-100, -50] -> Robot setup
-    - (-50, 0] -> Object setup
+    Higher priority runs first (``sorted(..., reverse=True)``).
+
+    - [100, 200) -> Floor / surrounding environment setup (e.g. table, ground plane)
+    - [50, 100) -> Robot setup (add URDF/MJCF entity, init controller, apply rest pose)
+    - [0, 50)   -> Object / prop setup; general post-step observation updates
+    - (-, 0)    -> Sensors / renderers that must run *after* all entities are settled
+                   (e.g. cameras: -50)
     """
 
     name : str

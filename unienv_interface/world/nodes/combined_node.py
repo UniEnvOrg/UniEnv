@@ -29,7 +29,7 @@ class CombinedWorldNode(WorldNode[
         name : str,
         nodes : Iterable[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         direct_return : bool = True,
-        render_mode : Optional[str] = 'dict',
+        render_mode : Optional[str] = 'auto',
     ):
         nodes = list(nodes)
         if len(nodes) == 0:
@@ -45,19 +45,6 @@ class CombinedWorldNode(WorldNode[
             raise ValueError("All nodes must have unique names.")
         self.nodes = nodes
 
-        # Aggregate Spaces
-        _, self.context_space = self.aggregate_spaces(
-            {node.name: node.context_space for node in nodes if node.context_space is not None},
-            direct_return=direct_return,
-        )
-        _, self.observation_space = self.aggregate_spaces(
-            {node.name: node.observation_space for node in nodes if node.observation_space is not None},
-            direct_return=direct_return,
-        )
-        self._action_node_name_direct, self.action_space = self.aggregate_spaces(
-            {node.name: node.action_space for node in nodes if node.action_space is not None},
-            direct_return=direct_return,
-        )
         self.has_reward = any(node.has_reward for node in nodes)
         self.has_termination_signal = any(node.has_termination_signal for node in nodes)
         self.has_truncation_signal = any(node.has_truncation_signal for node in nodes)
@@ -65,6 +52,11 @@ class CombinedWorldNode(WorldNode[
         # Save attributes
         self.name = name
         self.direct_return = direct_return
+
+        # Aggregate spaces (preliminary snapshot; may include None/unbounded placeholders
+        # for nodes like robots whose final spaces are only known after after_reload.
+        # _refresh_spaces() is called again at the end of after_reload to capture finals.)
+        self._refresh_spaces()
 
         # Rendering
         renderable_nodes = [node for node in nodes if node.can_render]
@@ -160,10 +152,34 @@ class CombinedWorldNode(WorldNode[
         else:
             return data
 
+    def _refresh_spaces(self) -> None:
+        """Re-aggregate spaces from child nodes and cache them as instance attributes.
+
+        Called once at construction (for a preliminary snapshot that may include
+        ``None`` placeholders for nodes whose spaces aren't yet known, e.g. robots
+        before their scene is built) and again at the end of ``after_reload`` once
+        every child has finished its post-build initialisation and set its final spaces.
+
+        Subclasses may override this to implement a different aggregation strategy
+        (e.g. :class:`FlatCombinedWorldNode` merges keys instead of nesting them).
+        """
+        _, self.context_space = self.aggregate_spaces(
+            {node.name: node.context_space for node in self.nodes if node.context_space is not None},
+            direct_return=self.direct_return,
+        )
+        _, self.observation_space = self.aggregate_spaces(
+            {node.name: node.observation_space for node in self.nodes if node.observation_space is not None},
+            direct_return=self.direct_return,
+        )
+        self._action_node_name_direct, self.action_space = self.aggregate_spaces(
+            {node.name: node.action_space for node in self.nodes if node.action_space is not None},
+            direct_return=self.direct_return,
+        )
+
     @property
     def world(self) -> World[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.nodes[0].world
-    
+
     @property
     def control_timestep(self) -> Optional[float]:
         return self._smallest_control_ts
@@ -389,6 +405,13 @@ class CombinedWorldNode(WorldNode[
         for node in self.nodes:
             if priority in node.after_reload_priorities:
                 node.after_reload(priority=priority, mask=mask)
+
+        # After child nodes finish their lowest-priority after_reload (the last call
+        # in the priority sequence), re-aggregate spaces so that the cached
+        # action_space / observation_space / context_space reflect the final,
+        # post-build spaces that nodes like robots set during after_reload.
+        if all_prios and priority == min(all_prios):
+            self._refresh_spaces()
 
     def close(self):
         for node in self.nodes:

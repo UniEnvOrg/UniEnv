@@ -43,23 +43,28 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         Raises:
             ValueError: If node spaces have overlapping keys or non-DictSpace types
         """
-        # Always set direct_return=False for flat combination
-        # We'll handle the flattening ourselves
+        # Always set direct_return=False for flat combination.
+        # We'll handle the flattening ourselves; _refresh_spaces() is overridden below
+        # and will be called by super().__init__() as part of the initial snapshot.
         super().__init__(name=name, nodes=nodes, direct_return=False, render_mode=render_mode)
-        
-        # Validate and flatten spaces
+
+    def _refresh_spaces(self) -> None:
+        """Override to flatten child spaces into a single merged DictSpace."""
         self.context_space = self._flatten_spaces(
             [node.context_space for node in self.nodes if node.context_space is not None],
-            ignore_duplicate_keys=False
+            ignore_duplicate_keys=False,
         )
         self.observation_space = self._flatten_spaces(
             [node.observation_space for node in self.nodes if node.observation_space is not None],
-            ignore_duplicate_keys=False
+            ignore_duplicate_keys=False,
         )
+        # For actions, overlapping keys are allowed; routing is key-based per node.
         self.action_space = self._flatten_spaces(
             [node.action_space for node in self.nodes if node.action_space is not None],
-            ignore_duplicate_keys=True  # For actions, we allow overlapping keys since they will be routed to nodes
+            ignore_duplicate_keys=True,
         )
+        # _action_node_name_direct is not used in the flat variant (routing is key-based).
+        self._action_node_name_direct = None
 
     @staticmethod
     def _flatten_spaces(

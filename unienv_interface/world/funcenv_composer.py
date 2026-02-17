@@ -36,7 +36,7 @@ class FuncWorldEnv(FuncEnv[
 			Iterable[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
 		],
 		*,
-		render_mode: Optional[str] = None,
+		render_mode: Optional[str] = 'auto',
 	):
 		if isinstance(node_or_nodes, FuncWorldNode):
 			self.node = node_or_nodes

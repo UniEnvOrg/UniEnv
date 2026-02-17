@@ -37,7 +37,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		name: str,
 		nodes: Iterable[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
 		direct_return: bool = True,
-		render_mode: Optional[str] = 'dict',
+		render_mode: Optional[str] = 'auto',
 	):
 		nodes = list(nodes)
 		if len(nodes) == 0:
@@ -55,7 +55,8 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 		self.nodes = nodes
 
-		# Aggregate spaces similar to `CombinedWorldNode`
+		# Aggregate spaces. For FuncWorldNodes, spaces are static interface metadata
+		# declared at construction; they are not refreshed after after_reload.
 		_, self.context_space = self.aggregate_spaces(
 			{node.name: node.context_space for node in nodes if node.context_space is not None},
 			direct_return=direct_return,

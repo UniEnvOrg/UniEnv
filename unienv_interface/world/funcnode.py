@@ -86,6 +86,17 @@ class FuncWorldNode(ABC, Generic[
 
        Multiple priorities (e.g. ``{0, 1}``) allow the same method to be invoked at
        different stages; the caller iterates priorities in the desired order.
+
+    Space contract
+    --------------
+    ``action_space``, ``observation_space``, and ``context_space`` are **static
+    interface metadata**.  They must be fully declared in ``__init__`` and must
+    not change after construction.  ``CombinedFuncWorldNode`` reads them once at
+    construction time; there is no refresh mechanism.
+
+    Unlike stateful ``WorldNode`` subclasses (which may need to build a simulation
+    scene before knowing DOF counts), functional nodes are expected to derive their
+    spaces purely from their configuration parameters.
     """
 
     name : str
