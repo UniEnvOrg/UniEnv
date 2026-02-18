@@ -265,4 +265,4 @@ class ToBackendOrDeviceStorage(
             json.dump(metadata, f)
     
     def close(self):
-        self.inner_storage.close()
+        self.inner_storage = None

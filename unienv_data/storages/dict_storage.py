@@ -387,5 +387,4 @@ class DictStorage(SpaceStorage[
             json.dump(metadata, f)
 
     def close(self):
-        for storage in self.storage_map.values():
-            storage.close()
+        self.storage_map = {}

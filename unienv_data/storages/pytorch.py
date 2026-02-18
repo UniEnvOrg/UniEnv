@@ -1,4 +1,5 @@
 import os
+import traceback
 import torch
 from unienv_interface.space import Space, BoxSpace, BinarySpace
 from unienv_interface.backends import ComputeBackend
