@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.1b10 (2026-02-18)
+
+- Bumped required `xbarray` package version to `0.0.1a16` to include the latest bugfixes and performance improvements.
+- Major improvements to the closing management of existing data storage backends through de-referencing.
+- Major improvements to the `World` and `FuncWorld` system to support better lifecycle management.
+
 ## 0.0.1b9 (2026-02-05)
 
 - Bumped required `xbarray` package version to `0.0.1a14` and updated relative imports to make `PyTorchComputeBackend` capitalization consistent between UniEnv and XBArray.
