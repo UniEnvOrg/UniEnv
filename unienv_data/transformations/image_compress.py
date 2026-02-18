@@ -3,6 +3,7 @@ from unienv_interface.transformations import DataTransformation
 from unienv_interface.space import Space, BoxSpace, TextSpace
 from typing import Union, Any, Optional
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.utils.symbol_util import get_full_class_name
 from PIL import Image
 import numpy as np
 import io
@@ -195,6 +196,7 @@ class ImageCompressTransformation(DataTransformation):
 
     def serialize(self):
         return {
+            "type": get_full_class_name(type(self)),
             "init_quality": self.init_quality,
             "max_size_bytes": self.max_size_bytes,
             "compression_ratio": self.compression_ratio,
