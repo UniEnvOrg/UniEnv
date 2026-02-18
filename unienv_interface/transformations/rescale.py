@@ -152,8 +152,8 @@ class RescaleTransformation(DataTransformation):
             "nan_to": nan_to_data,
         }
         # Store dtype as string if present (dtype is backend-agnostic string representation)
-        if self.new_dtype is not None:
-            result["new_dtype"] = str(self.new_dtype)
+        if self.new_dtype is not None and backend is not None:
+            result["new_dtype"] = serialize_dtype(backend, self.new_dtype)
         return result
 
     @classmethod
