@@ -137,9 +137,10 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         *,
         mask: Optional[BArrayType] = None,
         seed: Optional[int] = None,
+        reload: bool = False,
         **kwargs,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
-        if self._first_reset:
+        if self._first_reset or reload:
             return self.reload(seed=seed, mask=mask, **kwargs)
 
         # 1. World reset

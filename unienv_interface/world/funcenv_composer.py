@@ -180,8 +180,11 @@ class FuncWorldEnv(FuncEnv[
 		*,
 		seed: Optional[int] = None,
 		mask: Optional[BArrayType] = None,
+		reload: bool = False,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		if reload:
+			return self.reload(state, seed=seed, **kwargs)
 		# 1. World reset
 		world_state = self.world.reset(state.world_state, seed=seed, mask=mask, **kwargs)
 		node_state = state.node_state
