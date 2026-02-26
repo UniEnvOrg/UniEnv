@@ -5,8 +5,8 @@ Provides functions to serialize/deserialize DataTransformation objects to/from J
 """
 from typing import Dict, Any, Type, Optional
 
-from unienv_interface.utils.symbol_util import get_class_from_full_name
-from unienv_interface.backends import ComputeBackend, BDeviceType
+from unienv_interface.space import Space
+from unienv_interface.utils.symbol_util import get_full_class_name, get_class_from_full_name
 from .transformation import DataTransformation
 
 __all__ = [
@@ -15,31 +15,37 @@ __all__ = [
 ]
 
 
-def transformation_to_json(transformation: DataTransformation) -> Dict[str, Any]:
+def transformation_to_json(
+    transformation: DataTransformation,
+    source_space: Optional[Space] = None,
+) -> Dict[str, Any]:
     """
     Serialize a DataTransformation to a JSON-compatible dictionary.
 
     Args:
         transformation: The transformation to serialize.
+        source_space: Optional source space context used by transforms that need
+            backend/device information during serialization.
 
     Returns:
         dict: A JSON-compatible representation of the transformation.
     """
-    return transformation.serialize()
+    json_data = dict(transformation.serialize(source_space=source_space))
+    json_data["type"] = get_full_class_name(type(transformation))
+    return json_data
 
 
 def json_to_transformation(
     json_data: Dict[str, Any],
-    backend: Optional[ComputeBackend] = None,
-    device: Optional[BDeviceType] = None,
+    source_space: Optional[Space] = None,
 ) -> DataTransformation:
     """
     Deserialize a DataTransformation from a JSON-compatible dictionary.
 
     Args:
         json_data: The dictionary containing the transformation data.
-        backend: Optional backend to use for deserialization (for backend-specific data)
-        device: Optional device to use for deserialization (for device-specific data)
+        source_space: Optional source space context used by transforms that need
+            backend/device information during deserialization.
 
     Returns:
         DataTransformation: The deserialized transformation.
@@ -49,4 +55,6 @@ def json_to_transformation(
         raise ValueError(f"JSON data must contain 'type' field: {json_data}")
 
     transformation_class: Type[DataTransformation] = get_class_from_full_name(type_name)
-    return transformation_class.deserialize_from(json_data, backend=backend, device=device)
+    payload = dict(json_data)
+    payload.pop("type", None)
+    return transformation_class.deserialize_from(payload, source_space=source_space)

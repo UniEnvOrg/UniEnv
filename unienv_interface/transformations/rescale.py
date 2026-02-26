@@ -1,11 +1,12 @@
 from .transformation import DataTransformation, TargetDataT
-from unienv_interface.space import BoxSpace
+from unienv_interface.space import Space, BoxSpace
 from typing import Union, Any, Optional, Dict
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, get_backend_from_tensor
-from unienv_interface.backends.serialization import serialize_backend, deserialize_backend, serialize_dtype, deserialize_dtype
-from unienv_interface.backends import serialization as bsu
-from unienv_interface.utils.symbol_util import get_full_class_name
-import numpy as np
+from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends.serialization import serialize_dtype, deserialize_dtype
+from unienv_interface.utils.array_serialization import (
+    serialize_scalar_or_array_value,
+    deserialize_scalar_or_array_value,
+)
 
 def _get_broadcastable_value(
     backend: ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -125,28 +126,15 @@ class RescaleTransformation(DataTransformation):
         if not hasattr(self, "nan_to"):
             self.nan_to = None
 
-    def serialize(self) -> Dict[str, Any]:
-        # Handle new_low and new_high - they can be scalars or arrays
-        def serialize_value(value):
-            if value is None:
-                return None
-            if isinstance(value, (int, float)):
-                return None, {"scalar": True, "value": value, "backend": None}
-            else:
-                # It's an array - convert to numpy and then to list
-                backend = get_backend_from_tensor(value)
-                return backend, {"scalar": False, "value": backend.to_numpy(value).tolist(), "backend": serialize_backend(backend)}
-
-        new_low_backend, new_low_data = serialize_value(self.new_low)
-        new_high_backend, new_high_data = serialize_value(self.new_high)
-        nan_to_result = serialize_value(self.nan_to)
-        if nan_to_result is None:
-            nan_to_backend, nan_to_data = None, None
-        else:
-            nan_to_backend, nan_to_data = nan_to_result
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
+        new_low_backend, new_low_data = serialize_scalar_or_array_value(self.new_low)
+        new_high_backend, new_high_data = serialize_scalar_or_array_value(self.new_high)
+        nan_to_backend, nan_to_data = serialize_scalar_or_array_value(self.nan_to)
         backend = new_low_backend or new_high_backend or nan_to_backend
         result = {
-            "type": get_full_class_name(type(self)),
             "new_low": new_low_data,
             "new_high": new_high_data,
             "nan_to": nan_to_data,
@@ -160,33 +148,31 @@ class RescaleTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "RescaleTransformation":
-        def deserialize_value(value_data, override_backend: Optional[ComputeBackend] = None, override_device: Optional[BDeviceType] = None):
-            if value_data is None:
-                return None, None
-            if value_data.get("scalar", False):
-                return None, value_data["value"]
-            else:
-                # Use provided backend if available, otherwise deserialize from saved backend
-                if override_backend is not None:
-                    value_backend = override_backend
-                else:
-                    value_backend = deserialize_backend(value_data["backend"])
-                value = value_backend.from_numpy(np.array(value_data['value']))
-                if override_device is not None:
-                    value = value_backend.to_device(value, override_device)
-                return value_backend, value
+        override_backend = source_space.backend if source_space is not None else None
+        override_device = source_space.device if source_space is not None else None
 
         # Deserialize dtype from string if present
         # The dtype will be converted to the appropriate backend-specific dtype 
         # when the transformation is actually applied
         
-        new_low_backend, new_low = deserialize_value(json_data["new_low"], backend, device)
-        new_high_backend, new_high = deserialize_value(json_data["new_high"], backend, device)
-        nan_to_backend, nan_to = deserialize_value(json_data.get("nan_to"), backend, device)
-        result_backend = backend or new_low_backend or new_high_backend or nan_to_backend
+        new_low_backend, new_low = deserialize_scalar_or_array_value(
+            json_data["new_low"],
+            override_backend=override_backend,
+            override_device=override_device,
+        )
+        new_high_backend, new_high = deserialize_scalar_or_array_value(
+            json_data["new_high"],
+            override_backend=override_backend,
+            override_device=override_device,
+        )
+        nan_to_backend, nan_to = deserialize_scalar_or_array_value(
+            json_data.get("nan_to"),
+            override_backend=override_backend,
+            override_device=override_device,
+        )
+        result_backend = override_backend or new_low_backend or new_high_backend or nan_to_backend
 
         new_dtype = None
         if json_data.get("new_dtype") is not None and result_backend is not None:

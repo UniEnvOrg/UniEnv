@@ -2,11 +2,12 @@ from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.transformations import DataTransformation
 from unienv_interface.space import Space, BoxSpace, TextSpace
 from typing import Union, Any, Optional, Tuple, List, Dict
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType, get_backend_from_tensor
-from unienv_interface.backends.serialization import serialize_backend, deserialize_backend
-from unienv_interface.utils.symbol_util import get_full_class_name
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.utils.array_serialization import (
+    serialize_scalar_or_array_value,
+    deserialize_scalar_or_array_value,
+)
 from .identity import IdentityTransformation
-import numpy as np
 
 
 class CropTransformation(DataTransformation):
@@ -72,22 +73,14 @@ class CropTransformation(DataTransformation):
     def direction_inverse(self, source_space=None):
         return IdentityTransformation()
 
-    def serialize(self) -> Dict[str, Any]:
-        def serialize_value(value):
-            if value is None:
-                return None
-            if isinstance(value, (int, float)):
-                return None, {"scalar": True, "value": value, "backend": None}
-            else:
-                # It's an array - detect backend and convert to numpy list
-                backend = get_backend_from_tensor(value)
-                return backend, {"scalar": False, "value": backend.to_numpy(value).tolist(), "backend": serialize_backend(backend)}
-
-        crop_low_backend, crop_low_data = serialize_value(self.crop_low)
-        crop_high_backend, crop_high_data = serialize_value(self.crop_high)
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
+        _, crop_low_data = serialize_scalar_or_array_value(self.crop_low)
+        _, crop_high_data = serialize_scalar_or_array_value(self.crop_high)
 
         return {
-            "type": get_full_class_name(type(self)),
             "crop_low": crop_low_data,
             "crop_high": crop_high_data,
         }
@@ -96,27 +89,21 @@ class CropTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "CropTransformation":
-        def deserialize_value(value_data, override_backend: Optional[ComputeBackend] = None, override_device: Optional[BDeviceType] = None):
-            if value_data is None:
-                return None, None
-            if value_data.get("scalar", False):
-                return None, value_data["value"]
-            else:
-                # Use provided backend if available, otherwise deserialize from saved backend
-                if override_backend is not None:
-                     backend = override_backend
-                else:
-                    backend = deserialize_backend(value_data["backend"])
-                value = backend.from_numpy(np.array(value_data['value']))
-                if override_device is not None:
-                    value = backend.to_device(value, override_device)
-                return backend, value
+        override_backend = source_space.backend if source_space is not None else None
+        override_device = source_space.device if source_space is not None else None
 
-        _, crop_low = deserialize_value(json_data["crop_low"], backend, device)
-        _, crop_high = deserialize_value(json_data["crop_high"], backend, device)
+        _, crop_low = deserialize_scalar_or_array_value(
+            json_data["crop_low"],
+            override_backend=override_backend,
+            override_device=override_device,
+        )
+        _, crop_high = deserialize_scalar_or_array_value(
+            json_data["crop_high"],
+            override_backend=override_backend,
+            override_device=override_device,
+        )
 
         return cls(
             crop_low=crop_low,

@@ -2,9 +2,9 @@ from typing import Union, Any, Optional, Mapping, List, Callable, Dict
 
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace, TupleSpace
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
-from unienv_interface.utils.symbol_util import get_full_class_name, serialize_function, deserialize_function
+from unienv_interface.utils.symbol_util import serialize_function, deserialize_function
 
 import copy
 from .transformation import DataTransformation, TargetDataT
@@ -12,6 +12,29 @@ from .transformation import DataTransformation, TargetDataT
 
 def default_is_leaf_fn(space: Space[Any, BDeviceType, BDtypeType, BRNGType]):
     return not isinstance(space, (DictSpace, TupleSpace))
+
+
+def find_leaf_source_space(
+    source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]],
+    is_leaf_node_fn: Callable[[Space[Any, BDeviceType, BDtypeType, BRNGType]], bool],
+) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
+    if source_space is None:
+        return None
+    if is_leaf_node_fn(source_space):
+        return source_space
+    if isinstance(source_space, DictSpace):
+        for subspace in source_space.spaces.values():
+            leaf_space = find_leaf_source_space(subspace, is_leaf_node_fn)
+            if leaf_space is not None:
+                return leaf_space
+        return None
+    if isinstance(source_space, TupleSpace):
+        for subspace in source_space.spaces:
+            leaf_space = find_leaf_source_space(subspace, is_leaf_node_fn)
+            if leaf_space is not None:
+                return leaf_space
+        return None
+    raise ValueError(f"Unsupported space type: {type(source_space)}")
 
 
 class IterativeTransformation(DataTransformation):
@@ -95,10 +118,16 @@ class IterativeTransformation(DataTransformation):
     def close(self):
         self.transformation.close()
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
+        leaf_source_space = find_leaf_source_space(source_space, self.is_leaf_node_fn)
         return {
-            "type": get_full_class_name(type(self)),
-            "transformation": tsu.transformation_to_json(self.transformation),
+            "transformation": tsu.transformation_to_json(
+                self.transformation,
+                source_space=leaf_source_space,
+            ),
             "is_leaf_node_fn": serialize_function(self.is_leaf_node_fn),
             "inv_is_leaf_node_fn": serialize_function(self.inv_is_leaf_node_fn),
         }
@@ -107,11 +136,16 @@ class IterativeTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "IterativeTransformation":
+        is_leaf_node_fn = deserialize_function(json_data.get("is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"}))
+        inv_is_leaf_node_fn = deserialize_function(json_data.get("inv_is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"}))
+        leaf_source_space = find_leaf_source_space(source_space, is_leaf_node_fn)
         return cls(
-            transformation=tsu.json_to_transformation(json_data["transformation"], backend=backend, device=device),
-            is_leaf_node_fn=deserialize_function(json_data.get("is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
-            inv_is_leaf_node_fn=deserialize_function(json_data.get("inv_is_leaf_node_fn", {"mode": "name", "value": f"{default_is_leaf_fn.__module__}.{default_is_leaf_fn.__qualname__}"})),
+            transformation=tsu.json_to_transformation(
+                json_data["transformation"],
+                source_space=leaf_source_space,
+            ),
+            is_leaf_node_fn=is_leaf_node_fn,
+            inv_is_leaf_node_fn=inv_is_leaf_node_fn,
         )

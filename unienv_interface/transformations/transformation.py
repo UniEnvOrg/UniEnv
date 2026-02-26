@@ -1,7 +1,7 @@
 import abc
 from typing import Generic, TypeVar, Tuple, Dict, Any, Optional, SupportsFloat, Type, Sequence, Union
 from unienv_interface.space import Space
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 
 SourceDataT = TypeVar("SourceDataT")
@@ -46,14 +46,22 @@ class DataTransformation(abc.ABC):
         self.close()
     
     @abc.abstractmethod
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]] = None,
+    ) -> Dict[str, Any]:
         """
         Serialize the transformation to a JSON-compatible dictionary.
 
+        Args:
+            source_space: Optional source space context for transformations whose
+                serialization depends on backend/device information.
+
         Returns:
             dict: A dictionary representation of the transformation containing:
-                - "type": The fully qualified class name (e.g., "unienv_interface.transformations.identity.IdentityTransformation")
-                - Additional parameters specific to the transformation type
+                - Parameters specific to the transformation type.
+                  The helper `transformation_to_json` is responsible for adding
+                  the serialized transformation type field.
         """
         raise NotImplementedError
     
@@ -62,16 +70,15 @@ class DataTransformation(abc.ABC):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "DataTransformation":
         """
         Deserialize a transformation from a JSON-compatible dictionary.
 
         Args:
             json_data: The dictionary containing the transformation data
-            backend: Optional backend to use for deserialization (for backend-specific data)
-            device: Optional device to use for deserialization (for device-specific data)
+            source_space: Optional source space context for transformations whose
+                deserialization depends on backend/device information.
 
         Returns:
             DataTransformation: A new instance of the transformation

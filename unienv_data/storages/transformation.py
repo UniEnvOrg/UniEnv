@@ -79,11 +79,10 @@ class TransformedStorage(SpaceStorage[
         
         # Try to load transformation from JSON (new format), fall back to pickle (legacy format)
         if "data_transformation" in metadata:
-            # New JSON-based serialization - pass backend and device from source space
+            # New JSON-based serialization - pass source space context
             data_transform = json_to_transformation(
                 metadata["data_transformation"],
-                backend=single_instance_space.backend,
-                device=single_instance_space.device
+                source_space=single_instance_space,
             )
         else:
             # Legacy pickle-based format for backward compatibility
@@ -204,7 +203,10 @@ class TransformedStorage(SpaceStorage[
             "storage_type": __class__.__name__,
             "inner_storage_type": get_full_class_name(type(self.inner_storage)),
             "inner_storage_path": self.inner_storage_path,
-            "data_transformation": transformation_to_json(self.data_transformation)
+            "data_transformation": transformation_to_json(
+                self.data_transformation,
+                source_space=self.single_instance_space,
+            ),
         }
         self.inner_storage.dumps(os.path.join(path, self.inner_storage_path))
         with open(os.path.join(path, "transformed_metadata.json"), "w") as f:

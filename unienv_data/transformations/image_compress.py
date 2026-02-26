@@ -1,9 +1,8 @@
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.transformations import DataTransformation
 from unienv_interface.space import Space, BoxSpace, TextSpace
-from typing import Union, Any, Optional
+from typing import Union, Any, Optional, Dict
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.utils.symbol_util import get_full_class_name
 from PIL import Image
 import numpy as np
 import io
@@ -194,9 +193,11 @@ class ImageCompressTransformation(DataTransformation):
         if 'last_channel' not in state:
             self.last_channel = True
 
-    def serialize(self):
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "init_quality": self.init_quality,
             "max_size_bytes": self.max_size_bytes,
             "compression_ratio": self.compression_ratio,
@@ -206,7 +207,11 @@ class ImageCompressTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data, backend = None, device = None):
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ):
         return cls(
             init_quality=json_data.get("init_quality", 70),
             max_size_bytes=json_data.get("max_size_bytes", None),
@@ -311,7 +316,10 @@ class ImageDecompressTransformation(DataTransformation):
             last_channel=self.target_channels is not None,
         )
     
-    def serialize(self):
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
             "target_height": self.target_height,
             "target_width": self.target_width,
@@ -321,7 +329,11 @@ class ImageDecompressTransformation(DataTransformation):
         }
 
     @classmethod
-    def deserialize_from(cls, json_data, backend = None, device = None):
+    def deserialize_from(
+        cls,
+        json_data: Dict[str, Any],
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ):
         return cls(
             target_height=json_data["target_height"],
             target_width=json_data["target_width"],

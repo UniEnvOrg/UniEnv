@@ -2,9 +2,8 @@ from typing import Union, Any, Optional, Mapping, List, Callable, Dict
 
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
-from unienv_interface.utils.symbol_util import get_full_class_name
 
 import copy
 from .transformation import DataTransformation, TargetDataT
@@ -83,6 +82,21 @@ def call_conditioned_function_on_chained_dict(
             ignore_missing_keys=ignore_missing_keys
         )
     return new_data
+
+
+def get_mapping_source_space(
+    source_space: Optional[Space],
+    mapping_key: str,
+    nested_separator: str,
+    ignore_missing_keys: bool,
+) -> Optional[Space]:
+    if source_space is None:
+        return None
+    return get_chained_value(
+        source_space,
+        mapping_key.split(nested_separator),
+        ignore_missing_keys=ignore_missing_keys,
+    )
 
 class DictTransformation(DataTransformation):
     def __init__(
@@ -163,11 +177,21 @@ class DictTransformation(DataTransformation):
         for transformation in self.mapping.values():
             transformation.close()
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "mapping": {
-                key: tsu.transformation_to_json(transformation)
+                key: tsu.transformation_to_json(
+                    transformation,
+                    source_space=get_mapping_source_space(
+                        source_space,
+                        key,
+                        self.nested_separator,
+                        self.ignore_missing_keys,
+                    ),
+                )
                 for key, transformation in self.mapping.items()
             },
             "ignore_missing_keys": self.ignore_missing_keys,
@@ -178,14 +202,23 @@ class DictTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space] = None,
     ) -> "DictTransformation":
+        ignore_missing_keys = json_data.get("ignore_missing_keys", False)
+        nested_separator = json_data.get("nested_separator", "/")
         return cls(
             mapping={
-                key: tsu.json_to_transformation(transformation_data, backend=backend, device=device)
+                key: tsu.json_to_transformation(
+                    transformation_data,
+                    source_space=get_mapping_source_space(
+                        source_space,
+                        key,
+                        nested_separator,
+                        ignore_missing_keys,
+                    ),
+                )
                 for key, transformation_data in json_data["mapping"].items()
             },
-            ignore_missing_keys=json_data.get("ignore_missing_keys", False),
-            nested_separator=json_data.get("nested_separator", "/"),
+            ignore_missing_keys=ignore_missing_keys,
+            nested_separator=nested_separator,
         )

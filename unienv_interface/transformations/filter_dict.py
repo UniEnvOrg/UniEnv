@@ -1,10 +1,9 @@
 from .transformation import DataTransformation, TargetDataT
-from unienv_interface.space import DictSpace
+from unienv_interface.space import Space, DictSpace
 from typing import Union, Any, Optional, Dict, Set, Iterable, List, Mapping
 from unienv_interface.space import DictSpace
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
-from unienv_interface.utils.symbol_util import get_full_class_name
 import copy
 
 
@@ -122,9 +121,11 @@ class DictIncludeKeyTransformation(DataTransformation):
                 raise ValueError(*e.args)
         return new_data
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "enabled_keys": list(self._enabled_keys),
             "nested_separator": self.nested_separator,
             "ignore_missing_keys": self.ignore_missing_keys,
@@ -134,8 +135,7 @@ class DictIncludeKeyTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "DictIncludeKeyTransformation":
         return cls(
             enabled_keys=json_data["enabled_keys"],
@@ -196,9 +196,11 @@ class DictExcludeKeyTransformation(DataTransformation):
                 raise ValueError(*e.args)
         return new_data
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "excluded_keys": list(self._excluded_keys),
             "nested_separator": self.nested_separator,
             "ignore_missing_keys": self.ignore_missing_keys,
@@ -208,8 +210,7 @@ class DictExcludeKeyTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "DictExcludeKeyTransformation":
         return cls(
             excluded_keys=json_data["excluded_keys"],

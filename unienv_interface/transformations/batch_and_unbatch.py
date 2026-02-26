@@ -2,8 +2,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import Space
 from typing import Union, Any, Optional, Dict
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.utils.symbol_util import get_full_class_name
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 
 
 class BatchifyTransformation(DataTransformation):
@@ -35,9 +34,11 @@ class BatchifyTransformation(DataTransformation):
     def direction_inverse(self, source_space=None):
         return UnBatchifyTransformation(axis=self.axis)
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "axis": self.axis,
         }
 
@@ -45,8 +46,7 @@ class BatchifyTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "BatchifyTransformation":
         return cls(
             axis=json_data.get("axis", 0),
@@ -94,9 +94,11 @@ class UnBatchifyTransformation(DataTransformation):
     def direction_inverse(self, source_space=None):
         return BatchifyTransformation(axis=self.axis)
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "axis": self.axis,
         }
 
@@ -104,8 +106,7 @@ class UnBatchifyTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "UnBatchifyTransformation":
         return cls(
             axis=json_data.get("axis", 0),

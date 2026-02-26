@@ -167,12 +167,16 @@ def verify_transformation_serialization(
     """
     from unienv_interface.transformations import json_to_transformation, transformation_to_json
     
+    # Raw class serialization should not include type metadata.
+    serialized_without_type = transformation.serialize(source_space=source_space)
+    assert "type" not in serialized_without_type, "Class serialize() should not include 'type' field"
+
     # Serialize
-    json_data = transformation_to_json(transformation)
+    json_data = transformation_to_json(transformation, source_space=source_space)
     assert "type" in json_data, "Serialized data should contain 'type' field"
     
     # Deserialize
-    restored = json_to_transformation(json_data)
+    restored = json_to_transformation(json_data, source_space=source_space)
     assert type(restored) == type(transformation), f"Deserialized type should match: {type(restored)} vs {type(transformation)}"
     
     # Test that the restored transformation works the same

@@ -2,8 +2,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu
 from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import Space, BoxSpace
 from typing import Union, Any, Optional, Dict
-from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.utils.symbol_util import get_full_class_name
+from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 
 
 class ImageResizeTransformation(DataTransformation):
@@ -121,9 +120,11 @@ class ImageResizeTransformation(DataTransformation):
             new_width=source_space.shape[-2]
         )
 
-    def serialize(self) -> Dict[str, Any]:
+    def serialize(
+        self,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
+    ) -> Dict[str, Any]:
         return {
-            "type": get_full_class_name(type(self)),
             "new_height": self.new_height,
             "new_width": self.new_width,
         }
@@ -132,8 +133,7 @@ class ImageResizeTransformation(DataTransformation):
     def deserialize_from(
         cls,
         json_data: Dict[str, Any],
-        backend: Optional[ComputeBackend] = None,
-        device: Optional[BDeviceType] = None,
+        source_space: Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]] = None,
     ) -> "ImageResizeTransformation":
         return cls(
             new_height=json_data["new_height"],
