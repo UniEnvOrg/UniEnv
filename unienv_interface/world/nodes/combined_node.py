@@ -279,7 +279,7 @@ class CombinedWorldNode(WorldNode[
                 if node.has_termination_signal
             )
         else:
-            terminations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_bool_dtype, device=self.device)
+            terminations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self.nodes:
                 if node.has_termination_signal:
                     terminations = self.backend.logical_or(terminations, node.get_termination())
@@ -294,7 +294,7 @@ class CombinedWorldNode(WorldNode[
                 if node.has_truncation_signal
             )
         else:
-            truncations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_bool_dtype, device=self.device)
+            truncations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self.nodes:
                 if node.has_truncation_signal:
                     truncations = self.backend.logical_or(truncations, node.get_truncation())

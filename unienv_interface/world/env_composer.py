@@ -203,7 +203,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
             terminated = self.node.get_termination()
         elif self.batch_size is not None:
             terminated = self.backend.zeros(
-                (self.batch_size,), dtype=self.backend.default_bool_dtype, device=self.device
+                (self.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device
             )
         else:
             terminated = False
@@ -212,7 +212,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
             truncated = self.node.get_truncation()
         elif self.batch_size is not None:
             truncated = self.backend.zeros(
-                (self.batch_size,), dtype=self.backend.default_bool_dtype, device=self.device
+                (self.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device
             )
         else:
             truncated = False
