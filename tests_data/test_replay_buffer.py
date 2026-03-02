@@ -3,6 +3,7 @@ from unienv_data import *
 from unienv_data.storages.flattened import FlattenedStorage
 from unienv_data.storages.hdf5 import HDF5Storage
 from unienv_data.storages.pytorch import PytorchTensorStorage
+from unienv_data.storages.parquet import ParquetStorage
 from unienv_data.samplers import *
 from unienv_data.batches import *
 from unienv_interface.space import *
@@ -192,6 +193,58 @@ def test_hdf5_replay_buffer(
     tempdumpdir = tempfile.mkdtemp()
     rb = ReplayBuffer.create(
         HDF5Storage,
+        space,
+        cache_path=tempdumpdir,
+        capacity=capacity,
+    )
+    check_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed,
+        load_kwargs={}
+    )
+
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024, 2048])
+def test_parquet_replay_buffer(
+    capacity : int,
+    seed : int
+):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        0.0,
+        100.0,
+        np.float32,
+        shape=(3, 5, 2)
+    )
+    tempdumpdir = tempfile.mkdtemp()
+    rb = ReplayBuffer.create(
+        ParquetStorage,
+        space,
+        cache_path=tempdumpdir,
+        capacity=capacity,
+    )
+    check_fixed_capacity_replay_buffer(
+        rb,
+        seed=seed,
+        load_kwargs={}
+    )
+
+@pytest.mark.parametrize("capacity", [10, 50])
+@pytest.mark.parametrize("seed", [0, 1024])
+def test_parquet_dict_replay_buffer(
+    capacity : int,
+    seed : int
+):
+    space = DictSpace(
+        NumpyComputeBackend,
+        {
+            "obs": BoxSpace(NumpyComputeBackend, 0.0, 1.0, np.float32, shape=(4,)),
+            "action": BoxSpace(NumpyComputeBackend, -1.0, 1.0, np.float32, shape=(2,)),
+        },
+    )
+    tempdumpdir = tempfile.mkdtemp()
+    rb = ReplayBuffer.create(
+        ParquetStorage,
         space,
         cache_path=tempdumpdir,
         capacity=capacity,
