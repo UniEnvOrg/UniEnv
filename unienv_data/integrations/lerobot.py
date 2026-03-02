@@ -162,10 +162,17 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         """Load a LeRobot dataset from a local directory."""
         schema = parse_info_json(dataset_dir)
         index = build_index(dataset_dir, schema)
+
+        effective_exclude_features = list(exclude_features) if exclude_features is not None else []
+        if not decode_video:
+            effective_exclude_features.extend(
+                feat_name for feat_name, feat in schema.features.items() if feat.is_video
+            )
+
         space = _schema_to_flat_dictspace(
             schema, backend, device,
             include_features=include_features,
-            exclude_features=exclude_features,
+            exclude_features=effective_exclude_features,
         )
         return LeRobotAsUniEnvDataset(
             dataset_dir=dataset_dir,
@@ -177,7 +184,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             decode_video=decode_video,
             video_backend=video_backend,
             include_features=include_features,
-            exclude_features=exclude_features,
+            exclude_features=effective_exclude_features,
         )
 
     @staticmethod
@@ -279,10 +286,13 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
 
         # Load tabular features from Parquet
         for ep_idx, (local_indices, output_positions) in episode_groups.items():
+            episode_meta = self._index.episodes[ep_idx]
+            dataset_offset = int(episode_meta.dataset_from_index or 0)
+            file_row_indices = local_indices + dataset_offset
             parquet_data = self._load_parquet_episode(ep_idx)
             for feat_name in self._tabular_features:
                 if feat_name in parquet_data:
-                    values = parquet_data[feat_name][local_indices]
+                    values = parquet_data[feat_name][file_row_indices]
                     feat_shape = self._schema.features[feat_name].shape
                     if values.ndim == 1 and feat_shape:
                         values = values.reshape(-1, *feat_shape)
@@ -292,13 +302,20 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         for feat_name in self._video_features:
             for ep_idx, (local_indices, output_positions) in episode_groups.items():
                 episode_meta = self._index.episodes[ep_idx]
+                dataset_offset = int(episode_meta.dataset_from_index or 0)
+                file_frame_indices = local_indices + dataset_offset
+                total_file_frames = (
+                    int(episode_meta.dataset_to_index)
+                    if episode_meta.dataset_to_index is not None
+                    else int(max(episode_meta.length, int(file_frame_indices.max()) + 1))
+                )
                 video_path = get_video_file_path(
                     self._dataset_dir, self._schema, feat_name, episode_meta.index,
                     file_index=episode_meta.data_file_index,
                     chunk_index=episode_meta.data_chunk_index,
                 )
                 frames = self._decode_video_frames(
-                    video_path, local_indices, episode_meta.length
+                    video_path, file_frame_indices, total_file_frames
                 )
                 np_result[feat_name][output_positions] = frames
 
@@ -346,19 +363,38 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
     def _normalize_index(self, idx: Union[IndexableType, BArrayType]) -> np.ndarray:
         total = self._index.total_frames
         if isinstance(idx, int):
-            return np.array([idx % total], dtype=np.int64)
+            norm_idx = int(idx)
+            if norm_idx < 0:
+                norm_idx += total
+            if norm_idx < 0 or norm_idx >= total:
+                raise IndexError(f"Index {idx} out of bounds for dataset of length {total}")
+            return np.array([norm_idx], dtype=np.int64)
         elif isinstance(idx, slice):
             return np.arange(*idx.indices(total), dtype=np.int64)
         elif idx is Ellipsis:
             return np.arange(total, dtype=np.int64)
         else:
             if self.backend.is_backendarray(idx):
-                if self.backend.dtype_is_boolean(idx):
+                if self.backend.dtype_is_boolean(idx.dtype):
                     idx = self.backend.nonzero(idx)[0]
                 arr = self.backend.to_numpy(idx)
             else:
                 arr = np.asarray(idx)
-            return arr.ravel().astype(np.int64) % total
+            if arr.dtype.kind == "b":
+                if arr.ndim != 1 or arr.shape[0] != total:
+                    raise IndexError(
+                        f"Boolean index must be 1D with length {total}, got shape {arr.shape}"
+                    )
+                return np.nonzero(arr)[0].astype(np.int64)
+
+            arr = arr.ravel().astype(np.int64)
+            negative_mask = arr < 0
+            if np.any(negative_mask):
+                arr = arr.copy()
+                arr[negative_mask] += total
+            if np.any(arr < 0) or np.any(arr >= total):
+                raise IndexError(f"Index values out of bounds for dataset of length {total}: {arr}")
+            return arr
 
     def _load_parquet_episode(self, episode_index: int) -> Dict[str, np.ndarray]:
         if episode_index in self._parquet_cache:

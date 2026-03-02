@@ -88,6 +88,20 @@ def _arrow_type_to_numpy_dtype(arrow_type: pa.DataType) -> np.dtype:
     raise ValueError(f"Unsupported Arrow type for numpy conversion: {arrow_type}")
 
 
+def _serialize_column_dtypes(
+    column_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]],
+) -> Dict[str, str]:
+    """Serialize column dtypes for metadata persistence."""
+    return {name: np.dtype(dtype).name for name, dtype, _ in column_specs}
+
+
+def _deserialize_column_dtypes(
+    raw_column_dtypes: Dict[str, str],
+) -> Dict[str, np.dtype]:
+    """Deserialize metadata dtype strings to numpy dtypes."""
+    return {name: np.dtype(dtype_name) for name, dtype_name in raw_column_dtypes.items()}
+
+
 def _build_arrow_schema(
     column_specs: List[Tuple[str, np.dtype, Tuple[int, ...]]],
 ) -> pa.Schema:
@@ -205,12 +219,14 @@ class ParquetStorage(SpaceStorage[
     ) -> "ParquetStorage":
         assert cache_path is not None, \
             "cache_path must be provided for ParquetStorage"
+        assert piece_size > 0, "piece_size must be greater than 0"
 
         storage_dir = str(cache_path)
         os.makedirs(storage_dir, exist_ok=True)
 
         column_specs = _space_to_column_specs(single_instance_space, cls.DEFAULT_KEY)
         column_shapes = {name: shape for name, _, shape in column_specs}
+        column_dtypes = _serialize_column_dtypes(column_specs)
 
         if capacity is not None:
             # Fixed capacity: pre-create all piece files with zero-initialized data
@@ -231,7 +247,14 @@ class ParquetStorage(SpaceStorage[
             total_len = 0
 
         # Write metadata
-        _write_metadata(storage_dir, piece_size, total_len, column_shapes, compression)
+        _write_metadata(
+            storage_dir,
+            piece_size,
+            total_len,
+            column_shapes,
+            compression,
+            column_dtypes=column_dtypes,
+        )
 
         return cls(
             single_instance_space,
@@ -267,14 +290,15 @@ class ParquetStorage(SpaceStorage[
         column_shapes_raw = metadata["column_shapes"]
         column_shapes = {k: tuple(v) for k, v in column_shapes_raw.items()}
         compression = metadata.get("compression", "snappy")
+        assert piece_size > 0, "Corrupted metadata: piece_size must be greater than 0"
 
         column_specs = _space_to_column_specs(single_instance_space, cls.DEFAULT_KEY)
 
-        # Count piece files
-        num_pieces = len([
-            f for f in os.listdir(storage_dir)
-            if f.startswith("part-") and f.endswith(".parquet")
-        ])
+        # Use metadata-backed piece count to avoid being affected by stale files.
+        num_pieces = ceil(total_len / piece_size) if total_len > 0 else 0
+        for piece_idx in range(num_pieces):
+            assert os.path.exists(os.path.join(storage_dir, _piece_filename(piece_idx))), \
+                f"Missing parquet piece file: {_piece_filename(piece_idx)}"
 
         return cls(
             single_instance_space,
@@ -302,18 +326,27 @@ class ParquetStorage(SpaceStorage[
         count = metadata["num_rows"]
         column_shapes_raw = metadata["column_shapes"]
         column_shapes = {k: tuple(v) for k, v in column_shapes_raw.items()}
+        column_dtypes_raw = metadata.get("column_dtypes")
 
-        # Read the schema from the first piece
         piece_files = sorted([
             f for f in os.listdir(storage_dir)
             if f.startswith("part-") and f.endswith(".parquet")
         ])
-        assert len(piece_files) > 0, "No piece files found in storage directory"
 
-        pf = pq.ParquetFile(os.path.join(storage_dir, piece_files[0]))
-        schema = pf.schema_arrow
-
-        space = _schema_to_space(schema, column_shapes, ParquetStorage.DEFAULT_KEY)
+        if len(piece_files) > 0:
+            # Read the schema from the first piece.
+            pf = pq.ParquetFile(os.path.join(storage_dir, piece_files[0]))
+            schema = pf.schema_arrow
+            space = _schema_to_space(schema, column_shapes, ParquetStorage.DEFAULT_KEY)
+        else:
+            assert column_dtypes_raw is not None, \
+                "No piece files found in storage directory and metadata lacks column_dtypes for space inference"
+            column_dtypes = _deserialize_column_dtypes(column_dtypes_raw)
+            space = _column_metadata_to_space(
+                column_dtypes,
+                column_shapes,
+                ParquetStorage.DEFAULT_KEY,
+            )
         return count, count, space
 
     @staticmethod
@@ -434,7 +467,7 @@ class ParquetStorage(SpaceStorage[
             self._flush_piece(piece_idx)
 
     def _index_to_piece_mapping(
-        self, index: Union[int, slice, np.ndarray],
+        self, index: Union[int, slice, np.ndarray, Sequence[int]],
     ) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
         """
         Map a storage-level index to per-piece local indices.
@@ -448,16 +481,37 @@ class ParquetStorage(SpaceStorage[
         if index is Ellipsis:
             global_indices = np.arange(self._len)
         elif isinstance(index, (int, np.integer)):
-            global_indices = np.array([int(index)])
+            idx = int(index)
+            if idx < 0:
+                idx += self._len
+            assert 0 <= idx < self._len, \
+                f"Index {index} out of bounds for storage of length {self._len}"
+            global_indices = np.array([idx], dtype=np.int64)
         elif isinstance(index, slice):
             global_indices = np.arange(*index.indices(self._len))
-        elif isinstance(index, np.ndarray):
-            global_indices = index.ravel().astype(np.int64)
+        elif isinstance(index, np.ndarray) or (
+            isinstance(index, Sequence) and not isinstance(index, (str, bytes))
+        ):
+            arr = np.asarray(index)
+            if arr.dtype.kind == "b":
+                assert arr.ndim == 1 and arr.shape[0] == self._len, \
+                    f"Boolean index must be 1D with length {self._len}, got shape {arr.shape}"
+                global_indices = np.nonzero(arr)[0].astype(np.int64)
+            else:
+                global_indices = arr.ravel().astype(np.int64)
         else:
             raise ValueError(f"Unsupported index type: {type(index)}")
 
         if global_indices.size == 0:
             return {}
+
+        # Normalize and validate array indices.
+        negative_mask = global_indices < 0
+        if np.any(negative_mask):
+            global_indices = global_indices.copy()
+            global_indices[negative_mask] += self._len
+        assert np.all(global_indices >= 0) and np.all(global_indices < self._len), \
+            f"Index values out of bounds for storage of length {self._len}: {global_indices}"
 
         # Map each global index to its piece
         piece_indices = global_indices // self._piece_size
@@ -522,7 +576,7 @@ class ParquetStorage(SpaceStorage[
         elif isinstance(index, slice):
             total_size = len(range(*index.indices(self._len)))
         else:
-            total_size = index.ravel().size
+            total_size = np.asarray(index).ravel().size
 
         # Collect results from each piece
         col_results: Dict[str, List] = {name: [None] * total_size for name, _, _ in self._column_specs}
@@ -579,6 +633,7 @@ class ParquetStorage(SpaceStorage[
     # ========== extend / shrink ==========
 
     def extend_length(self, length: int) -> None:
+        assert not self._read_only, "Cannot extend length of a read-only ParquetStorage"
         assert self.capacity is None, \
             "Cannot extend length of a storage with fixed capacity"
         assert length > 0, "Length must be greater than 0"
@@ -624,9 +679,11 @@ class ParquetStorage(SpaceStorage[
         _write_metadata(
             self._storage_dir, self._piece_size, self._len,
             self._column_shapes, self._compression,
+            column_dtypes=_serialize_column_dtypes(self._column_specs),
         )
 
     def shrink_length(self, length: int) -> None:
+        assert not self._read_only, "Cannot shrink length of a read-only ParquetStorage"
         assert self.capacity is None, \
             "Cannot shrink length of a storage with fixed capacity"
         assert length > 0, "Length must be greater than 0"
@@ -671,6 +728,7 @@ class ParquetStorage(SpaceStorage[
         _write_metadata(
             self._storage_dir, self._piece_size, self._len,
             self._column_shapes, self._compression,
+            column_dtypes=_serialize_column_dtypes(self._column_specs),
         )
 
     # ========== dumps / close ==========
@@ -683,6 +741,7 @@ class ParquetStorage(SpaceStorage[
             _write_metadata(
                 self._storage_dir, self._piece_size, self._len,
                 self._column_shapes, self._compression,
+                column_dtypes=_serialize_column_dtypes(self._column_specs),
             )
         else:
             # Different directory: flush dirty, then copy all pieces
@@ -695,6 +754,7 @@ class ParquetStorage(SpaceStorage[
             _write_metadata(
                 path, self._piece_size, self._len,
                 self._column_shapes, self._compression,
+                column_dtypes=_serialize_column_dtypes(self._column_specs),
             )
 
     def close(self) -> None:
@@ -853,9 +913,22 @@ def _write_piece_to_disk(
 
     piece_path = os.path.join(storage_dir, _piece_filename(piece_idx))
     if isinstance(compression, dict):
-        # Per-column compression not directly supported by pq.write_table,
-        # use the first available or None
-        pq.write_table(table, piece_path, compression="snappy")
+        # Arrow applies per-column compression to physical parquet column paths.
+        # Fixed-size/list-encoded tensors use "<name>.list.element" as the physical path.
+        resolved_compression: Dict[str, str] = {}
+        spec_map = {name: (dtype, shape) for name, dtype, shape in column_specs}
+        for col_name, codec in compression.items():
+            if col_name in spec_map:
+                dtype, shape = spec_map[col_name]
+                n_elements = prod(shape) if shape else 0
+                if dtype != np.dtype(object) and n_elements >= 1:
+                    resolved_compression[f"{col_name}.list.element"] = codec
+                else:
+                    resolved_compression[col_name] = codec
+            else:
+                # Keep raw key for callers that already provide physical paths.
+                resolved_compression[col_name] = codec
+        pq.write_table(table, piece_path, compression=resolved_compression)
     elif compression is not None:
         pq.write_table(table, piece_path, compression=compression)
     else:
@@ -868,6 +941,7 @@ def _write_metadata(
     num_rows: int,
     column_shapes: Dict[str, Tuple[int, ...]],
     compression: Union[str, Dict[str, str], None],
+    column_dtypes: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write the storage metadata file."""
     metadata = {
@@ -876,6 +950,8 @@ def _write_metadata(
         "column_shapes": {k: list(v) for k, v in column_shapes.items()},
         "compression": compression,
     }
+    if column_dtypes is not None:
+        metadata["column_dtypes"] = column_dtypes
     metadata_path = os.path.join(storage_dir, "_metadata.json")
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
@@ -907,6 +983,48 @@ def _schema_to_space(
             shape = column_shapes.get(field.name, ())
             spaces[field.name] = _field_to_space(field, shape)
         return DictSpace(NumpyComputeBackend, spaces, device=None)
+
+
+def _column_metadata_to_space(
+    column_dtypes: Dict[str, np.dtype],
+    column_shapes: Dict[str, Tuple[int, ...]],
+    default_key: str,
+) -> ParquetSpaceType:
+    """Infer a Space from column dtype/shape metadata without parquet piece files."""
+    def _dtype_shape_to_space(dtype: np.dtype, shape: Tuple[int, ...]) -> ParquetSpaceType:
+        if dtype == np.dtype(object):
+            return TextSpace(
+                NumpyComputeBackend,
+                max_length=4096,
+                dtype=str,
+                device=None,
+            )
+        if NumpyComputeBackend.dtype_is_boolean(dtype):
+            return BinarySpace(
+                NumpyComputeBackend,
+                shape=shape,
+                dtype=dtype,
+                device=None,
+            )
+        return BoxSpace(
+            NumpyComputeBackend,
+            low=-np.inf,
+            high=np.inf,
+            shape=shape,
+            dtype=dtype,
+            device=None,
+        )
+
+    if len(column_dtypes) == 1 and default_key in column_dtypes:
+        return _dtype_shape_to_space(
+            column_dtypes[default_key],
+            column_shapes.get(default_key, ()),
+        )
+
+    spaces = {}
+    for col_name, dtype in column_dtypes.items():
+        spaces[col_name] = _dtype_shape_to_space(dtype, column_shapes.get(col_name, ()))
+    return DictSpace(NumpyComputeBackend, spaces, device=None)
 
 
 def _field_to_space(field: pa.Field, shape: Tuple[int, ...]) -> ParquetSpaceType:
