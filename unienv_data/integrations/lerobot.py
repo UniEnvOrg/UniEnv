@@ -4,6 +4,7 @@ import importlib.util
 import os
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -22,6 +23,11 @@ from unienv_data.third_party.lerobot import (
     LeRobotVersion,
     EpisodeMetadata,
 )
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 __all__ = [
     "LeRobotAsUniEnvDataset",
@@ -249,9 +255,10 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             f for f in active if self._schema.features[f].is_video
         ] if decode_video else []
 
-        # Simple Parquet cache: episode_index -> {col_name: np.ndarray}
-        self._parquet_cache: OrderedDict[int, Dict[str, np.ndarray]] = OrderedDict()
+        # Simple Parquet cache: episode_index -> {col_name: np.ndarray | torch.Tensor}
+        self._parquet_cache: OrderedDict[int, Dict[str, Any]] = OrderedDict()
         self._parquet_cache_max = 16
+        self._use_torch_fastpath = self.backend.simplified_name == "pytorch" and torch is not None
 
     def __len__(self) -> int:
         return self._index.total_frames
@@ -266,23 +273,39 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         global_indices = self._normalize_index(idx)
         episode_groups = self._index.global_indices_to_episode_and_local(global_indices)
         batch_size = len(global_indices)
+        use_torch_fastpath = self._use_torch_fastpath
 
-        # Pre-allocate numpy output arrays, convert to backend at the end
-        np_result: Dict[str, np.ndarray] = {}
-        for feat_name in self._active_features:
-            feat = self._schema.features[feat_name]
-            if feat.is_video or feat.is_image:
-                shape = _normalize_image_shape(feat.shape)
-                np_result[feat_name] = np.zeros((batch_size, *shape), dtype=np.uint8)
-            elif feat.dtype == "bool":
-                np_result[feat_name] = np.zeros((batch_size, *feat.shape), dtype=np.bool_)
-            elif feat.dtype in _LEROBOT_DTYPE_MAP:
-                np_result[feat_name] = np.zeros(
-                    (batch_size, *feat.shape),
-                    dtype=_LEROBOT_DTYPE_MAP[feat.dtype],
+        if use_torch_fastpath:
+            result: Dict[str, Any] = {}
+            for feat_name in self._active_features:
+                feat = self._schema.features[feat_name]
+                if feat.is_video or feat.is_image:
+                    shape = _normalize_image_shape(feat.shape)
+                else:
+                    shape = feat.shape
+                feat_space = self.single_space.spaces[feat_name]
+                result[feat_name] = self.backend.zeros(
+                    (batch_size, *shape),
+                    dtype=feat_space.dtype,
+                    device=self._device,
                 )
-            else:
-                np_result[feat_name] = np.zeros((batch_size, *feat.shape), dtype=np.float32)
+        else:
+            # Pre-allocate numpy output arrays, convert to backend at the end.
+            np_result: Dict[str, np.ndarray] = {}
+            for feat_name in self._active_features:
+                feat = self._schema.features[feat_name]
+                if feat.is_video or feat.is_image:
+                    shape = _normalize_image_shape(feat.shape)
+                    np_result[feat_name] = np.zeros((batch_size, *shape), dtype=np.uint8)
+                elif feat.dtype == "bool":
+                    np_result[feat_name] = np.zeros((batch_size, *feat.shape), dtype=np.bool_)
+                elif feat.dtype in _LEROBOT_DTYPE_MAP:
+                    np_result[feat_name] = np.zeros(
+                        (batch_size, *feat.shape),
+                        dtype=_LEROBOT_DTYPE_MAP[feat.dtype],
+                    )
+                else:
+                    np_result[feat_name] = np.zeros((batch_size, *feat.shape), dtype=np.float32)
 
         # Load tabular features from Parquet
         for ep_idx, (local_indices, output_positions) in episode_groups.items():
@@ -290,13 +313,29 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             dataset_offset = int(episode_meta.dataset_from_index or 0)
             file_row_indices = local_indices + dataset_offset
             parquet_data = self._load_parquet_episode(ep_idx)
+            row_index_tensor = None
+            output_index_tensor_cpu = None
+            if use_torch_fastpath and torch is not None:
+                row_index_tensor = torch.from_numpy(file_row_indices).to(dtype=torch.long)
+                output_index_tensor_cpu = torch.from_numpy(output_positions).to(dtype=torch.long)
             for feat_name in self._tabular_features:
                 if feat_name in parquet_data:
-                    values = parquet_data[feat_name][file_row_indices]
-                    feat_shape = self._schema.features[feat_name].shape
-                    if values.ndim == 1 and feat_shape:
-                        values = values.reshape(-1, *feat_shape)
-                    np_result[feat_name][output_positions] = values
+                    cached_values = parquet_data[feat_name]
+                    if use_torch_fastpath and torch is not None:
+                        values = cached_values[row_index_tensor.to(
+                            device=cached_values.device if hasattr(cached_values, "device") else "cpu"
+                        )]
+                        target = result[feat_name]
+                        if values.device != target.device:
+                            values = values.to(target.device)
+                        output_index_tensor = output_index_tensor_cpu.to(device=target.device)
+                        target[output_index_tensor] = values
+                    else:
+                        values = cached_values[file_row_indices]
+                        feat_shape = self._schema.features[feat_name].shape
+                        if values.ndim == 1 and feat_shape:
+                            values = values.reshape(-1, *feat_shape)
+                        np_result[feat_name][output_positions] = values
 
         # Load video features
         for feat_name in self._video_features:
@@ -317,10 +356,22 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                 frames = self._decode_video_frames(
                     video_path, file_frame_indices, total_file_frames
                 )
-                np_result[feat_name][output_positions] = frames
+                if use_torch_fastpath and torch is not None:
+                    frame_tensor = self.backend.from_numpy(frames)
+                    if self._device is not None:
+                        frame_tensor = self.backend.to_device(frame_tensor, self._device)
+                    target = result[feat_name]
+                    output_index_tensor = torch.from_numpy(output_positions).to(
+                        dtype=torch.long,
+                        device=target.device,
+                    )
+                    target[output_index_tensor] = frame_tensor
+                else:
+                    np_result[feat_name][output_positions] = frames
 
-        # Convert to backend arrays
-        result = self._to_backend(np_result)
+        if not use_torch_fastpath:
+            # Convert to backend arrays.
+            result = self._to_backend(np_result)
 
         if is_single:
             batched_space = sbu.batch_space(self.single_space, batch_size)
@@ -396,7 +447,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                 raise IndexError(f"Index values out of bounds for dataset of length {total}: {arr}")
             return arr
 
-    def _load_parquet_episode(self, episode_index: int) -> Dict[str, np.ndarray]:
+    def _load_parquet_episode(self, episode_index: int) -> Dict[str, Any]:
         if episode_index in self._parquet_cache:
             # Move to end (most recently used)
             self._parquet_cache.move_to_end(episode_index)
@@ -408,21 +459,14 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             file_index=ep_meta.data_file_index,
             chunk_index=ep_meta.data_chunk_index,
         )
-        table = pq.read_table(path)
+        table = pq.read_table(path, memory_map=True)
 
-        data: Dict[str, np.ndarray] = {}
+        data: Dict[str, Any] = {}
         for col_name in table.column_names:
             if col_name not in self._tabular_features:
                 continue
-            col = table.column(col_name)
-            if hasattr(col, 'combine_chunks'):
-                col = col.combine_chunks()
-            # Handle list columns (e.g. observation.state stored as fixed-size lists)
-            col_type_str = str(col.type)
-            if 'list' in col_type_str:
-                data[col_name] = np.stack(col.to_pylist())
-            else:
-                data[col_name] = col.to_numpy(zero_copy_only=False)
+            feat_shape = self._schema.features[col_name].shape
+            data[col_name] = self._materialize_tabular_column(table.column(col_name), feat_shape)
 
         # LRU eviction
         if len(self._parquet_cache) >= self._parquet_cache_max:
@@ -430,6 +474,46 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         self._parquet_cache[episode_index] = data
 
         return data
+
+    def _materialize_tabular_column(
+        self,
+        column: pa.ChunkedArray,
+        feat_shape: Tuple[int, ...],
+    ) -> Any:
+        """Convert a parquet column to cached tensor/array with a fast torch path."""
+        arr = column.combine_chunks() if hasattr(column, "combine_chunks") else column
+
+        if pa.types.is_fixed_size_list(arr.type):
+            return self._materialize_fixed_size_list_column(arr, feat_shape)
+        return self._materialize_primitive_column(arr)
+
+    def _materialize_primitive_column(self, arr: pa.Array) -> Any:
+        if self._use_torch_fastpath and arr.null_count == 0:
+            try:
+                return torch.utils.dlpack.from_dlpack(arr)
+            except Exception:
+                pass
+        np_arr = arr.to_numpy(zero_copy_only=False)
+        if self._use_torch_fastpath:
+            return torch.as_tensor(np_arr.copy())
+        return np_arr
+
+    def _materialize_fixed_size_list_column(
+        self,
+        arr: pa.Array,
+        feat_shape: Tuple[int, ...],
+    ) -> Any:
+        values = arr.values
+        if self._use_torch_fastpath and arr.null_count == 0 and values.null_count == 0:
+            try:
+                torch_values = torch.utils.dlpack.from_dlpack(values)
+                return torch_values.reshape(-1, *feat_shape)
+            except Exception:
+                pass
+        np_values = values.to_numpy(zero_copy_only=False).reshape(-1, *feat_shape)
+        if self._use_torch_fastpath:
+            return torch.as_tensor(np_values.copy())
+        return np_values
 
     def _decode_video_frames(
         self,

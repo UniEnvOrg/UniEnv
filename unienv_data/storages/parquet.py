@@ -15,6 +15,7 @@ import json
 import shutil
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 # ========== Type Aliases ==========
@@ -399,6 +400,8 @@ class ParquetStorage(SpaceStorage[
 
         # Piece cache: piece_idx -> {col_name: np.ndarray}
         self._cached_pieces: Dict[int, Dict[str, np.ndarray]] = {}
+        # Read-only Arrow cache: piece_idx -> pyarrow.Table
+        self._cached_piece_tables: Dict[int, pa.Table] = {}
         self._dirty_pieces: set = set()
 
     @property
@@ -442,6 +445,39 @@ class ParquetStorage(SpaceStorage[
 
         self._cached_pieces[piece_idx] = arrays
         return arrays
+
+    def _load_piece_table(self, piece_idx: int) -> pa.Table:
+        """Load a piece as an Arrow table for read-only access."""
+        if piece_idx in self._cached_piece_tables:
+            return self._cached_piece_tables[piece_idx]
+        piece_path = self._piece_path(piece_idx)
+        table = pq.read_table(piece_path, memory_map=True)
+        self._cached_piece_tables[piece_idx] = table
+        return table
+
+    def _read_only_piece_column_values(
+        self,
+        piece_idx: int,
+        col_name: str,
+        local_idxs: np.ndarray,
+        dtype: np.dtype,
+        shape: Tuple[int, ...],
+    ) -> np.ndarray:
+        """Fetch only selected rows from a read-only piece column."""
+        table = self._load_piece_table(piece_idx)
+        column = table.column(col_name)
+        take_indices = pa.array(local_idxs, type=pa.int64())
+        taken = pc.take(column, take_indices)
+
+        if isinstance(taken, pa.ChunkedArray):
+            taken = taken.combine_chunks()
+
+        if dtype == np.dtype(object):
+            return np.array(taken.to_pylist(), dtype=object)
+        if pa.types.is_fixed_size_list(taken.type):
+            flat_values = taken.values.to_numpy(zero_copy_only=False)
+            return flat_values.reshape(local_idxs.shape[0], *shape)
+        return taken.to_numpy(zero_copy_only=False)
 
     def _flush_piece(self, piece_idx: int) -> None:
         """Write a dirty piece back to disk."""
@@ -582,9 +618,14 @@ class ParquetStorage(SpaceStorage[
         col_results: Dict[str, List] = {name: [None] * total_size for name, _, _ in self._column_specs}
 
         for piece_idx, (local_idxs, output_positions) in mapping.items():
-            piece_data = self._load_piece(piece_idx)
-            for col_name, _, _ in self._column_specs:
-                values = piece_data[col_name][local_idxs]
+            piece_data = None if self._read_only else self._load_piece(piece_idx)
+            for col_name, dtype, shape in self._column_specs:
+                if self._read_only:
+                    values = self._read_only_piece_column_values(
+                        piece_idx, col_name, local_idxs, dtype, shape,
+                    )
+                else:
+                    values = piece_data[col_name][local_idxs]
                 for i, pos in enumerate(output_positions):
                     col_results[col_name][pos] = values[i]
 
@@ -761,6 +802,7 @@ class ParquetStorage(SpaceStorage[
         if self.is_mutable and self._dirty_pieces:
             self._flush_all_dirty()
         self._cached_pieces.clear()
+        self._cached_piece_tables.clear()
         self._dirty_pieces.clear()
 
     # ========== get_column ==========
@@ -794,12 +836,14 @@ class ParquetStorage(SpaceStorage[
             self._flush_all_dirty()
         state = self.__dict__.copy()
         state.pop("_cached_pieces", None)
+        state.pop("_cached_piece_tables", None)
         state.pop("_dirty_pieces", None)
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
         self._cached_pieces = {}
+        self._cached_piece_tables = {}
         self._dirty_pieces = set()
 
     # ========== Utilities ==========

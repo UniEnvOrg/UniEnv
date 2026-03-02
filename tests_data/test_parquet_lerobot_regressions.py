@@ -8,9 +8,15 @@ import pyarrow.parquet as pq
 import pytest
 
 from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.space import BoxSpace
 from unienv_data.storages.parquet import ParquetStorage
 from unienv_data.integrations.lerobot import LeRobotAsUniEnvDataset
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 def _float_space(shape):
@@ -168,6 +174,25 @@ def test_parquet_negative_indices_supported(tmp_path: Path):
     storage.close()
 
 
+def test_parquet_read_only_get_uses_arrow_piece_cache(tmp_path: Path):
+    storage_path = tmp_path / "parquet_read_only_arrow_cache"
+    space = _float_space((2,))
+    storage = ParquetStorage.create(space, capacity=None, cache_path=storage_path, piece_size=2)
+    storage.extend_length(4)
+    storage.set(
+        slice(0, 4),
+        np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]], dtype=np.float32),
+    )
+    storage.close()
+
+    read_only_storage = ParquetStorage.load_from(storage_path, space, capacity=None, read_only=True)
+    values = read_only_storage.get(np.array([0, 3], dtype=np.int64))
+    np.testing.assert_allclose(values, np.array([[1.0, 2.0], [7.0, 8.0]], dtype=np.float32))
+    assert read_only_storage._cached_pieces == {}
+    assert len(read_only_storage._cached_piece_tables) > 0
+    read_only_storage.close()
+
+
 def test_parquet_column_compression_dict_respected(tmp_path: Path):
     storage_path = tmp_path / "parquet_compression"
     space = _float_space((2,))
@@ -227,3 +252,24 @@ def test_lerobot_v3_packed_episode_uses_dataset_offset(tmp_path: Path):
         np.asarray(episode["observation.state"]).reshape(-1),
         np.array([3.0, 4.0], dtype=np.float32),
     )
+
+
+@pytest.mark.skipif(torch is None, reason="PyTorch is required for this test")
+def test_lerobot_torch_backend_uses_torch_fastpath(tmp_path: Path):
+    dataset_dir = _write_lerobot_v2_dataset(tmp_path)
+    dataset = LeRobotAsUniEnvDataset.from_local(
+        str(dataset_dir),
+        backend=PyTorchComputeBackend,
+        decode_video=False,
+    )
+    assert dataset._use_torch_fastpath
+
+    batch = dataset.get_at(slice(0, 1))
+    assert isinstance(batch["observation.state"], torch.Tensor)
+    np.testing.assert_allclose(
+        batch["observation.state"].cpu().numpy().reshape(-1),
+        np.array([123.0], dtype=np.float32),
+    )
+
+    cached_episode = dataset._parquet_cache[0]
+    assert isinstance(cached_episode["observation.state"], torch.Tensor)
