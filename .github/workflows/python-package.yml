@@ -27,6 +27,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        python -m pip install moviepy imageio-ffmpeg
         pip3 install numpy
         pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip3 install jax
