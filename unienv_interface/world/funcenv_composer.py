@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable
+from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable, Callable, Type
 from dataclasses import dataclass
 
 from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderInfo
@@ -103,6 +103,25 @@ class FuncWorldEnv(FuncEnv[
 		if self.node.control_timestep is not None:
 			return int(round(1 / self.node.control_timestep))
 		return None
+
+	# ========== Node query methods ==========
+	def get_node(
+		self,
+		nested_keys: Union[str, Sequence[str]],
+	) -> Optional[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		return self.node.get_node(nested_keys)
+
+	def get_nodes_by_fn(
+		self,
+		fn: Callable[[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], bool],
+	) -> list[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		return self.node.get_nodes_by_fn(fn)
+
+	def get_nodes_by_type(
+		self,
+		node_type: Type[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
+	) -> list[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		return self.node.get_nodes_by_type(node_type)
 
 	# ========== FuncEnv interface ==========
 

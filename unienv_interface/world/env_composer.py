@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable
+from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable, Callable, Type
 
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -94,6 +94,25 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         if self.node.control_timestep is not None:
             return int(round(1 / self.node.control_timestep))
         return None
+
+    # ========== Node query methods ==========
+    def get_node(
+        self,
+        nested_keys: Union[str, Sequence[str]],
+    ) -> Optional[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        return self.node.get_node(nested_keys)
+
+    def get_nodes_by_fn(
+        self,
+        fn: Callable[[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], bool],
+    ) -> list[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        return self.node.get_nodes_by_fn(fn)
+
+    def get_nodes_by_type(
+        self,
+        node_type: Type[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
+    ) -> list[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        return self.node.get_nodes_by_type(node_type)
 
     # ========== Env interface ==========
 

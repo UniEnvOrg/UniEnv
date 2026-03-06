@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable, Generic
+from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable, Generic, Sequence, Callable
 from math import lcm
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
@@ -175,6 +175,33 @@ class CombinedWorldNode(WorldNode[
             {node.name: node.action_space for node in self.nodes if node.action_space is not None},
             direct_return=self.direct_return,
         )
+
+    # ========== Node query methods ==========
+    def get_node(self, nested_keys: Union[str, Sequence[str]]) -> Optional[WorldNode]:
+        if isinstance(nested_keys, str):
+            keys = [nested_keys]
+        else:
+            keys = list(nested_keys)
+
+        if len(keys) == 0:
+            return self
+
+        key = keys[0]
+        child = next((node for node in self.nodes if node.name == key), None)
+        if child is None:
+            return None
+
+        if len(keys) == 1:
+            return child
+        return child.get_node(keys[1:])
+
+    def get_nodes_by_fn(self, fn: Callable[[WorldNode], bool]) -> list[WorldNode]:
+        result: list[WorldNode] = []
+        if fn(self):
+            result.append(self)
+        for node in self.nodes:
+            result.extend(node.get_nodes_by_fn(fn))
+        return result
 
     @property
     def world(self) -> World[BArrayType, BDeviceType, BDtypeType, BRNGType]:

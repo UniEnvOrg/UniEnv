@@ -1,4 +1,4 @@
-from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union
+from typing import Generic, Any, TypeVar, Optional, Dict, Tuple, Sequence, List, Set, Type, Union, Callable
 from abc import ABC, abstractmethod
 import numpy as np
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -268,6 +268,34 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         Use ``get_context``, ``get_observation``, and ``get_info`` to read the state.
         """
         self.after_reset(priority=priority, mask=mask)
+
+    # ========== Node query methods ==========
+    def get_node(self, nested_keys: Union[str, Sequence[str]]) -> Optional["WorldNode"]:
+        """Return a node by key path.
+
+        - ``str`` keys are treated as a single direct-child key.
+        - Empty key sequence returns ``self``.
+        - Vanilla nodes have no children and return ``None`` for non-empty lookup.
+        """
+        if isinstance(nested_keys, str):
+            keys = [nested_keys]
+        else:
+            keys = list(nested_keys)
+
+        if len(keys) == 0:
+            return self
+        return None
+
+    def get_nodes_by_fn(self, fn: Callable[["WorldNode"], bool]) -> list["WorldNode"]:
+        """Return nodes in this subtree matching ``fn``.
+
+        Vanilla nodes only evaluate ``self``.
+        """
+        return [self] if fn(self) else []
+
+    def get_nodes_by_type(self, node_type: Type["WorldNode"]) -> list["WorldNode"]:
+        """Return nodes in this subtree that are instances of ``node_type``."""
+        return self.get_nodes_by_fn(lambda node: isinstance(node, node_type))
 
     def close(self) -> None:
         pass

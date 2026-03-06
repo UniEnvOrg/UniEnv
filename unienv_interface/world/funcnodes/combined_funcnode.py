@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Set, Any, Tuple, Union, Iterable, Mapping, Generic
+from typing import Optional, Dict, Set, Any, Tuple, Union, Iterable, Mapping, Generic, Sequence, Callable
 from math import lcm
 
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -160,6 +160,33 @@ class CombinedFuncWorldNode(FuncWorldNode[
 			return next(iter(data.values()))
 		else:
 			return data
+
+	# ========== Node query methods ==========
+	def get_node(self, nested_keys: Union[str, Sequence[str]]) -> Optional[FuncWorldNode]:
+		if isinstance(nested_keys, str):
+			keys = [nested_keys]
+		else:
+			keys = list(nested_keys)
+
+		if len(keys) == 0:
+			return self
+
+		key = keys[0]
+		child = next((node for node in self.nodes if node.name == key), None)
+		if child is None:
+			return None
+
+		if len(keys) == 1:
+			return child
+		return child.get_node(keys[1:])
+
+	def get_nodes_by_fn(self, fn: Callable[[FuncWorldNode], bool]) -> list[FuncWorldNode]:
+		result: list[FuncWorldNode] = []
+		if fn(self):
+			result.append(self)
+		for node in self.nodes:
+			result.extend(node.get_nodes_by_fn(fn))
+		return result
 
 	# ========== properties ==========
 	@property
