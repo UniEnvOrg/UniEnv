@@ -1,12 +1,11 @@
 from typing import Union, Any, Optional, Mapping, List, Callable, Dict
 
-from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
 
 import copy
-from .transformation import DataTransformation, TargetDataT
+from .transformation import DataTransformation
 
 def get_chained_value(
     data : Mapping[str, Any],
