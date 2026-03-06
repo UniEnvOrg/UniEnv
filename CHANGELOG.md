@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.1b11 (2026-03-05)
+
+- Added support for rendering videos with `EpisodeRenderStackWrapper`, `EpisodeVideoWrapper`, `EpisodeWandbVideoWrapper` when the underlying environment provides potentially nested `Mapping[str, np.ndarray]` observations that contains image. The wrapper will automatically detect the image data in the observation and use it for rendering one video for each image observation key.
+- Added `FlattenDictTransformation` and `UnflattenDictTransformation` for flattening and unflattening nested dictionary data.
+
 ## 0.0.1b10 (2026-02-18)
 
 - Bumped required `xbarray` package version to `0.0.1a16` to include the latest bugfixes and performance improvements.
