@@ -133,7 +133,7 @@ class RescaleTransformation(DataTransformation):
         new_low_backend, new_low_data = serialize_scalar_or_array_value(self.new_low)
         new_high_backend, new_high_data = serialize_scalar_or_array_value(self.new_high)
         nan_to_backend, nan_to_data = serialize_scalar_or_array_value(self.nan_to)
-        backend = new_low_backend or new_high_backend or nan_to_backend
+        backend = source_space.backend if source_space is not None else (new_low_backend or new_high_backend or nan_to_backend)
         result = {
             "new_low": new_low_data,
             "new_high": new_high_data,
