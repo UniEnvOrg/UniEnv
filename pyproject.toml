@@ -16,6 +16,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "gymnasium>=0.29.0",
+    "moviepy>=2.1",
+    "torch",
+    "jax",
+    "pyarrow",
+    "h5py",
+    "av",
+    "datasets",
+    "huggingface_hub",
+    "typing_extensions",
 ]
 gymnasium = [
     "gymnasium>=0.29.0",
