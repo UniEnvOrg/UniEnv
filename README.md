@@ -1,6 +1,6 @@
 # UniEnv
 
-![UniEnv overview](static/unienv_overview.webp)
+![UniEnv overview](docs/static/unienv_overview.webp)
 
 UniEnv is a Python framework for building robot environments and robot data pipelines on top of a shared set of abstractions.
 
