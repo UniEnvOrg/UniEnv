@@ -7,6 +7,19 @@ PACKAGE_DIRS = (Path("unienv_interface"), Path("unienv_data"))
 DOCS_DIR = Path("docs")
 INDEX_PATH = Path("api", "index.md")
 SUMMARY_PATH = Path("SUMMARY.md")
+PREFERRED_DOC_ORDER = [
+    Path("index.md"),
+    Path("getting-started.md"),
+    Path("concepts", "index.md"),
+    Path("concepts", "environments.md"),
+    Path("concepts", "spaces-and-backends.md"),
+    Path("concepts", "world-composition.md"),
+    Path("guides", "index.md"),
+    Path("guides", "wrappers-and-transformations.md"),
+    Path("guides", "replay-buffers-and-storage.md"),
+    Path("guides", "dataset-integrations.md"),
+    Path("guides", "development.md"),
+]
 
 
 def should_skip(path: Path) -> bool:
@@ -21,16 +34,7 @@ def should_skip(path: Path) -> bool:
 
 
 def is_documentable(path: Path) -> bool:
-    current = Path(path.parts[0])
-    if not (current / "__init__.py").exists():
-        return False
-
-    for part in path.parts[1:-1]:
-        current /= part
-        if not (current / "__init__.py").exists():
-            return False
-
-    return True
+    return (Path(path.parts[0]) / "__init__.py").exists()
 
 
 def humanize(name: str) -> str:
@@ -46,12 +50,27 @@ def doc_nav_parts(path: Path) -> tuple[str, ...]:
 
 
 site_nav = mkdocs_gen_files.Nav()
-api_nav = mkdocs_gen_files.Nav()
+api_nav_by_package = {package_dir.name: mkdocs_gen_files.Nav() for package_dir in PACKAGE_DIRS}
 
-for doc_path in sorted(DOCS_DIR.rglob("*.md")):
+preferred_doc_positions = {
+    path: index for index, path in enumerate(PREFERRED_DOC_ORDER)
+}
+
+doc_paths = []
+for doc_path in DOCS_DIR.rglob("*.md"):
     rel_path = doc_path.relative_to(DOCS_DIR)
     if rel_path == SUMMARY_PATH or rel_path.parts[0] == "api":
         continue
+    doc_paths.append(rel_path)
+
+doc_paths.sort(
+    key=lambda rel_path: (
+        preferred_doc_positions.get(rel_path, len(PREFERRED_DOC_ORDER)),
+        rel_path.as_posix(),
+    )
+)
+
+for rel_path in doc_paths:
     site_nav[doc_nav_parts(rel_path)] = rel_path.as_posix()
 
 for package_dir in PACKAGE_DIRS:
@@ -69,7 +88,7 @@ for package_dir in PACKAGE_DIRS:
             doc_path = Path("api", *module_parts).with_suffix(".md")
 
         identifier = ".".join(module_parts)
-        api_nav[tuple(module_parts)] = doc_path.relative_to("api").as_posix()
+        api_nav_by_package[package_dir.name][tuple(module_parts)] = doc_path.relative_to("api").as_posix()
 
         with mkdocs_gen_files.open(doc_path, "w") as fd:
             fd.write(f"# `{identifier}`\n\n")
@@ -85,15 +104,19 @@ with mkdocs_gen_files.open(INDEX_PATH, "w") as index_file:
         "from their docstrings with `mkdocstrings`.\n\n"
     )
     index_file.write(
-        "Directories that are not importable Python packages are skipped until "
-        "they expose package metadata.\n\n"
+        "Use the narrative guides for concepts and workflows, then drop into "
+        "this section when you need class- or module-level details.\n\n"
     )
-    index_file.write("## Module Index\n\n")
-    index_file.writelines(api_nav.build_literate_nav())
+    for package_dir in PACKAGE_DIRS:
+        package_name = package_dir.name
+        index_file.write(f"## `{package_name}`\n\n")
+        index_file.writelines(api_nav_by_package[package_name].build_literate_nav())
+        index_file.write("\n")
 
 
 with mkdocs_gen_files.open(SUMMARY_PATH, "w") as summary_file:
     summary_file.writelines(site_nav.build_literate_nav())
     summary_file.write("* [API Reference](api/index.md)\n")
-    for line in api_nav.build_literate_nav():
-        summary_file.write("  " + line.replace("](", "](api/", 1))
+    for package_dir in PACKAGE_DIRS:
+        for line in api_nav_by_package[package_dir.name].build_literate_nav():
+            summary_file.write("  " + line.replace("](", "](api/", 1))

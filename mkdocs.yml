@@ -8,9 +8,12 @@ theme:
   name: material
   features:
     - navigation.instant
+    - navigation.indexes
     - navigation.sections
     - navigation.top
     - content.code.copy
+    - search.highlight
+    - search.suggest
 
 plugins:
   - search

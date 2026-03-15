@@ -1,61 +1,109 @@
 # UniEnv
 
-Framework unifying robot environments and data APIs. UniEnv provides an universal interface for robot actors, sensors, environments, and data. 
+UniEnv is a Python framework for building robot environments and robot data pipelines on top of a shared set of abstractions.
 
-## Tensor library cross-backend Support
+Documentation: <https://unienvorg.github.io/UniEnv/>
 
-UniEnv supports multiple tensor backends with zero-copy translation layers through the DLPack protocol, and allows you to use the same abstract compute backend interface to write custom data transformation layers, environment wrappers and other utilities. This is powered by the [XBArray](https://github.com/UniEnvOrg/XBArray) package.
+It gives you:
 
-## Universal Robot Environment Interface
+- a common environment interface for simulation and real-robot control
+- a functional environment variant for explicit state passing
+- backend-aware spaces, wrappers, and transformations
+- world and node composition utilities for multi-component environments
+- replay buffers, storages, samplers, and dataset adapters for offline data workflows
 
-UniEnv supports diverse simulation environments and real robots, built on top of the abstract environment / world interface. This allows you to reuse code across different sim and real robots.
+The project is designed around one idea: environment code and dataset code should not have to be rewritten every time the simulator, robot, or tensor library changes.
 
-## Universal Robot Data Interface
+## What Is In The Package
 
-UniEnv provides a universal data interface for accessing robot data through the abstract `BatchBase` interface. We also provide a utility `ReplayBuffer` for saving data from various environments with diverse data format support, including `hdf5`, memory-mapped torch tensors, and others.
+- `unienv_interface`: environments, worlds, nodes, spaces, wrappers, and transformations
+- `unienv_data`: batches, replay buffers, storage backends, samplers, and dataset integrations
+- backend portability through [XBArray](https://github.com/UniEnvOrg/XBArray) and DLPack-based conversion paths
 
 ## Installation
 
-Install the package with pip
+Install the base package:
 
 ```bash
 pip install unienv
 ```
 
-You can install optional dependencies such as `gymnasium` (for Gymnasium-compatible environments), `dev`, or `video` by running
+Install optional extras when needed:
 
 ```bash
-pip install unienv[gymnasium,video]
+pip install "unienv[gymnasium,video]"
 ```
 
-## Local Developments
+Some integrations and storage backends rely on their own ecosystem packages such as `pyarrow`, `h5py`, `datasets`, `huggingface_hub`, `torch`, or `jax`. Install the ones that match the features you plan to use.
 
-### Development Environment Setup
+## Quick Example
 
-To perform development on your local machine, you need to clone the repository and install the package in editable mode.
+The example below shows the core building blocks without depending on a specific simulator:
+
+```python
+import numpy as np
+
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.space.spaces import BoxSpace, DictSpace
+from unienv_interface.transformations import RescaleTransformation
+from unienv_data.replay_buffer import ReplayBuffer
+from unienv_data.storages.parquet import ParquetStorage
+
+backend = NumpyComputeBackend
+
+transition_space = DictSpace(
+    backend,
+    {
+        "obs": BoxSpace(backend, 0.0, 1.0, np.float32, shape=(4,)),
+        "action": BoxSpace(backend, -1.0, 1.0, np.float32, shape=(2,)),
+        "reward": BoxSpace(backend, -np.inf, np.inf, np.float32, shape=()),
+    },
+)
+
+action_transform = RescaleTransformation(new_low=0.0, new_high=1.0)
+normalized_action_space = action_transform.get_target_space_from_source(
+    transition_space["action"]
+)
+
+buffer = ReplayBuffer.create(
+    ParquetStorage,
+    transition_space,
+    cache_path="cache/demo_buffer",
+    capacity=10_000,
+)
+
+print(normalized_action_space)
+print(buffer.single_space)
+```
+
+In practice, you would pair these components with your own `Env`, `FuncEnv`, `World`, or `WorldNode` implementations, then add wrappers and storage backends as needed.
+
+## Documentation
+
+Documentation: <https://unienvorg.github.io/UniEnv/>
+
+Start with:
+
+- `docs/getting-started.md` for installation and the package map
+- `docs/concepts/` for the core abstractions
+- `docs/guides/` for wrappers, replay buffers, and dataset integrations
+
+## Development
+
+For local development:
 
 ```bash
 git clone https://github.com/UniEnvOrg/UniEnv
-cd UniEnv
-pip install numpy
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu # You can choose to either install cpu version or cuda version, up to you
-pip install jax # same for jax
-python -m pip install pytest
-python -m pip install tensordict h5py opencv-python
+cd UniEnv/UniEnvPy
 pip install -e .[dev,gymnasium,video]
-```
-
-### Before commiting
-
-Make sure all unit tests pass and your added code compiles before commiting or making a PR. You can run the tests with
-
-```bash
 pytest
 ```
 
+If you want to exercise optional backends or integrations during development, install their matching dependencies explicitly before running the relevant tests.
+
 ## Cite
 
-If you use UniEnv in your research, please cite it as follows:
+If you use UniEnv in research, cite:
 
 ```bibtex
 @software{cao_unienv,
@@ -70,5 +118,4 @@ If you use UniEnv in your research, please cite it as follows:
 
 ## Acknowledgements
 
-The idea of this project is inspired by [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) and its predecessor [OpenAI Gym](https://github.com/openai/gym). 
-This library is impossible without the great work of DataAPIs Consortium and their work on the [Array API Standard](https://data-apis.org/array-api/latest/). The zero-copy translation layers are powered by the [DLPack](https://github.com/dmlc/dlpack) project.
+UniEnv is influenced by [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) and OpenAI Gym, and builds on ideas from the [Array API Standard](https://data-apis.org/array-api/latest/) and [DLPack](https://github.com/dmlc/dlpack).
