@@ -29,12 +29,16 @@ def space_to_json(space : Space) -> typing.Dict[str, Any]:
 @singledispatch
 def json_to_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> Space:
     """
-    Deserialize a JSON-compatible dictionary to a Space.
-    
+    Deserialize a JSON-compatible dictionary into a ``Space`` instance.
+
     Args:
-        json_data (dict): The JSON-compatible representation of the space.
-        backend (ComputeBackend): The backend to use for creating the space.
-    
+        json_data (dict): JSON-compatible space payload produced by
+            :func:`space_to_json`.
+        map_backend (ComputeBackend): Backend used to reconstruct backend-owned
+            arrays and dtypes in the returned space.
+        map_device (Optional[BDeviceType]): Optional device on which to place
+            backend arrays created during deserialization.
+
     Returns:
         Space: The deserialized space.
     """
