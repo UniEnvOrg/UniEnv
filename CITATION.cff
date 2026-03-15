@@ -3,6 +3,12 @@ message: "If you use this software, please cite it as below."
 authors:
   - family-names: Cao
     given-names: Yunhao
+  - family-names: Fan
+    given-names: Cory
+  - family-names: Zhang
+    given-names: Meryl
+  - family-names: Liu
+    given-names: Sabrina
   - family-names: Fang
     given-names: Kuan
   - name: "UniEnv Contributors"

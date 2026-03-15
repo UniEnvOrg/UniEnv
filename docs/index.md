@@ -1,6 +1,6 @@
 # UniEnv
 
-![UniEnv overview](static/unienv_overview.webp){ align=right width="420" }
+![UniEnv overview](static/unienv_overview.webp)
 
 UniEnv is a robotics-oriented interface layer for environments, worlds, data pipelines, and backend-aware transformations.
 
