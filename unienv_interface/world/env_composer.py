@@ -25,6 +25,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         *,
         render_mode: Optional[str] = 'auto',
     ):
+        """Bind a world and node tree into one stateful environment facade."""
         if isinstance(node_or_nodes, WorldNode):
             self.node = node_or_nodes
         else:
@@ -100,18 +101,21 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         self,
         nested_keys: Union[str, Sequence[str]],
     ) -> Optional[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        """Look up a node by name or nested path."""
         return self.node.get_node(nested_keys)
 
     def get_nodes_by_fn(
         self,
         fn: Callable[[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], bool],
     ) -> list[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        """Collect nodes in the tree that satisfy ``fn``."""
         return self.node.get_nodes_by_fn(fn)
 
     def get_nodes_by_type(
         self,
         node_type: Type[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
     ) -> list[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+        """Collect nodes in the tree that are instances of ``node_type``."""
         return self.node.get_nodes_by_type(node_type)
 
     # ========== Env interface ==========
@@ -159,6 +163,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         reload: bool = False,
         **kwargs,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Reset the composed environment, optionally forcing a full reload."""
         if self._first_reset or reload:
             return self.reload(seed=seed, mask=mask, **kwargs)
 
@@ -191,6 +196,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         Union[bool, BArrayType],
         Dict[str, Any],
     ]:
+        """Run one control step through the node/world composition."""
         # 1. Set action
         if self.node.action_space is not None:
             self.node.set_next_action(action)
@@ -240,10 +246,12 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         return obs, reward, terminated, truncated, info
 
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
+        """Render via the root node when rendering is enabled."""
         if self.node.can_render:
             return self.node.render()
         return None
 
     def close(self):
+        """Close the node tree and the underlying world."""
         self.node.close()
         self.world.close()

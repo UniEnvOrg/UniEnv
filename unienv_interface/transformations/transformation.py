@@ -13,6 +13,12 @@ TargetDataT = TypeVar("TargetDataT")
 
 
 class DataTransformation(abc.ABC):
+    """Abstract transformation between two UniEnv data spaces.
+
+    Transformations are used by wrappers, storages, and batch views to adapt
+    data while keeping enough metadata to derive the target space and, when
+    supported, reconstruct the inverse transform.
+    """
     has_inverse: bool = False
     
     @abc.abstractmethod
@@ -31,12 +37,14 @@ class DataTransformation(abc.ABC):
         source_space: Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT],
         data : SourceDataT
     ) -> TargetDataT:
+        """Apply the transformation to data drawn from ``source_space``."""
         raise NotImplementedError
     
     def direction_inverse(
         self,
         source_space: Optional[Space[SourceDataT, SourceBDeviceT, SourceBDTypeT, SourceBDRNGT]] = None,
     ) -> "Optional[DataTransformation]":
+        """Return the inverse transformation when one exists."""
         return None
     
     def close(self):

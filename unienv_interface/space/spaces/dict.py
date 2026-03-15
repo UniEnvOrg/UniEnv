@@ -6,6 +6,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from collections.abc import KeysView
 
 class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
+    """Cartesian product of named subspaces represented as a mapping."""
     def __init__(
         self,
         backend: ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
@@ -15,6 +16,7 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
         ]] = None,
         device : Optional[BDeviceType] = None,
     ):
+        """Create a dictionary-valued space from named child spaces."""
         if isinstance(spaces, Mapping):
             try:
                 spaces = dict(sorted(spaces.items()))
@@ -183,4 +185,3 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             key: space.data_to(data[key], backend=backend, device=device) 
             for key, space in self.spaces.items()
         }
-

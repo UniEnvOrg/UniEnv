@@ -55,6 +55,12 @@ def index_with_offset(
         return data_index
 
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """Ring-buffer style batch storage built on top of a ``SpaceStorage``.
+
+    The buffer exposes the standard ``BatchBase`` interface while handling
+    round-robin overwrite semantics, persistence metadata, and optional
+    multiprocessing-safe counters.
+    """
     # =========== Class Attributes ==========
     @staticmethod
     def create(
@@ -66,6 +72,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         multiprocessing : bool = False,
         **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Create a new replay buffer and its backing storage."""
         storage_path_relative = "storage" + (storage_cls.single_file_ext or "")
         if cache_path is not None:
             os.makedirs(cache_path, exist_ok=True)
@@ -148,6 +155,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         multiprocessing : bool = False,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Load a replay buffer plus its backing storage from disk."""
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
         
@@ -181,6 +189,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     # =========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
+        """Persist the replay buffer metadata and its backing storage."""
         with self._lock_scope():
             os.makedirs(path, exist_ok=True)
             storage_path = os.path.join(path, self.storage_path_relative)
@@ -206,6 +215,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         cache_path : Optional[Union[str, os.PathLike]] = None,
         multiprocessing : bool = False,
     ):
+        """Wrap a storage object with replay-buffer indexing semantics."""
         self.storage = storage
         self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path

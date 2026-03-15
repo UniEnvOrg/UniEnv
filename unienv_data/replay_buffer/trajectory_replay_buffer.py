@@ -21,10 +21,16 @@ from .replay_buffer import ReplayBuffer
 EpisodeBatchT = TypeVar("EpisodeBatchT")
 
 class TrajectoryData(TypedDict, Generic[BatchT, EpisodeBatchT]):
+    """Structured sample returned by ``TrajectoryReplayBuffer``."""
     step_data: BatchT
     episode_data : Optional[EpisodeBatchT]
 
 class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BArrayType, BDeviceType, BDtypeType, BRNGType], Generic[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """Replay buffer that tracks both step-level and episode-level data.
+
+    Each transition stores step data plus an episode id, and can optionally
+    reference separate episode metadata for trajectory-aware sampling.
+    """
     # =========== Class Attributes ==========
     @staticmethod
     def create(
@@ -43,6 +49,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         multiprocessing : bool = False,
         **kwargs,
     ) -> "TrajectoryReplayBuffer[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Create a new trajectory replay buffer and all subordinate buffers."""
         backend = step_data_instance_space.backend 
         step_data_buffer = ReplayBuffer.create(
             step_data_storage_cls,
@@ -116,6 +123,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         episode_storage_kwargs: Dict[str, Any] = {},
         **storage_kwargs
     ) -> "TrajectoryReplayBuffer[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Load a trajectory replay buffer and its subordinate buffers from disk."""
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
         
@@ -175,6 +183,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
 
     # ========== Instance Attributes and Methods ==========
     def dumps(self, path : Union[str, os.PathLike]):
+        """Persist buffer metadata plus all subordinate replay buffers."""
         with self._lock_scope():
             os.makedirs(path, exist_ok=True)
             step_data_path = os.path.join(path, "step_data")
@@ -211,6 +220,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         episode_id_to_index_map : Optional[Dict[int, int]] = None,
         multiprocessing: bool = False,
     ):
+        """Assemble the step buffer, episode id buffer, and optional episode buffer."""
         assert step_data_buffer.backend == step_episode_id_buffer.backend, \
             "Step data buffer and step episode ID buffer must have the same backend."
         assert step_data_buffer.device == step_episode_id_buffer.device, \

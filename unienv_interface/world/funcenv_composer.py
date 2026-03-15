@@ -38,6 +38,7 @@ class FuncWorldEnv(FuncEnv[
 		*,
 		render_mode: Optional[str] = 'auto',
 	):
+		"""Bind a functional world and node tree into one ``FuncEnv`` facade."""
 		if isinstance(node_or_nodes, FuncWorldNode):
 			self.node = node_or_nodes
 		else:
@@ -109,18 +110,21 @@ class FuncWorldEnv(FuncEnv[
 		self,
 		nested_keys: Union[str, Sequence[str]],
 	) -> Optional[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		"""Look up a node by name or nested path."""
 		return self.node.get_node(nested_keys)
 
 	def get_nodes_by_fn(
 		self,
 		fn: Callable[[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]], bool],
 	) -> list[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		"""Collect nodes in the tree that satisfy ``fn``."""
 		return self.node.get_nodes_by_fn(fn)
 
 	def get_nodes_by_type(
 		self,
 		node_type: Type[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
 	) -> list[FuncWorldNode[WorldStateT, Any, Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]]:
+		"""Collect nodes in the tree that are instances of ``node_type``."""
 		return self.node.get_nodes_by_type(node_type)
 
 	# ========== FuncEnv interface ==========
@@ -132,6 +136,7 @@ class FuncWorldEnv(FuncEnv[
 		seed: Optional[int] = None,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		"""Rebuild the world and recreate node state through the reload lifecycle."""
 		# 1. World prepares (clear old state, load assets)
 		world_state = self.world.reload(
 			state.world_state,
@@ -170,6 +175,7 @@ class FuncWorldEnv(FuncEnv[
 		seed: Optional[int] = None,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		"""Create the initial world state and root node state."""
 		world_state = self.world.initial(seed=seed, **kwargs)
 
 		# Create node state across priorities
@@ -202,6 +208,7 @@ class FuncWorldEnv(FuncEnv[
 		reload: bool = False,
 		**kwargs,
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
+		"""Reset the composed functional environment, optionally forcing reload."""
 		if reload:
 			return self.reload(state, seed=seed, **kwargs)
 		# 1. World reset
@@ -241,6 +248,7 @@ class FuncWorldEnv(FuncEnv[
 		Union[bool, BArrayType],
 		Dict[str, Any],
 	]:
+		"""Run one control step through the functional node/world composition."""
 		world_state = state.world_state
 		node_state = state.node_state
 
@@ -297,15 +305,18 @@ class FuncWorldEnv(FuncEnv[
 		return WorldFuncEnvState(world_state, node_state), obs, reward, terminated, truncated, info
 
 	def close(self, state: WorldFuncEnvState) -> None:
+		"""Close the node tree first, then the underlying world."""
 		world_state = self.node.close(state.world_state, state.node_state)
 		self.world.close(world_state)
 
 	# ========== Render interface ==========
 
 	def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+		"""Return a no-op render state for node-based functional environments."""
 		return state, None, FuncEnvCommonRenderInfo(render_mode=render_mode)
 
 	def render_image(self, state, render_state):
+		"""Render through the root node when rendering is enabled."""
 		if self.node.can_render:
 			image = self.node.render(state.world_state, state.node_state)
 		else:
@@ -313,4 +324,5 @@ class FuncWorldEnv(FuncEnv[
 		return image, state, render_state
 
 	def render_close(self, state, render_state):
+		"""Return the unchanged state because no extra render state is held."""
 		return state

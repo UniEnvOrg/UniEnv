@@ -22,6 +22,11 @@ class Wrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
+    """Base class for stateful environment wrappers.
+
+    The wrapper forwards all operations to ``env`` by default while allowing
+    subclasses to override spaces, RNG handling, and selected lifecycle methods.
+    """
     # ========== Public Attribute Getters ==========
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -100,6 +105,7 @@ class Wrapper(
     def __init__(
         self, 
         env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
+        """Wrap ``env`` and optionally override spaces or metadata later."""
         self.env = env
         assert isinstance(env, Env)
 
@@ -218,11 +224,14 @@ class ActionWrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ]
 ):
+    """Wrapper that exposes a transformed action interface."""
     @abc.abstractmethod
     def map_action(self, action : WrapperActT) -> ActType:
+        """Map an outer action into the wrapped environment's action space."""
         raise NotImplementedError
     
     def reverse_map_action(self, action : ActType) -> WrapperActT:
+        """Map an inner action back to the wrapper-facing representation."""
         raise NotImplementedError
     
     def step(
@@ -246,16 +255,21 @@ class ContextObservationWrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType,
     ]
 ):
+    """Wrapper that transforms context and observation values."""
     def map_context(self, context : WrapperContextT) -> ContextType:
+        """Convert wrapped context into the wrapper-facing representation."""
         return context
     
     def reverse_map_context(self, context : ContextType) -> WrapperContextT:
+        """Convert wrapper-facing context back into the wrapped representation."""
         raise NotImplementedError
     
     def map_observation(self, observation : WrapperObsT) -> ObsType:
+        """Convert wrapped observations into the wrapper-facing representation."""
         return observation
     
     def reverse_map_observation(self, observation : ObsType) -> WrapperObsT:
+        """Convert wrapper-facing observations back into the wrapped representation."""
         raise NotImplementedError
     
     def reset(

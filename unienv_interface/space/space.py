@@ -8,6 +8,13 @@ _SpaceBDeviceT = TypeVar("_SpaceBDeviceT", covariant=True)
 _SpaceBDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
 _SpaceBDRNGT = TypeVar("_SpaceBDRNGT", covariant=True)
 class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]):
+    """Abstract description of a valid data domain.
+
+    Spaces carry backend, device, shape, and dtype metadata and define the
+    operations needed by the rest of UniEnv: validation, sampling, empty value
+    creation, serialization-friendly representation, and backend/device
+    conversion for both the space definition and its data.
+    """
     def __init__(
         self,
         backend : ComputeBackend[ArrayAPIArray, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT],
@@ -30,6 +37,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         backend: Optional[ComputeBackend] = None,
         device: Optional[Union[_SpaceBDeviceT, Any]] = None,
     ) -> Union["Space[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]", "Space"]:
+        """Return an equivalent space on another backend and/or device."""
         raise NotImplementedError
 
     @property
@@ -39,6 +47,7 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
 
     @abc.abstractmethod
     def sample(self, rng : _SpaceBDRNGT, **kwargs) -> Tuple[_SpaceBDRNGT, SpaceDataT]:
+        """Draw one valid value from the space and return the advanced RNG."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -100,12 +109,12 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         backend : Optional[ComputeBackend] = None,
         device : Optional[Union[_SpaceBDeviceT, Any]] = None
     ) -> Union[SpaceDataT, Any]:
-        """Convert data to another backend."""
+        """Convert space-compatible data to another backend and/or device."""
         raise NotImplementedError
 
     @staticmethod
     def abbr_device(spaces : "Iterable[Space[Any, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]]") -> Optional[_SpaceBDeviceT]:
-        """Get the abbreviated device of the spaces."""
+        """Return the shared device across spaces, or ``None`` if mixed/empty."""
         
         iter_spaces = iter(spaces)
         try:

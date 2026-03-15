@@ -21,6 +21,11 @@ class FuncEnvWrapper(
         WrapperBArrayT, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT,
     ]
 ):
+    """Base wrapper for ``FuncEnv`` implementations.
+
+    This mirrors :class:`Wrapper` but preserves the explicit state-passing style
+    of the functional environment API.
+    """
     # ========== Public Attribute Getter / Setters ===========
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -86,6 +91,7 @@ class FuncEnvWrapper(
             BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
         ]
     ):
+        """Wrap a functional environment and optionally override its interface metadata."""
         self.func_env = func_env
 
         # Initialize optional replacement attributes

@@ -14,6 +14,7 @@ def data_stack(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     device : Optional[BDeviceType] = None,
 ):
+    """Recursively stack Python/array data into a batched backend representation."""
     if isinstance(data, Mapping):
         data = {
             key: data_stack(value, backend)
@@ -49,6 +50,7 @@ def data_stack(
 class SyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
+    """Run multiple non-batched environments synchronously in one process."""
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -56,6 +58,7 @@ class SyncVecEnv(Env[
         ]]],
         seed : Optional[int] = None,
     ):
+        """Instantiate every environment immediately and batch their interfaces."""
         self.envs = [fn() for fn in env_fn]
         assert len(self.envs) > 1, "env_fns should have more than 1 env function"
         assert all(env.batch_size is None for env in self.envs), "All envs must be non-batched envs"
@@ -117,6 +120,7 @@ class SyncVecEnv(Env[
         seed : Optional[int] = None,
         **kwargs
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Reset all selected workers and concatenate their results."""
         if seed is not None:
             self.rng = self.backend.random.random_number_generator(
                 seed,
@@ -159,6 +163,7 @@ class SyncVecEnv(Env[
         self,
         action : ActType
     ) -> Tuple[ObsType, BArrayType, BArrayType, BArrayType, Dict[str, Any]]:
+        """Step every worker environment once and concatenate the outputs."""
         actions = sbu.iterate(
             self.action_space,
             action
@@ -203,6 +208,7 @@ class SyncVecEnv(Env[
         return all_obs, all_rewards, all_terminated, all_truncated, all_infos
     
     def render(self) -> Sequence[RenderFrame] | None:
+        """Collect render outputs from every worker that returns a frame."""
         frames = []
         for env in self.envs:
             frame = env.render()
@@ -251,6 +257,7 @@ def _async_worker_fn(
 class AsyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
+    """Run multiple non-batched environments in separate worker processes."""
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -260,6 +267,7 @@ class AsyncVecEnv(Env[
         ctx : Optional[MPContext] = None,
         daemon : bool = True,
     ):
+        """Spawn worker processes and batch their exposed spaces."""
         ctx = ctx or mp.get_context()
         self.command_pipes : List[MPConnection] = []
         self.processes : List[mp.Process] = []
@@ -318,9 +326,11 @@ class AsyncVecEnv(Env[
         return len(self.processes)
 
     def send_command(self, index: int, cmd: Literal["reset", "step", "render", "close"], *args, **kwargs):
+        """Send a command to one worker process."""
         self.command_pipes[index].send((cmd, args, kwargs))
 
     def get_command_result(self, index: int):
+        """Receive one worker result and surface worker-side exceptions."""
         data, success = self.command_pipes[index].recv()
         if not success:
             self._raise_if_error()
@@ -333,6 +343,7 @@ class AsyncVecEnv(Env[
         seed : Optional[int] = None,
         **kwargs
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Convenience wrapper around ``reset_async`` plus ``reset_wait``."""
         self.reset_async(*args, mask=mask, seed=seed, **kwargs)
         return self.reset_wait()
 
@@ -343,6 +354,7 @@ class AsyncVecEnv(Env[
         seed : Optional[int] = None,
         **kwargs
     ) -> None:
+        """Dispatch reset commands to all selected workers."""
         if seed is not None:
             self.rng = self.backend.random.random_number_generator(
                 seed,
@@ -358,6 +370,7 @@ class AsyncVecEnv(Env[
     def reset_wait(
         self,
     ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Collect the pending reset results and batch them."""
         all_contexts = []
         all_obs = []
         all_infos = []
@@ -396,6 +409,7 @@ class AsyncVecEnv(Env[
         self,
         action : ActType
     ) -> Tuple[ObsType, BArrayType, BArrayType, BArrayType, Dict[str, Any]]:
+        """Convenience wrapper around ``step_async`` plus ``step_wait``."""
         self.step_async(action)
         return self.step_wait()
     
@@ -403,6 +417,7 @@ class AsyncVecEnv(Env[
         self,
         action : ActType
     ) -> None:
+        """Dispatch one action batch to all worker processes."""
         actions = sbu.iterate(
             self.action_space,
             action
@@ -413,6 +428,7 @@ class AsyncVecEnv(Env[
     def step_wait(
         self,
     ) -> Tuple[ObsType, BArrayType, BArrayType, BArrayType, Dict[str, Any]]:
+        """Collect the pending step results and batch them."""
         all_obs = []
         all_rewards = []
         all_terminated = []
@@ -453,6 +469,7 @@ class AsyncVecEnv(Env[
         return all_obs, all_rewards, all_terminated, all_truncated, all_infos
 
     def close(self):
+        """Shut down all worker processes and communication pipes."""
         for i in range(len(self.processes)):
             try:
                 self.send_command(i, "close")
@@ -467,6 +484,7 @@ class AsyncVecEnv(Env[
         self.processes = []
     
     def _raise_if_error(self):
+        """Raise the next worker exception captured in the error queue."""
         try:
             index, e = self.error_queue.get(block=False)
         except QueueEmpty:

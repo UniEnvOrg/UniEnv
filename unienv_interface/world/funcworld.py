@@ -6,6 +6,7 @@ import time
 WorldStateT = TypeVar("WorldStateT")
 
 class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """Functional counterpart to :class:`World` with explicit state passing."""
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType]
 
@@ -25,6 +26,7 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
         seed : Optional[int] = None,
         **kwargs
     ) -> WorldStateT:
+        """Construct the initial world state."""
         raise NotImplementedError
     
     @abstractmethod
@@ -32,6 +34,7 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
         self,
         state : WorldStateT
     ) -> Tuple[WorldStateT, Union[float, BArrayType]]:
+        """Advance ``state`` by one world step."""
         raise NotImplementedError
 
     @abstractmethod
@@ -122,10 +125,12 @@ class FuncWorld(ABC, Generic[WorldStateT, BArrayType, BDeviceType, BDtypeType, B
         self,
         state : WorldStateT
     ) -> None:
+        """Release any resources referenced by ``state``."""
         pass
 
     # ========== Helper Methods ==========
     def is_control_timestep_compatible(self, control_timestep : Optional[float]) -> bool:
+        """Check whether a node control period aligns with ``world_timestep``."""
         if control_timestep is None or self.world_timestep is None:
             return True
         return (control_timestep % self.world_timestep) == 0

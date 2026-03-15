@@ -23,6 +23,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         multiprocessing : bool = False,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Create a new storage instance for samples from ``single_instance_space``."""
         raise NotImplementedError
 
     @classmethod
@@ -36,6 +37,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         multiprocessing : bool = False,
         **kwargs
     ) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Restore a storage instance previously written to disk."""
         raise NotImplementedError
 
     # ========== Class Attributes ==========
@@ -82,6 +84,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         self,
         single_instance_space : Space[BatchT, BDeviceType, BDtypeType, BRNGType],
     ):
+        """Bind the storage to the space of one stored element."""
         self.single_instance_space = single_instance_space
     
     def extend_length(self, length : int) -> None:
@@ -117,10 +120,12 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
 
     @abc.abstractmethod
     def get(self, index : Union[IndexableType, BArrayType]) -> BatchT:
+        """Read one or more samples from storage."""
         raise NotImplementedError
     
     @abc.abstractmethod
     def set(self, index : Union[IndexableType, BArrayType], value : BatchT) -> None:
+        """Write one or more samples into storage."""
         raise NotImplementedError
     
     # We don't define them here, since they are optional and the `ReplayBuffer` checks if they are implemented

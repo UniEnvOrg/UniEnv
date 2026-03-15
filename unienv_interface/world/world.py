@@ -4,6 +4,11 @@ from abc import ABC, abstractmethod
 import time
 
 class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """Mutable world/simulator interface used by node-based environments.
+
+    A ``World`` owns the shared simulation state while ``WorldNode`` instances
+    contribute observations, actions, rewards, and reset/reload logic around it.
+    """
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType]
 
@@ -33,6 +38,7 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         mask : Optional[BArrayType] = None,
         **kwargs
     ) -> None:
+        """Reset the world state in-place."""
         raise NotImplementedError
 
     def reload(
@@ -106,10 +112,12 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         pass
 
     def close(self) -> None:
+        """Release any resources owned by the world."""
         pass
 
     # ========== Helper Methods ==========
     def is_control_timestep_compatible(self, control_timestep : Optional[float]) -> bool:
+        """Check whether a node control period aligns with ``world_timestep``."""
         if control_timestep is None or self.world_timestep is None:
             return True
         return (control_timestep % self.world_timestep) == 0
@@ -208,7 +216,7 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
 class RealWorld(World[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """
-    A `World` object that uses real world to compute time elapsed
+    ``World`` implementation backed by wall-clock elapsed time.
     """
 
     def __init__(
@@ -227,6 +235,7 @@ class RealWorld(World[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         self._last_step_time : Optional[None] = None
 
     def step(self) -> float:
+        """Return the wall-clock delta since the previous step."""
         assert self._last_step_time is not None, "World must be reset before stepping."
         current_time = time.monotonic()
         elapsed_time = current_time - self._last_step_time
@@ -234,4 +243,5 @@ class RealWorld(World[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         return elapsed_time
 
     def reset(self) -> None:
+        """Start a new wall-clock timing sequence."""
         self._last_step_time = time.monotonic()

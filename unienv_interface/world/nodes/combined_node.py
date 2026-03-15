@@ -127,6 +127,7 @@ class CombinedWorldNode(WorldNode[
         Optional[str],
         Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]
     ]:
+        """Aggregate child spaces into either a passthrough or a ``DictSpace``."""
         if len(spaces) == 0:
             return None, None
         elif len(spaces) == 1 and direct_return:
@@ -145,6 +146,7 @@ class CombinedWorldNode(WorldNode[
         data : Dict[str, Any],
         direct_return : bool = True,
     ) -> Optional[Union[Dict[str, Any], Any]]:
+        """Aggregate child outputs using the same direct-return convention as spaces."""
         if len(data) == 0:
             return None
         elif len(data) == 1 and direct_return:
@@ -178,6 +180,7 @@ class CombinedWorldNode(WorldNode[
 
     # ========== Node query methods ==========
     def get_node(self, nested_keys: Union[str, Sequence[str]]) -> Optional[WorldNode]:
+        """Resolve a child node by dotted-path-like key traversal."""
         if isinstance(nested_keys, str):
             keys = [nested_keys]
         else:
@@ -196,6 +199,7 @@ class CombinedWorldNode(WorldNode[
         return child.get_node(keys[1:])
 
     def get_nodes_by_fn(self, fn: Callable[[WorldNode], bool]) -> list[WorldNode]:
+        """Return every node in the subtree that satisfies ``fn``."""
         result: list[WorldNode] = []
         if fn(self):
             result.append(self)
@@ -250,6 +254,7 @@ class CombinedWorldNode(WorldNode[
 
     # ========== Lifecycle methods ==========
     def pre_environment_step(self, dt, *, priority : int = 0):
+        """Dispatch pre-step callbacks to child nodes at the matching frequency."""
         all_prios = self.pre_environment_step_priorities
         if all_prios and priority == max(all_prios):
             self._pre_substeps = (self._pre_substeps % self._update_period) + 1
@@ -357,6 +362,7 @@ class CombinedWorldNode(WorldNode[
         return result if result else None
 
     def set_next_action(self, action):
+        """Route combined actions to child nodes, respecting per-node control rates."""
         assert self.action_space is not None, "Action space is None, cannot set action."
         self._action_substeps = (self._action_substeps % self._action_period) + 1
 
@@ -375,6 +381,7 @@ class CombinedWorldNode(WorldNode[
                     node.set_next_action(self._cached_actions[node.name])
     
     def post_environment_step(self, dt, *, priority : int = 0):
+        """Dispatch post-step callbacks to child nodes at the matching frequency."""
         all_prios = self.post_environment_step_priorities
         if all_prios and priority == max(all_prios):
             self._post_substeps = (self._post_substeps % self._update_period) + 1
@@ -389,6 +396,7 @@ class CombinedWorldNode(WorldNode[
             assert self._pre_substeps == self._post_substeps
     
     def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+        """Forward reset calls to children that participate at ``priority``."""
         for node in self.nodes:
             if priority in node.reset_priorities:
                 node.reset(
@@ -399,6 +407,7 @@ class CombinedWorldNode(WorldNode[
                 )
 
     def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+        """Forward reload calls to children that participate at ``priority``."""
         for node in self.nodes:
             if priority in node.reload_priorities:
                 node.reload(
@@ -409,6 +418,7 @@ class CombinedWorldNode(WorldNode[
                 )
 
     def after_reset(self, *, priority : int = 0, mask = None):
+        """Forward post-reset hooks and reset internal routing counters."""
         all_prios = self.after_reset_priorities
         if all_prios and priority == max(all_prios):
             self._pre_substeps = 0
@@ -441,5 +451,6 @@ class CombinedWorldNode(WorldNode[
             self._refresh_spaces()
 
     def close(self):
+        """Close every child node."""
         for node in self.nodes:
             node.close()

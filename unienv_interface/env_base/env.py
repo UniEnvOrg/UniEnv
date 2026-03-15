@@ -13,6 +13,13 @@ ActType = TypeVar("ActType")
 RenderFrame = TypeVar("RenderFrame")
 
 class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
+    """Stateful environment interface used throughout UniEnv.
+
+    An ``Env`` exposes typed action, observation, and optional context spaces
+    plus the standard ``reset``/``step``/``render`` lifecycle. Concrete
+    implementations may be single-instance or batched depending on
+    ``batch_size``.
+    """
     # metadata of the environment
     metadata: dict[str, Any] = {
         "render_modes": []
@@ -43,6 +50,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         Union[bool, BArrayType], # Truncated
         Dict[str, Any], # Info
     ]:
+        """Advance the environment by one control step."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -61,6 +69,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
 
     @abc.abstractmethod
     def render(self) -> RenderFrame | Sequence[RenderFrame] | None:
+        """Render the current environment state using the configured render mode."""
         raise NotImplementedError
 
     def close(self):
@@ -81,16 +90,20 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
     
     # ========== Convenience methods ==========
     def sample_space(self, space: Space) -> Any:
+        """Sample from ``space`` using and updating ``self.rng``."""
         self.rng, sample = space.sample(self.rng)
         return sample
 
     def sample_action(self) -> ActType:
+        """Sample one action from ``action_space``."""
         return self.sample_space(self.action_space)
     
     def sample_observation(self) -> ObsType:
+        """Sample one observation from ``observation_space``."""
         return self.sample_space(self.observation_space)    
     
     def sample_context(self) -> Optional[ContextType]:
+        """Sample one context value if ``context_space`` is defined."""
         if self.context_space is None:
             return None
         return self.sample_space(self.context_space)
@@ -101,6 +114,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         newobs_masked: ObsType,
         mask: BArrayType
     ) -> ObsType:
+        """Merge masked reset observations back into a full batched observation."""
         assert self.batch_size is not None, "This method is used by batched environment after reset"
         return space_batch_utils.set_at(
             self.observation_space,
@@ -115,6 +129,7 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
         new_context: ContextType,
         mask: BArrayType
     ) -> ContextType:
+        """Merge masked reset contexts back into a full batched context."""
         assert self.batch_size is not None, "This method is used by batched environment after reset"
         if self.context_space is None:
             return None

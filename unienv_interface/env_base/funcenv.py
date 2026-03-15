@@ -11,6 +11,7 @@ RenderStateType = TypeVar("RenderStateType", covariant=True)
 
 @dataclass(frozen=True)
 class FuncEnvCommonRenderInfo:
+    """Small metadata bundle returned by ``FuncEnv.render_init``."""
     render_mode : Optional[str] = None
     render_fps : Optional[int] = None
 
@@ -21,6 +22,13 @@ class FuncEnv(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
+    """Functional environment interface with explicit immutable state passing.
+
+    Unlike :class:`Env`, a ``FuncEnv`` never stores simulation state on the
+    instance. Instead, every lifecycle method takes a state object and returns
+    the updated state explicitly, which makes the interface easier to compose
+    with JAX-style functional code.
+    """
     metadata : Dict[str, Any] = {
         "render_modes": []
     }
@@ -46,7 +54,7 @@ class FuncEnv(
         ObsType,
         Dict[str, Any]
     ]:
-        """Initial state."""
+        """Create the first environment state, context, observation, and info."""
         raise NotImplementedError
     
     @abc.abstractmethod
@@ -79,11 +87,11 @@ class FuncEnv(
         Union[bool, BArrayType],
         Dict[str, Any]
     ]:
-        """Transition."""
+        """Advance ``state`` by one control step using ``action``."""
         raise NotImplementedError
 
     def close(self, state: StateType) -> None:
-        """Close the environment."""
+        """Release any resources associated with ``state``."""
         return
 
     def render_init(
@@ -98,7 +106,7 @@ class FuncEnv(
         RenderStateType,
         FuncEnvCommonRenderInfo
     ]:
-        """Initialize the render state."""
+        """Create any auxiliary render state needed by ``render_image``."""
         raise NotImplementedError
 
     def render_image(
@@ -110,7 +118,7 @@ class FuncEnv(
         StateType,
         RenderStateType,
     ]:
-        """Render the environment."""
+        """Produce a render frame and updated runtime state."""
         raise NotImplementedError
 
     def render_close(
@@ -118,7 +126,7 @@ class FuncEnv(
         state : StateType,
         render_state : RenderStateType
     ) -> StateType:
-        """Close the render state."""
+        """Release render-specific resources and return the updated state."""
         raise NotImplementedError
 
     # ========== Convenience methods ==========
@@ -128,6 +136,7 @@ class FuncEnv(
         newobs_masked: ObsType,
         mask: BArrayType
     ) -> ObsType:
+        """Merge masked reset observations back into a full batched observation."""
         assert self.batch_size is not None, "This method is used by batched environment after reset"
         return sbu.set_at(
             self.observation_space,
@@ -142,6 +151,7 @@ class FuncEnv(
         new_context: ContextType,
         mask: BArrayType
     ) -> ContextType:
+        """Merge masked reset contexts back into a full batched context."""
         assert self.batch_size is not None, "This method is used by batched environment after reset"
         if self.context_space is None:
             return None
@@ -179,6 +189,7 @@ class FuncEnvBasedEnv(Env[
     StateType, RenderStateType, 
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
+    """Adapter that exposes a stateful ``Env`` view over a ``FuncEnv``."""
     def __init__(
         self,
         func_env : FuncEnv[StateType, RenderStateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
@@ -186,6 +197,7 @@ class FuncEnvBasedEnv(Env[
         render_mode : Optional[str] = None,
         render_kwargs : Dict[str, Any] = {},
     ):
+        """Wrap a functional environment and manage its runtime state internally."""
         self.func_env = func_env
 
         # Environment state
@@ -252,6 +264,7 @@ class FuncEnvBasedEnv(Env[
         return self.func_env.context_space
 
     def _init_render(self) -> None:
+        """Lazily initialize the wrapped functional renderer."""
         if self._render_inited:
             return
         

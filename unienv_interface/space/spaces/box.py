@@ -4,6 +4,7 @@ from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """Continuous or integer hyper-rectangle defined by elementwise bounds."""
     def __init__(
         self,
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -13,6 +14,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         device : Optional[BDeviceType] = None,
         shape: Optional[Sequence[int]] = None,
     ):
+        """Create a box with broadcastable ``low`` and ``high`` bounds."""
         assert (
             dtype is not None
         ), "Box dtype must be explicitly provided, cannot be None."
@@ -119,6 +121,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         backend : Optional[ComputeBackend] = None,
         device : Optional[Union[BDeviceType, Any]] = None,
     ) -> Union["BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]", "BoxSpace"]:
+        """Return an equivalent box on another backend and/or device."""
         if (backend is None or backend==self.backend) and (device is None or device==self.device):
             return self
         
@@ -240,6 +243,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         return rng, sample
 
     def create_empty(self) -> BArrayType:
+        """Allocate an uninitialized array with the box shape and dtype."""
         return self.backend.empty(
             self.shape,
             dtype=self.dtype,

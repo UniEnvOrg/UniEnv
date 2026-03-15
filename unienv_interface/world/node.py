@@ -116,18 +116,22 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+        """Backend provided by the attached world."""
         return self.world.backend
 
     @property
     def device(self) -> Optional[BDeviceType]:
+        """Device provided by the attached world."""
         return self.world.device
 
     @property
     def can_render(self) -> bool:
+        """Whether the node currently exposes a render mode."""
         return self.render_mode is not None
 
     @property
     def effective_update_timestep(self) -> Optional[float]:
+        """Resolved update period, defaulting to ``control_timestep`` when unset."""
         return self.update_timestep if self.update_timestep is not None else self.control_timestep
 
     def pre_environment_step(self, dt : Union[float, BArrayType], *, priority : int = 0) -> None:
@@ -298,6 +302,7 @@ class WorldNode(ABC, Generic[ContextType, ObsType, ActType, BArrayType, BDeviceT
         return self.get_nodes_by_fn(lambda node: isinstance(node, node_type))
 
     def close(self) -> None:
+        """Release any node-owned resources."""
         pass
 
     def __del__(self) -> None:
