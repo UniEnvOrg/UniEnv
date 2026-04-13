@@ -505,6 +505,7 @@ class HDF5Storage(SpaceStorage[
             root,
             capacity=capacity,
             reduce_io=reduce_io,
+            is_mutable=True,
         )
 
     @classmethod
@@ -526,6 +527,10 @@ class HDF5Storage(SpaceStorage[
         
         assert os.access(path, os.R_OK), \
             f"Path {path} is not readable"
+
+        if multiprocessing and read_only and "locking" not in kwargs:
+            # Avoid cross-process file lock contention for read-only access.
+            kwargs["locking"] = "false"
     
         # Check file permissions
         can_write = os.access(path, os.W_OK)
@@ -540,6 +545,7 @@ class HDF5Storage(SpaceStorage[
             root,
             capacity=capacity,
             reduce_io=reduce_io,
+            is_mutable=can_write and not read_only,
         )
 
     # ========== Instance Methods ==========
@@ -551,6 +557,7 @@ class HDF5Storage(SpaceStorage[
         capacity : Optional[int] = None,
         reduce_io : bool = True,
         check_file : bool = True,
+        is_mutable : Optional[bool] = None,
     ):
         if check_file:
             __class__._check_hdf5_file(
@@ -567,6 +574,7 @@ class HDF5Storage(SpaceStorage[
         )
         self.root = root
         self.capacity = capacity
+        self._is_mutable = root.file.mode != 'r' if is_mutable is None else is_mutable
         self._len = self.call_function_on_first_dataset(
             root,
             lambda dataset: dataset.shape[0]
@@ -577,7 +585,7 @@ class HDF5Storage(SpaceStorage[
     
     @property
     def is_mutable(self) -> bool:
-        return self.root.file.mode != 'r'
+        return self._is_mutable
 
     @property
     def is_multiprocessing_safe(self) -> bool:
@@ -665,6 +673,7 @@ class HDF5Storage(SpaceStorage[
             capacity=self.capacity,
             reduce_io=self.reduce_io,
             check_file=False,
+            is_mutable=self.is_mutable,
         )
 
     def dumps(self, path):
@@ -680,24 +689,25 @@ class HDF5Storage(SpaceStorage[
             target_file.close()
 
     def close(self):
-        if isinstance(self.root, h5py.File):
-            self.root.close()
+        root = getattr(self, "root", None)
+        if isinstance(root, h5py.File):
+            root.close()
         self.root = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        if (self.root, h5py.File):
+        if isinstance(self.root, h5py.File):
             state['filename'] = self.root.filename
-            state['mode'] = self.root.file.mode
+            state['mode'] = 'r+' if self.is_mutable else 'r'
         else:
             state['filename'] = self.root.file.filename
-            state['mode'] = self.root.file.mode
+            state['mode'] = 'r+' if self.is_mutable else 'r'
             state['full_name'] = self.root.name
         del state['root']
         return state
     
     def __setstate__(self, state):
-        if 'filename' and 'mode' in state:
+        if 'filename' in state and 'mode' in state:
             self.root = h5py.File(
                 state['filename'],
                 mode=state['mode']
