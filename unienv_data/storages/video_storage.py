@@ -136,7 +136,7 @@ class PyAvVideoReader:
                 all_frames_np = []
                 past_frame_np = None
                 for frame_i in sorted_index:
-                    self.seek(frame_i)
+                    self.seek(int(frame_i))
                     
                     try:
                         frame_np = next(self)
