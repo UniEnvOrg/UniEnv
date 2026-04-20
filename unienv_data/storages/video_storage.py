@@ -308,7 +308,7 @@ class VideoStorage(EpisodeStorageBase[
         **kwargs
     ) -> "VideoStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         assert read_only or (not multiprocessing), "VideoStorage does not support multiprocessing mode when loading a mutable storage"
-        metadata_path = os.path.join(path, "image_metadata.json")
+        metadata_path = os.path.join(path, "video_metadata.json")
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
@@ -528,8 +528,9 @@ class VideoStorage(EpisodeStorageBase[
             "capacity": self.capacity,
             "length": self.length,
         }
-        with open(os.path.join(path, "image_metadata.json"), "w") as f:
+        with open(os.path.join(path, "video_metadata.json"), "w") as f:
             json.dump(metadata, f)
+        super().dumps(path)
 
     def close(self):
         pass

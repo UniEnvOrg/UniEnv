@@ -10,8 +10,12 @@ from unienv_data.base import SpaceStorage, BatchT, IndexableType
 
 import os
 import glob
+import json
+import logging
 import shutil
 from abc import abstractmethod
+
+LOGGER = logging.getLogger(__name__)
 
 class EpisodeStorageBase(SpaceStorage[
     BatchT,
@@ -58,6 +62,46 @@ class EpisodeStorageBase(SpaceStorage[
             return os.path.join(self._cache_path, f"{start_idx}_{end_idx}.{self.file_ext}")
         else:
             return os.path.join(self._cache_path, f"{start_idx}_{end_idx}")
+
+    @property
+    def _index_metadata_path(self) -> str:
+        return os.path.join(self._cache_path, "episode_index.json")
+
+    def _load_file_range_cache(self) -> bool:
+        """Load file range cache from metadata if available and valid."""
+        metadata_path = self._index_metadata_path
+        if not os.path.exists(metadata_path):
+            return False
+        try:
+            with open(metadata_path, "r") as f:
+                data = json.load(f)
+            file_ranges = [tuple(item) for item in data.get("file_ranges", [])]
+            # Validate: every recorded file must exist on disk
+            valid_ranges = []
+            for start_idx, end_idx in file_ranges:
+                filename = self._make_filename(start_idx, end_idx)
+                if os.path.exists(filename):
+                    valid_ranges.append((start_idx, end_idx))
+                else:
+                    LOGGER.warning(
+                        "Episode index metadata references missing file %s; falling back to filesystem scan.",
+                        filename,
+                    )
+                    return False
+            self._file_ranges = valid_ranges
+            return True
+        except Exception as e:
+            LOGGER.warning("Failed to load episode index metadata: %s; falling back to filesystem scan.", e)
+            return False
+
+    def _save_file_range_cache(self):
+        """Persist the current file range cache to metadata."""
+        metadata_path = self._index_metadata_path
+        try:
+            with open(metadata_path, "w") as f:
+                json.dump({"file_ranges": self._file_ranges}, f)
+        except Exception as e:
+            LOGGER.warning("Failed to save episode index metadata: %s", e)
     
     def get_start_end_filename_iter(self) -> Iterable[Tuple[int, int, str]]:
         """Iterate over (start_idx, end_idx, filename) tuples, constructing filenames on the fly."""
@@ -66,6 +110,9 @@ class EpisodeStorageBase(SpaceStorage[
     
     def _rebuild_file_range_cache(self):
         """Rebuild the file range cache from disk."""
+        if self._load_file_range_cache():
+            return
+        # Fallback: scan filesystem for episode files
         all_filenames = glob.glob(os.path.join(self._cache_path, f"*_*.{self.file_ext}" if self.file_ext is not None else "*_*"))
         self._file_ranges = []
         for filename in all_filenames:
@@ -214,6 +261,22 @@ class EpisodeStorageBase(SpaceStorage[
         assert self.capacity is None, "Cannot extend length of a fixed-capacity storage"
         self.length += length
 
+    def _get_temp_filename(self, filename: str) -> str:
+        """Return a temporary filename that preserves the original extension."""
+        if self.file_ext is not None:
+            return filename[:-(len(self.file_ext) + 1)] + f".tmp.{self.file_ext}"
+        return filename + ".tmp"
+
+    def set_to_file_safe(self, filename: str, batched_value: BatchT):
+        """Atomically write to a temporary file and rename it to the target filename."""
+        temp_filename = self._get_temp_filename(filename)
+        try:
+            self.set_to_file(temp_filename, batched_value)
+            os.replace(temp_filename, filename)
+        finally:
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+
     def remove_index_range(self, start_index: int, end_index: int):
         """
         Remove data in the index range [start_index, end_index] (inclusive).
@@ -314,7 +377,7 @@ class EpisodeStorageBase(SpaceStorage[
         # Save the data that should be kept
         for data, new_start_idx, new_end_idx in to_save:
             new_filename = self._make_filename(new_start_idx, new_end_idx)
-            self.set_to_file(new_filename, data)
+            self.set_to_file_safe(new_filename, data)
             self._add_file_range(new_start_idx, new_end_idx)
 
     def shrink_length(self, length):
@@ -359,7 +422,7 @@ class EpisodeStorageBase(SpaceStorage[
         if isinstance(index, int):
             self.remove_index_range(index, index)
             filename = self._make_filename(index, index)
-            self.set_to_file(filename, sbu.concatenate(self._batched_single_space, [value]))
+            self.set_to_file_safe(filename, sbu.concatenate(self._batched_single_space, [value]))
             self._add_file_range(index, index)
             return
         if isinstance(index, slice):
@@ -390,7 +453,7 @@ class EpisodeStorageBase(SpaceStorage[
             end_index = int(sorted_indexes[-1])
             self.remove_index_range(start_index, end_index)
             filename = self._make_filename(start_index, end_index)
-            self.set_to_file(filename, sbu.get_at(
+            self.set_to_file_safe(filename, sbu.get_at(
                 self._batched_single_space,
                 value,
                 sorted_indexes_arg
@@ -427,13 +490,17 @@ class EpisodeStorageBase(SpaceStorage[
             # Write a single wrap-around file: start_index > end_index
             # start_index is the first high index, end_index is the last low index
             filename = self._make_filename(second_start_index, first_end_index)
-            self.set_to_file(filename, sbu.get_at(
+            self.set_to_file_safe(filename, sbu.get_at(
                 self._batched_single_space,
                 value,
                 wrap_order_arg
             ))
             self._add_file_range(second_start_index, first_end_index)
-
+    
+    def dumps(self, path):
+        assert os.path.samefile(path, self.cache_filename), \
+            f"Dump path {path} does not match cache filename {self.cache_filename}"
+        self._save_file_range_cache()
 
     def clear(self):
         assert self.is_mutable, "Cannot clear a read-only storage"
@@ -442,6 +509,7 @@ class EpisodeStorageBase(SpaceStorage[
         shutil.rmtree(self._cache_path)
         os.makedirs(self._cache_path, exist_ok=True)
         self._file_ranges = []
+        self._save_file_range_cache()
 
     def close(self):
         pass
