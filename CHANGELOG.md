@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.0.1b12 (2026-04-22)
+
+- Bugfixed random read errors in `VideoStorage` when using the `pyav` backend by implementing a more robust seeking mechanism that handles edge cases such as seeking to non-keyframes and reaching the end of the video stream. 
+
 ## 0.0.1b11 (2026-03-05)
 
 - Added support for rendering videos with `EpisodeRenderStackWrapper`, `EpisodeVideoWrapper`, `EpisodeWandbVideoWrapper` when the underlying environment provides potentially nested `Mapping[str, np.ndarray]` observations that contains image. The wrapper will automatically detect the image data in the observation and use it for rendering one video for each image observation key.
