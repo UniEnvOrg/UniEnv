@@ -1,5 +1,6 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, cast
 from fractions import Fraction
+from collections import deque
 
 from unienv_interface.space import BoxSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -37,6 +38,23 @@ class PyAvVideoReader:
     HWAccel = PyAvHWAccel
 
     @staticmethod
+    def _to_fraction(value: Any) -> Optional[Fraction]:
+        if value is None:
+            return None
+        if isinstance(value, Fraction):
+            return value
+
+        numerator = getattr(value, 'numerator', None)
+        denominator = getattr(value, 'denominator', None)
+        if numerator is not None and denominator not in (None, 0):
+            return Fraction(int(numerator), int(denominator))
+
+        try:
+            return Fraction(value)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    @staticmethod
     def available_hwdevices() -> List[str]:
         from av.codec.hwaccel import hwdevices_available
         return hwdevices_available()
@@ -63,10 +81,7 @@ class PyAvVideoReader:
         hwaccel: Optional[Union[HWAccel, Literal['auto']]] = None, 
         seek_mode: Literal['exact', 'approximate'] = 'exact',
         device : Optional[BDeviceType] = None,
-    ):
-        if seek_mode != 'exact':
-            LOGGER.warning("PyAvVideoReader only supports 'exact' seek mode. Falling back to 'exact'.")
-        
+    ):        
         if hwaccel == 'auto':
             hwaccel = __class__.get_auto_hwaccel()
         self.container = av.open(filename, mode='r', hwaccel=hwaccel)
@@ -77,17 +92,114 @@ class PyAvVideoReader:
             self.video_reformatter = None
         self.buffer_pixel_format = buffer_pixel_format
         self.total_frames = self.video_stream.frames # Sometimes this reads 0 for some containers (as they don't explicitly store it)
-        self.frame_iterator = self.container.decode(self.video_stream)
+        self._frame_iterator = self.container.decode(self.video_stream)
+        self._pointer_position = 0
+        self._frame_buffer = deque()
+        self.seek_mode = seek_mode
         self.backend = backend
         self.device = device
-    
+
+    def _start_pts(self) -> int:
+        start_time = getattr(self.video_stream, 'start_time', None)
+        return 0 if start_time is None else int(start_time)
+
+    def _time_base(self) -> Optional[Fraction]:
+        time_base = self._to_fraction(getattr(self.video_stream, 'time_base', None))
+        if time_base is None or time_base <= 0:
+            return None
+        return time_base
+
+    def _frame_rate(self) -> Optional[Fraction]:
+        for attr_name in ('average_rate', 'base_rate', 'guessed_rate'):
+            frame_rate = self._to_fraction(getattr(self.video_stream, attr_name, None))
+            if frame_rate is not None and frame_rate > 0:
+                return frame_rate
+        return None
+
+    def frame_index_to_pts(self, frame_index: int) -> int:
+        if frame_index < 0:
+            raise IndexError(f"Frame index must be non-negative, got {frame_index}")
+
+        time_base = self._time_base()
+        frame_rate = self._frame_rate()
+        if time_base is None or frame_rate is None:
+            raise RuntimeError("Cannot map frame index to pts without video stream time base and frame rate")
+
+        pts = Fraction(self._start_pts()) + Fraction(frame_index, 1) / (frame_rate * time_base)
+        return int(round(pts))
+
+    def pts_to_frame_index(self, pts: int) -> int:
+        time_base = self._time_base()
+        frame_rate = self._frame_rate()
+        if time_base is None or frame_rate is None:
+            raise RuntimeError("Cannot map pts to frame index without video stream time base and frame rate")
+
+        frame_index = (Fraction(int(pts)) - Fraction(self._start_pts())) * time_base * frame_rate
+        return int(round(frame_index))
+
+    def _reset_decoder(self, seek_pts: Optional[int] = None):
+        if seek_pts is None:
+            seek_pts = self._start_pts()
+        self._frame_buffer.clear()
+        self.container.seek(seek_pts, backward=True, any_frame=False, stream=self.video_stream)
+        self._frame_iterator = self.container.decode(self.video_stream)
+        next_frame = next(self._frame_iterator)
+        self._frame_buffer.append(next_frame)
+        self._pointer_position = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else self.pts_to_frame_index(seek_pts)
+
     def seek(self, frame_index: int):
-        self.container.seek(frame_index, any_frame=True, backward=True, stream=self.video_stream)
-        self.frame_iterator = self.container.decode(self.video_stream)
-    
+        if frame_index < 0:
+            raise IndexError(f"Frame index must be non-negative, got {frame_index}")
+        if self.tell() == frame_index:
+            return
+
+        target_pts = self.frame_index_to_pts(frame_index)
+        self._reset_decoder(target_pts)
+
+        if self.seek_mode == 'exact':
+            past_frame = None
+            past_frame_index = None
+            while True:
+                try:
+                    frame = next(self._frame_iterator)
+                except (av.error.EOFError, StopIteration):
+                    raise StopIteration(f"Reached end of video while seeking to frame index {frame_index}")
+
+                if frame.pts is None:
+                    continue
+
+                landed_frame_index = self.pts_to_frame_index(frame.pts)
+                if landed_frame_index < frame_index:
+                    past_frame = frame
+                    past_frame_index = landed_frame_index
+                    continue
+
+                if landed_frame_index == frame_index:
+                    self._pointer_position = frame_index
+                    self._frame_buffer.append(frame)
+                    return
+                
+                # Overshot the target frame, need to decide whether to return this frame or the previous one (if exists)
+                if past_frame is not None and past_frame_index is not None and (frame_index - past_frame_index) < (landed_frame_index - frame_index):
+                    self._pointer_position = past_frame_index
+                    self._frame_buffer.extend((past_frame, frame))
+                else:
+                    self._pointer_position = landed_frame_index
+                    self._frame_buffer.append(frame)
+
+                return
+
+    def tell(self) -> int:
+        return self._pointer_position
+
     def __next__(self):
         try:
-            frame = next(self.frame_iterator)
+            if self._frame_buffer:
+                frame = self._frame_buffer.popleft()
+            else:
+                frame = next(self._frame_iterator)
+            
+            self._pointer_position += 1
             if self.video_reformatter is not None:
                 frame = self.video_reformatter.reformat(
                     frame,
@@ -137,7 +249,7 @@ class PyAvVideoReader:
                 past_frame_np = None
                 for frame_i in sorted_index:
                     self.seek(int(frame_i))
-                    
+
                     try:
                         frame_np = next(self)
                     except StopIteration:
