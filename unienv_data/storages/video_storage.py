@@ -143,9 +143,6 @@ class PyAvVideoReader:
         self._frame_buffer.clear()
         self.container.seek(seek_pts, backward=True, any_frame=False, stream=self.video_stream)
         self._frame_iterator = self.container.decode(self.video_stream)
-        next_frame = next(self._frame_iterator)
-        self._frame_buffer.append(next_frame)
-        self._pointer_position = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else self.pts_to_frame_index(seek_pts)
 
     def seek(self, frame_index: int):
         if frame_index < 0:
@@ -193,6 +190,10 @@ class PyAvVideoReader:
                     self._frame_buffer.append(frame)
 
                 return
+        else:
+            next_frame = next(self._frame_iterator)
+            self._frame_buffer.append(next_frame)
+            self._pointer_position = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else frame_index
 
     def tell(self) -> int:
         return self._pointer_position
