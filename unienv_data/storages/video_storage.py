@@ -163,7 +163,12 @@ class PyAvVideoReader:
                 try:
                     frame = next(self._frame_iterator)
                 except (av.error.EOFError, StopIteration):
-                    raise StopIteration(f"Reached end of video while seeking to frame index {frame_index}")
+                    if past_frame is None:
+                        raise RuntimeError(f"Reached end of video while seeking to frame index {frame_index}")
+                    else:
+                        self._pointer_position = past_frame_index
+                        self._frame_buffer.append(past_frame)
+                        return
 
                 if frame.pts is None:
                     continue
