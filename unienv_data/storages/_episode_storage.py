@@ -1,5 +1,6 @@
 from importlib import metadata
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type
+from concurrent.futures import ThreadPoolExecutor
 
 from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
@@ -524,15 +525,34 @@ class EpisodeStorageBase(SpaceStorage[
         batch_size, all_filename_offsets = self.convert_read_index_to_filenames_and_offsets(index)
         result_space = sbu.batch_space(self.single_instance_space, batch_size)
         result = result_space.create_empty()
-        for filename, file_offset, batch_indexes in all_filename_offsets:
+
+        if len(all_filename_offsets) > 1:
+            data_futures = []
+            with ThreadPoolExecutor(max_workers=len(all_filename_offsets)) as executor:
+                for filename, file_offset, batch_indexes in all_filename_offsets:
+                    file_len = self._get_file_length(filename)
+                    data_futures.append(executor.submit(self.get_from_file, filename, file_offset, file_len))
+                    # data = self.get_from_file(filename, file_offset, file_len)
+            
+                for data_future, (filename, file_offset, batch_indexes) in zip(data_futures, all_filename_offsets):
+                    data = data_future.result()
+                    result = sbu.set_at(
+                        result_space,
+                        result,
+                        batch_indexes,
+                        data
+                    )
+        else:
+            filename, file_offset, batch_indexes = all_filename_offsets[0]
             file_len = self._get_file_length(filename)
             data = self.get_from_file(filename, file_offset, file_len)
-            sbu.set_at(
+            result = sbu.set_at(
                 result_space,
                 result,
                 batch_indexes,
                 data
             )
+
         if isinstance(index, int):
             result = sbu.get_at(result_space, result, 0)
         return result
