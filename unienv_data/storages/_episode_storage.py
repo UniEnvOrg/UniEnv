@@ -54,6 +54,8 @@ class EpisodeStorageBase(SpaceStorage[
         self.length = length if capacity is None else capacity
         # Cache of file ranges: List[(start_idx, end_idx)]
         self._file_ranges: List[Tuple[int, int]] = []
+        self._cache_index_starts : BArrayType = None # For efficient index-based lookup, shape (num_cache_entries,)
+        self._cache_index_ranges : BArrayType = None # File ranges for each cache entry, shape (num_cache_entries, 2)
         self._rebuild_file_range_cache()
     
     def _make_filename(self, start_idx: int, end_idx: int) -> str:
@@ -89,6 +91,7 @@ class EpisodeStorageBase(SpaceStorage[
                     )
                     return False
             self._file_ranges = valid_ranges
+            self._invalidate_file_range_lookup_cache()
             return True
         except Exception as e:
             LOGGER.warning("Failed to load episode index metadata: %s; falling back to filesystem scan.", e)
@@ -124,15 +127,57 @@ class EpisodeStorageBase(SpaceStorage[
             self._file_ranges.append((start_idx, end_idx))
         # Sort by start index for consistent iteration
         self._file_ranges.sort(key=lambda x: x[0])
+        self._invalidate_file_range_lookup_cache()
     
     def _add_file_range(self, start_idx: int, end_idx: int):
         """Add a file range to the cache."""
         self._file_ranges.append((start_idx, end_idx))
         self._file_ranges.sort(key=lambda x: x[0])
+        self._invalidate_file_range_lookup_cache()
     
     def _remove_file_range(self, start_idx: int, end_idx: int):
         """Remove a file range from the cache."""
         self._file_ranges = [(s, e) for s, e in self._file_ranges if not (s == start_idx and e == end_idx)]
+        self._invalidate_file_range_lookup_cache()
+
+    def _invalidate_file_range_lookup_cache(self):
+        self._cache_index_starts = None
+        self._cache_index_ranges = None
+
+    def _ensure_file_range_lookup_cache(self):
+        if self._cache_index_starts is not None:
+            return
+
+        index_starts = []
+        index_ranges = []
+        for file_start_idx, file_end_idx in self._file_ranges:
+            if file_start_idx <= file_end_idx:
+                index_starts.append(file_start_idx)
+                index_ranges.append((file_start_idx, file_end_idx))
+            else:
+                assert self.capacity is not None, "Wrap-around cache entries require fixed-capacity storage"
+                index_starts.append(file_start_idx)
+                index_ranges.append((file_start_idx, file_end_idx))
+                index_starts.append(0)
+                index_ranges.append((file_start_idx, file_end_idx))
+
+        sorted_entries = sorted(
+            zip(index_starts, index_ranges),
+            key=lambda item: item[0]
+        )
+        index_starts = [item[0] for item in sorted_entries]
+        index_ranges = [item[1] for item in sorted_entries]
+
+        self._cache_index_starts = self.backend.asarray(
+            index_starts,
+            dtype=self.backend.default_integer_dtype,
+            device=self.device,
+        )
+        self._cache_index_ranges = self.backend.asarray(
+            index_ranges,
+            dtype=self.backend.default_integer_dtype,
+            device=self.device,
+        )
 
     def _get_file_length(self, filename: str) -> int:
         """Get the length (number of time steps) stored in a given episode file."""
@@ -243,6 +288,82 @@ class EpisodeStorageBase(SpaceStorage[
                 index = (index + (self.capacity if self.capacity is not None else self.length)) % (self.capacity if self.capacity is not None else self.length)
 
         batch_size = index.shape[0] if self.backend.is_backendarray(index) else 1
+
+        if isinstance(index, int):
+            self._ensure_file_range_lookup_cache()
+            assert self._cache_index_starts.shape[0] > 0, "No episode files are available for indexing."
+
+            cache_index = int(self.backend.sum(index >= self._cache_index_starts)) - 1
+            assert cache_index >= 0, f"Index {index} was not found in any episode files."
+
+            file_start_idx = int(self._cache_index_ranges[cache_index, 0])
+            file_end_idx = int(self._cache_index_ranges[cache_index, 1])
+            segment_start_idx = int(self._cache_index_starts[cache_index])
+            if file_start_idx <= file_end_idx or segment_start_idx == 0:
+                segment_end_idx = file_end_idx
+            else:
+                segment_end_idx = len(self) - 1
+            assert index <= segment_end_idx, f"Index {index} was not found in any episode files."
+
+            if file_start_idx <= file_end_idx or segment_start_idx == file_start_idx:
+                offset = index - file_start_idx
+            else:
+                offset = (len(self) - file_start_idx) + index
+            return (
+                1,
+                [(self._make_filename(file_start_idx, file_end_idx), slice(offset, offset + 1), slice(0, 1))]
+            )
+
+        if self.backend.is_backendarray(index):
+            self._ensure_file_range_lookup_cache()
+            assert self._cache_index_starts.shape[0] > 0, "No episode files are available for indexing."
+
+            idx_array_in_cache_idx = self.backend.sum(
+                index[:, None] >= self._cache_index_starts[None, :],
+                axis=-1,
+            ) - 1
+
+            not_found_mask = idx_array_in_cache_idx < 0
+            all_results = []
+
+            unique_fn = getattr(self.backend, "unique", None)
+            if unique_fn is None:
+                unique_fn = getattr(self.backend, "unique_values")
+            cache_indexes_unique = unique_fn(idx_array_in_cache_idx)
+            if isinstance(cache_indexes_unique, tuple):
+                cache_indexes_unique = cache_indexes_unique[0]
+            for i in range(cache_indexes_unique.shape[0]):
+                cache_index = int(cache_indexes_unique[i])
+                cache_mask = idx_array_in_cache_idx == cache_index
+                if cache_index < 0:
+                    not_found_mask = self.backend.logical_or(not_found_mask, cache_mask)
+                    continue
+
+                segment_indexes = index[cache_mask]
+                file_start_idx = int(self._cache_index_ranges[cache_index, 0])
+                file_end_idx = int(self._cache_index_ranges[cache_index, 1])
+                segment_start_idx = int(self._cache_index_starts[cache_index])
+                if file_start_idx <= file_end_idx or segment_start_idx == 0:
+                    segment_end_idx = file_end_idx
+                else:
+                    segment_end_idx = len(self) - 1
+                in_range_mask = segment_indexes <= segment_end_idx
+                not_found_segment_mask = self.backend.logical_and(cache_mask, index > segment_end_idx)
+                not_found_mask = self.backend.logical_or(not_found_mask, not_found_segment_mask)
+                if self.backend.sum(in_range_mask) == 0:
+                    continue
+
+                filename = self._make_filename(file_start_idx, file_end_idx)
+                in_range_indexes = segment_indexes[in_range_mask]
+                batch_indexes = self.backend.nonzero(cache_mask)[0][in_range_mask]
+                if file_start_idx <= file_end_idx or segment_start_idx == file_start_idx:
+                    offsets = in_range_indexes - file_start_idx
+                else:
+                    offsets = (len(self) - file_start_idx) + in_range_indexes
+                all_results.append((filename, offsets, batch_indexes))
+
+            assert self.backend.sum(not_found_mask) == 0, f"Indexes {index[not_found_mask]} were not found in any episode files."
+            return (batch_size, all_results)
 
         remaining_index = index
         all_results = []
@@ -509,6 +630,7 @@ class EpisodeStorageBase(SpaceStorage[
         shutil.rmtree(self._cache_path)
         os.makedirs(self._cache_path, exist_ok=True)
         self._file_ranges = []
+        self._invalidate_file_range_lookup_cache()
         self._save_file_range_cache()
 
     def close(self):
