@@ -71,6 +71,8 @@ class PyAvVideoReader:
             target_hwaccel = PyAvHWAccel(device_type="vaapi", allow_software_fallback=True)
         elif "videotoolbox" in available_hwdevices:
             target_hwaccel = PyAvHWAccel(device_type="videotoolbox", allow_software_fallback=True)
+        elif "vulkan" in available_hwdevices:
+            target_hwaccel = PyAvHWAccel(device_type="vulkan", allow_software_fallback=True)
         return target_hwaccel
 
     def __init__(
@@ -384,6 +386,7 @@ class VideoStorage(EpisodeStorageBase[
         seek_mode : Literal['exact', 'approximate'] = 'exact',
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
+        decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -404,6 +407,7 @@ class VideoStorage(EpisodeStorageBase[
             seek_mode=seek_mode,
             hardware_acceleration=hardware_acceleration,
             codec=codec,
+            decode_backend=decode_backend,
             file_ext=file_ext,
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
@@ -420,6 +424,7 @@ class VideoStorage(EpisodeStorageBase[
         seek_mode : Literal['exact', 'approximate'] = 'exact',
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
+        decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
         capacity : Optional[int] = None,
         read_only : bool = True,
         multiprocessing : bool = False,
@@ -455,6 +460,7 @@ class VideoStorage(EpisodeStorageBase[
             seek_mode=seek_mode,
             hardware_acceleration=hardware_acceleration,
             codec=codec,
+            decode_backend=decode_backend,
             file_ext=file_ext,
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
