@@ -1,5 +1,6 @@
 from typing import Sequence, List, Tuple, Union, Dict, Any, Optional, Generic, TypeVar, Iterable, Iterator
 from types import EllipsisType
+from concurrent.futures import ThreadPoolExecutor
 import os
 import abc
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -117,6 +118,7 @@ class CombinedBatch(BatchBase[
             BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
         ]],
         device : Optional[BDeviceType] = None,
+        use_thread_pool : bool = False,
     ):
         assert len(batches) > 1, "More than one batch must be provided"
         backend = batches[0].backend
@@ -154,6 +156,7 @@ class CombinedBatch(BatchBase[
 
         self.is_mutable = is_mutable
         self.batches = batches
+        self.use_thread_pool = use_thread_pool
         self._build_index_cache()
 
     def _build_index_cache(self) -> None:
@@ -210,15 +213,30 @@ class CombinedBatch(BatchBase[
             
             result = None
 
-            for batch_index, index_into_batch, mask in batch_list:
-                batch_result = self.batches[batch_index].get_flattened_at(index_into_batch)
-                if result is None:
-                    result = self.backend.zeros(
-                        (batch_size, *batch_result.shape[1:]),
-                        dtype=batch_result.dtype,
-                        device=self.backend.device(batch_result)
-                    )
-                result = self.backend.at(result)[mask].set(batch_result)
+            if self.use_thread_pool and len(batch_list) > 1:
+                data_futures = []
+                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
+                    for batch_index, index_into_batch, mask in batch_list:
+                        data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at, index_into_batch))
+                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                        batch_result = data_future.result()
+                        if result is None:
+                            result = self.backend.zeros(
+                                (batch_size, *batch_result.shape[1:]),
+                                dtype=batch_result.dtype,
+                                device=self.backend.device(batch_result)
+                            )
+                        result = self.backend.at(result)[mask].set(batch_result)
+            else:
+                for batch_index, index_into_batch, mask in batch_list:
+                    batch_result = self.batches[batch_index].get_flattened_at(index_into_batch)
+                    if result is None:
+                        result = self.backend.zeros(
+                            (batch_size, *batch_result.shape[1:]),
+                            dtype=batch_result.dtype,
+                            device=self.backend.device(batch_result)
+                        )
+                    result = self.backend.at(result)[mask].set(batch_result)
             return result
     
     def get_flattened_at_with_metadata(self, idx : Union[IndexableType, BaseException]) -> Tuple[BArrayType, Dict[str, Any]]:
@@ -254,24 +272,48 @@ class CombinedBatch(BatchBase[
                 device=self.device
             )
 
-            for batch_index, index_into_batch, mask in batch_list:
-                batch_result, metadata_result = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
-                if result is None:
-                    result = self.backend.zeros(
-                        (batch_size, *batch_result.shape[1:]),
-                        dtype=batch_result.dtype,
-                        device=self.device
-                    )
+            if self.use_thread_pool and len(batch_list) > 1:
+                data_futures = []
+                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
+                    for batch_index, index_into_batch, mask in batch_list:
+                        data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at_with_metadata, index_into_batch))
+                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                        batch_result, metadata_result = data_future.result()
+                        if result is None:
+                            result = self.backend.zeros(
+                                (batch_size, *batch_result.shape[1:]),
+                                dtype=batch_result.dtype,
+                                device=self.device
+                            )
 
-                result = self.backend.at(result)[mask].set(batch_result)
-                if metadata_space is not None:
-                    metadata = sbu.set_at(
-                        metadata_space,
-                        metadata,
-                        mask,
-                        metadata_result,
-                    )
-                batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+                        result = self.backend.at(result)[mask].set(batch_result)
+                        if metadata_space is not None:
+                            metadata = sbu.set_at(
+                                metadata_space,
+                                metadata,
+                                mask,
+                                metadata_result,
+                            )
+                        batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+            else:
+                for batch_index, index_into_batch, mask in batch_list:
+                    batch_result, metadata_result = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
+                    if result is None:
+                        result = self.backend.zeros(
+                            (batch_size, *batch_result.shape[1:]),
+                            dtype=batch_result.dtype,
+                            device=self.device
+                        )
+
+                    result = self.backend.at(result)[mask].set(batch_result)
+                    if metadata_space is not None:
+                        metadata = sbu.set_at(
+                            metadata_space,
+                            metadata,
+                            mask,
+                            metadata_result,
+                        )
+                    batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             
             metadata['batch_index'] = batch_index_arr
             return result, metadata
@@ -287,13 +329,26 @@ class CombinedBatch(BatchBase[
                 batch_size,
             )
             result = result_space.create_empty()
-            for batch_index, index_into_batch, mask in batch_list:
-                result = sbu.set_at(
-                    result_space,
-                    result,
-                    mask,
-                    self.batches[batch_index].get_at(index_into_batch),
-                )
+            if self.use_thread_pool and len(batch_list) > 1:
+                data_futures = []
+                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
+                    for batch_index, index_into_batch, mask in batch_list:
+                        data_futures.append(executor.submit(self.batches[batch_index].get_at, index_into_batch))
+                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                        result = sbu.set_at(
+                            result_space,
+                            result,
+                            mask,
+                            data_future.result(),
+                        )
+            else:
+                for batch_index, index_into_batch, mask in batch_list:
+                    result = sbu.set_at(
+                        result_space,
+                        result,
+                        mask,
+                        self.batches[batch_index].get_at(index_into_batch),
+                    )
             return result
 
     def get_at_with_metadata(self, idx : Union[IndexableType, BArrayType]) -> Tuple[BatchT, Dict[str, Any]]:
@@ -333,22 +388,44 @@ class CombinedBatch(BatchBase[
                 device=self.device
             )
 
-            for batch_index, index_into_batch, mask in batch_list:
-                batch_result, metadata_result = self.batches[batch_index].get_at_with_metadata(index_into_batch)
-                result = sbu.set_at(
-                    result_space,
-                    result,
-                    mask,
-                    batch_result,
-                )
-                if metadata_space is not None:
-                    metadata = sbu.set_at(
-                        metadata_space,
-                        metadata,
+            if self.use_thread_pool and len(batch_list) > 1:
+                data_futures = []
+                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
+                    for batch_index, index_into_batch, mask in batch_list:
+                        data_futures.append(executor.submit(self.batches[batch_index].get_at_with_metadata, index_into_batch))
+                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                        batch_result, metadata_result = data_future.result()
+                        result = sbu.set_at(
+                            result_space,
+                            result,
+                            mask,
+                            batch_result,
+                        )
+                        if metadata_space is not None:
+                            metadata = sbu.set_at(
+                                metadata_space,
+                                metadata,
+                                mask,
+                                metadata_result,
+                            )
+                        batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+            else:
+                for batch_index, index_into_batch, mask in batch_list:
+                    batch_result, metadata_result = self.batches[batch_index].get_at_with_metadata(index_into_batch)
+                    result = sbu.set_at(
+                        result_space,
+                        result,
                         mask,
-                        metadata_result,
+                        batch_result,
                     )
-                batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+                    if metadata_space is not None:
+                        metadata = sbu.set_at(
+                            metadata_space,
+                            metadata,
+                            mask,
+                            metadata_result,
+                        )
+                    batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             
             metadata['batch_index'] = batch_index_arr
             return result, metadata
