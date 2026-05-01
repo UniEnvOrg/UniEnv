@@ -228,8 +228,16 @@ class PyAvVideoReader:
         return self
     
     def __exit__(self, *args, **kwargs):
-        self.container.close()
+        self.close()
     
+    def __del__(self):
+        self.close()
+    
+    def close(self):
+        if self.container is not None:
+            self.container.close()
+            self.container = None
+
     def read(self, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
         if isinstance(index, int):
             self.seek(index)
@@ -332,8 +340,14 @@ class TorchCodecVideoReader:
         return self
     
     def __exit__(self, *args, **kwargs):
-        pass
+        self.close()
     
+    def __del__(self):
+        self.close()
+
+    def close(self):
+        self.decoder = None
+
     def read(self, index : Union[IndexableType, np.ndarray], total_length : int) -> np.ndarray:
         if isinstance(index, int):
             ret = self.decoder.get_frame_at(index).data.permute(1, 2, 0) # (C, H, W) -> (H, W, C)
@@ -387,6 +401,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
+        cache_decoders : bool = True,
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -408,6 +423,7 @@ class VideoStorage(EpisodeStorageBase[
             hardware_acceleration=hardware_acceleration,
             codec=codec,
             decode_backend=decode_backend,
+            cache_decoders=cache_decoders,
             file_ext=file_ext,
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
@@ -425,6 +441,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
+        cache_decoders : bool = True,
         capacity : Optional[int] = None,
         read_only : bool = True,
         multiprocessing : bool = False,
@@ -461,6 +478,7 @@ class VideoStorage(EpisodeStorageBase[
             hardware_acceleration=hardware_acceleration,
             codec=codec,
             decode_backend=decode_backend,
+            cache_decoders=cache_decoders,
             file_ext=file_ext,
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
@@ -516,6 +534,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
+        cache_decoders : bool = True,
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -546,7 +565,31 @@ class VideoStorage(EpisodeStorageBase[
         self.fps = fps
         self.file_pixel_format = file_pixel_format
         self.buffer_pixel_format = buffer_pixel_format
-        
+        self.cache_decoders = cache_decoders
+        self._decoder_cache = {}
+
+    def get_cached_decoder(self, filename: str):
+        if (not self.cache_decoders) or (filename not in self._decoder_cache):
+            if self.decode_backend == 'pyav':
+                reader_cls = PyAvVideoReader
+            elif self.decode_backend == 'torchcodec':
+                reader_cls = TorchCodecVideoReader
+            else:
+                raise ValueError(f"Unknown decode_backend {self.decode_backend}")
+            video_reader = reader_cls(
+                backend=self.backend,
+                filename=filename,
+                buffer_pixel_format=self.buffer_pixel_format,
+                hwaccel=self.hwaccel,
+                seek_mode=self.seek_mode,
+                device=self.device,
+            )
+            if self.cache_decoders:
+                self._decoder_cache[filename] = video_reader
+            return video_reader
+        else:
+            return self._decoder_cache[filename]
+    
     def get_from_file(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
         if self.decode_backend == 'pyav':
             reader_cls = PyAvVideoReader
@@ -554,15 +597,11 @@ class VideoStorage(EpisodeStorageBase[
             reader_cls = TorchCodecVideoReader
         else:
             raise ValueError(f"Unknown decode_backend {self.decode_backend}")
-        with reader_cls(
-            backend=self.backend,
-            filename=filename,
-            buffer_pixel_format=self.buffer_pixel_format,
-            hwaccel=self.hwaccel,
-            seek_mode=self.seek_mode,
-            device=self.device,
-        ) as video_reader:
-            return video_reader.read(index, total_length)
+        video_reader = self.get_cached_decoder(filename)
+        data = video_reader.read(index, total_length)
+        if not self.cache_decoders:
+            video_reader.close()
+        return data
 
     # PyAV Implementation (Commented out due to bugs with hevc codec)
     def set_to_file(self, filename : str, value : BArrayType):
@@ -657,4 +696,6 @@ class VideoStorage(EpisodeStorageBase[
         super().dumps(path)
 
     def close(self):
-        pass
+        for decoder in self._decoder_cache.values():
+            decoder.close()
+        self._decoder_cache.clear()
