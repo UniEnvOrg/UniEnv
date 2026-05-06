@@ -401,7 +401,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
-        cache_decoders : bool = False,
+        cache_decoders : bool = True,
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -441,7 +441,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
-        cache_decoders : bool = False,
+        cache_decoders : bool = True,
         capacity : Optional[int] = None,
         read_only : bool = True,
         multiprocessing : bool = False,
@@ -534,7 +534,7 @@ class VideoStorage(EpisodeStorageBase[
         hardware_acceleration : Optional[Union[Any, Literal['auto']]] = 'auto',
         codec : Union[str, Literal['auto']] = 'auto',
         decode_backend : Literal['torchcodec', 'pyav', 'auto'] = 'auto',
-        cache_decoders : bool = False,
+        cache_decoders : bool = True,
         file_ext : str = "mp4",
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
@@ -584,7 +584,8 @@ class VideoStorage(EpisodeStorageBase[
                 seek_mode=self.seek_mode,
                 device=self.device,
             )
-            if self.cache_decoders:
+            if self.cache_decoders and self.decode_backend != 'pyav': 
+                # PyAV decoders have issues with caching as they hold file handles, so we only cache non-PyAV decoders
                 self._decoder_cache[filename] = video_reader
             return video_reader
         else:
