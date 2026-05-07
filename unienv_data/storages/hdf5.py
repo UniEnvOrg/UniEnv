@@ -221,7 +221,8 @@ class HDF5Storage(SpaceStorage[
             f"Path {path} is not readable"
         root = h5py.File(
             path,
-            "r"
+            "r",
+            locking=False
         )
         count, capacity, single_instance_space = __class__.build_space_from_hdf5_file(root)
         storage = __class__(
@@ -538,6 +539,7 @@ class HDF5Storage(SpaceStorage[
         root = h5py.File(
             path,
             "r+" if can_write and not read_only else "r",
+            locking=False if read_only else None,
             **kwargs
         )
         return cls(
@@ -632,6 +634,7 @@ class HDF5Storage(SpaceStorage[
             root = h5py.File(
                 self._filename,
                 mode=self._mode,
+                locking=False if not self._is_mutable else None,
                 **self._h5py_kwargs
             )
             if self._full_name is not None:
