@@ -299,8 +299,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         if hasattr(self.storage, "get_flattened"):
-            with self._lock_scope():
-                data = self.storage.get_flattened(idx)
+            data = self.storage.get_flattened(idx)
             return data, None
 
         data, metadata = self.get_at_with_metadata(idx)
@@ -314,21 +313,28 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx):
-        with self._lock_scope():
-            data_index = index_with_offset(
-                self.backend,
-                idx,
-                self.count,
-                self.offset,
-                self.device
-            )
-            data = self.storage.get(data_index)
+        data_index = index_with_offset(
+            self.backend,
+            idx,
+            self.count,
+            self.offset,
+            self.device
+        )
+        data = self.storage.get(data_index)
         return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
         if hasattr(self.storage, "set_flattened"):
-            with self._lock_scope():
-                self.storage.set_flattened(idx, value)
+            self.storage.set_flattened(
+                index_with_offset(
+                    self.backend,
+                    idx,
+                    self.count,
+                    self.offset,
+                    self.device
+                ), 
+                value
+            )
             return
 
         if isinstance(idx, int):
@@ -338,14 +344,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.set_at(idx, value)
 
     def set_at(self, idx, value):
-        with self._lock_scope():
-            self.storage.set(index_with_offset(
-                self.backend,
-                idx,
-                self.count,
-                self.offset,
-                self.device
-            ), value)
+        self.storage.set(index_with_offset(
+            self.backend,
+            idx,
+            self.count,
+            self.offset,
+            self.device
+        ), value)
 
     def extend_flattened(
         self,
