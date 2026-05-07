@@ -546,6 +546,7 @@ class HDF5Storage(SpaceStorage[
             capacity=capacity,
             reduce_io=reduce_io,
             is_mutable=can_write and not read_only,
+            multiprocessing=multiprocessing,
         )
 
     # ========== Instance Methods ==========
@@ -558,8 +559,18 @@ class HDF5Storage(SpaceStorage[
         reduce_io : bool = True,
         check_file : bool = True,
         is_mutable : Optional[bool] = None,
+        multiprocessing : bool = False,
+        filename : Optional[Union[str, os.PathLike]] = None,
+        mode : Optional[str] = None,
+        full_name : Optional[str] = None,
+        h5py_kwargs : Optional[Dict[str, Any]] = None,
+        length : Optional[int] = None,
     ):
+        assert root is not None or filename is not None, \
+            "Either root or filename must be provided"
         if check_file:
+            assert root is not None, \
+                "Cannot check HDF5 file without an open root"
             __class__._check_hdf5_file(
                 root,
                 single_instance_space,
@@ -574,14 +585,29 @@ class HDF5Storage(SpaceStorage[
         )
         self.root = root
         self.capacity = capacity
-        self._is_mutable = root.file.mode != 'r' if is_mutable is None else is_mutable
-        self._len = self.call_function_on_first_dataset(
-            root,
-            lambda dataset: dataset.shape[0]
-        )
+        self._multiprocessing = multiprocessing
+        self._h5py_kwargs = dict(h5py_kwargs or {})
+        if root is not None:
+            root_file = root if isinstance(root, h5py.File) else root.file
+            self._filename = filename or root_file.filename
+            self._mode = mode or ('r+' if (root_file.mode != 'r' if is_mutable is None else is_mutable) else 'r')
+            self._full_name = full_name if full_name is not None else (None if isinstance(root, h5py.File) else root.name)
+            self._is_mutable = root_file.mode != 'r' if is_mutable is None else is_mutable
+            self._len = self.call_function_on_first_dataset(
+                root,
+                lambda dataset: dataset.shape[0]
+            )
+        else:
+            self._filename = filename
+            self._mode = mode or 'r'
+            self._full_name = full_name
+            self._is_mutable = False if is_mutable is None else is_mutable
+            self._len = length if length is not None else (capacity if capacity is not None else 0)
         self.reduce_io = reduce_io
         assert self.capacity is None or self._len == self.capacity, \
             f"If the storage has a fixed capacity, the length must match the capacity. Expected {self.capacity}, got {self._len}"
+        if self._multiprocessing and self.root is not None:
+            self.close()
     
     @property
     def is_mutable(self) -> bool:
@@ -589,13 +615,29 @@ class HDF5Storage(SpaceStorage[
 
     @property
     def is_multiprocessing_safe(self) -> bool:
-        return not self.is_mutable
+        return self._multiprocessing or not self.is_mutable
 
     @property
     def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
+        if self.root is None:
+            return self._filename
         if isinstance(self.root, h5py.File):
             return self.root.filename
         return None
+
+    def _ensure_root(self) -> Union[h5py.File, h5py.Group, h5py.Dataset]:
+        if self.root is None:
+            assert self._filename is not None, \
+                "Cannot lazily open HDF5 storage without a filename"
+            root = h5py.File(
+                self._filename,
+                mode=self._mode,
+                **self._h5py_kwargs
+            )
+            if self._full_name is not None:
+                root = root[self._full_name]
+            self.root = root
+        return self.root
 
     def extend_length(self, length):
         assert self.capacity is None, \
@@ -603,7 +645,7 @@ class HDF5Storage(SpaceStorage[
         assert length > 0, "Length must be greater than 0"
         new_length = self._len + length
         __class__.call_function_on_every_dataset(
-            self.root,
+            self._ensure_root(),
             lambda dataset: dataset.resize(new_length, axis=0)
         )
         self._len = new_length
@@ -615,7 +657,7 @@ class HDF5Storage(SpaceStorage[
         new_length = self._len - length
         assert new_length >= 0, "New length must be non-negative"
         __class__.call_function_on_every_dataset(
-            self.root,
+            self._ensure_root(),
             lambda dataset: dataset.resize(new_length, axis=0)
         )
         self._len = new_length
@@ -624,16 +666,17 @@ class HDF5Storage(SpaceStorage[
         return self._len
     
     def get(self, index):
+        root = self._ensure_root()
         if not is_fancy_index(index):
             return __class__.get_from(
-                self.root,
+                root,
                 self.single_instance_space,
                 index
             )
         else:
             unique_indices, reverse_mapping = fancy_indexing_to_supported_indexing(index)
             get_result_unique = __class__.get_from(
-                self.root,
+                root,
                 self.single_instance_space,
                 unique_indices
             )
@@ -644,9 +687,12 @@ class HDF5Storage(SpaceStorage[
             )
 
     def set(self, index, value):
+        if self._multiprocessing:
+            raise RuntimeError("HDF5Storage does not support set in multiprocessing mode")
+        root = self._ensure_root()
         if not is_fancy_index(index):
             return __class__.set_to(
-                self.root,
+                root,
                 self.single_instance_space,
                 index,
                 value
@@ -654,7 +700,7 @@ class HDF5Storage(SpaceStorage[
         else:
             unique_indices, unique_idx = fancy_indexing_to_supported_set_indexing(index)
             return __class__.set_to(
-                self.root,
+                root,
                 self.single_instance_space,
                 unique_indices,
                 sbu.get_at(
@@ -665,8 +711,16 @@ class HDF5Storage(SpaceStorage[
             )
 
     def get_column(self, nested_keys : Sequence[str]) -> "HDF5Storage":
-        sub_root = nested_get(self.root, nested_keys)
         sub_space = nested_get(self.single_instance_space, nested_keys)
+        if self.root is None:
+            sub_root = None
+            base_name = self._full_name or ""
+            sub_full_name = "/".join([base_name.rstrip("/"), *nested_keys])
+            if not sub_full_name.startswith("/"):
+                sub_full_name = "/" + sub_full_name
+        else:
+            sub_root = nested_get(self.root, nested_keys)
+            sub_full_name = sub_root.name if not isinstance(sub_root, h5py.File) else None
         return __class__(
             sub_space,
             sub_root,
@@ -674,15 +728,22 @@ class HDF5Storage(SpaceStorage[
             reduce_io=self.reduce_io,
             check_file=False,
             is_mutable=self.is_mutable,
+            multiprocessing=self._multiprocessing,
+            filename=self._filename,
+            mode=self._mode,
+            full_name=sub_full_name,
+            h5py_kwargs=self._h5py_kwargs,
+            length=self._len,
         )
 
     def dumps(self, path):
-        if isinstance(self.root, h5py.File) and os.path.samefile(self.root.filename, path):
-            self.root.flush()
+        root = self._ensure_root()
+        if isinstance(root, h5py.File) and os.path.samefile(root.filename, path):
+            root.flush()
         else:
             target_file = h5py.File(path, 'w')
             target_file.copy(
-                self.root,
+                root,
                 target_file,
             )
             target_file.flush()
@@ -690,32 +751,28 @@ class HDF5Storage(SpaceStorage[
 
     def close(self):
         root = getattr(self, "root", None)
-        if isinstance(root, h5py.File):
-            root.close()
+        try:
+            if isinstance(root, h5py.File):
+                root.close()
+            elif root is not None:
+                root.file.close()
+        except Exception:
+            pass
         self.root = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        if isinstance(self.root, h5py.File):
-            state['filename'] = self.root.filename
-            state['mode'] = 'r+' if self.is_mutable else 'r'
-        else:
-            state['filename'] = self.root.file.filename
-            state['mode'] = 'r+' if self.is_mutable else 'r'
-            state['full_name'] = self.root.name
-        del state['root']
+        root = state.pop('root', None)
+        if isinstance(root, h5py.File):
+            state['_filename'] = root.filename
+            state['_mode'] = 'r+' if self.is_mutable else 'r'
+            state['_full_name'] = None
+        elif isinstance(root, (h5py.Group, h5py.Dataset)):
+            state['_filename'] = root.file.filename
+            state['_mode'] = 'r+' if self.is_mutable else 'r'
+            state['_full_name'] = root.name
         return state
     
     def __setstate__(self, state):
-        if 'filename' in state and 'mode' in state:
-            self.root = h5py.File(
-                state['filename'],
-                mode=state['mode']
-            )
-            if 'full_name' in state:
-                self.root = self.root[state['full_name']]
-                del state['full_name']
-            
-            del state['filename']
-            del state['mode']
+        state['root'] = None
         self.__dict__.update(state)
