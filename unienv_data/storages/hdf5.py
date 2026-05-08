@@ -528,10 +528,6 @@ class HDF5Storage(SpaceStorage[
         
         assert os.access(path, os.R_OK), \
             f"Path {path} is not readable"
-
-        if multiprocessing and read_only and "locking" not in kwargs:
-            # Avoid cross-process file lock contention for read-only access.
-            kwargs["locking"] = "false"
     
         # Check file permissions
         can_write = os.access(path, os.W_OK)
@@ -540,7 +536,6 @@ class HDF5Storage(SpaceStorage[
             path,
             "r+" if can_write and not read_only else "r",
             locking=False if read_only else None,
-            **kwargs
         )
         return cls(
             single_instance_space,
