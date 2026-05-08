@@ -448,8 +448,19 @@ class VideoStorage(EpisodeStorageBase[
         **kwargs
     ) -> "VideoStorage[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         assert read_only or (not multiprocessing), "VideoStorage does not support multiprocessing mode when loading a mutable storage"
+
         metadata_path = os.path.join(path, "video_metadata.json")
-        assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
+        if not os.path.exists(metadata_path):
+            # Try legacy metadata filename for backward compatibility
+            legacy_metadata_path = os.path.join(path, "image_metadata.json")
+            if not os.path.exists(legacy_metadata_path):
+                raise FileNotFoundError(f"Metadata file not found at {metadata_path} or {legacy_metadata_path}")
+            
+            # try:
+            #     os.rename(legacy_metadata_path, os.path.join(path, "video_metadata.json"))
+            # except:
+            metadata_path = legacy_metadata_path
+
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
         assert metadata["storage_type"] == cls.__name__, \
