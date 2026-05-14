@@ -354,7 +354,7 @@ class TorchCodecVideoReader:
         elif index is Ellipsis:
             ret = self.decoder.get_frames_in_range(0, len(self.decoder)).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
         elif isinstance(index, slice):
-            start, stop, step = index.indices(len(self))
+            start, stop, step = index.indices(len(self.decoder))
             ret = self.decoder.get_frames_in_range(start, stop, step=step).data.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
         else:
             if self.backend.is_backendarray(index) and self.backend.dtype_is_boolean(index.dtype):
