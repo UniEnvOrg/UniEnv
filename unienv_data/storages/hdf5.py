@@ -535,7 +535,7 @@ class HDF5Storage(SpaceStorage[
         root = h5py.File(
             path,
             "r+" if can_write and not read_only else "r",
-            locking=False if read_only else None,
+            locking=False if (read_only and multiprocessing) else None,
         )
         return cls(
             single_instance_space,
@@ -629,7 +629,7 @@ class HDF5Storage(SpaceStorage[
             root = h5py.File(
                 self._filename,
                 mode=self._mode,
-                locking=False if not self._is_mutable else None,
+                locking=False if (not self._is_mutable and self._multiprocessing) else None,
                 **self._h5py_kwargs
             )
             if self._full_name is not None:
