@@ -153,9 +153,18 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         device: Optional[BDeviceType] = None,
         read_only : bool = True,
         multiprocessing : bool = False,
+        single_instance_space : Optional[Space[BatchT, BDeviceType, BDtypeType, BRNGType]] = None,
         **storage_kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
-        """Load a replay buffer plus its backing storage from disk."""
+        """Load a replay buffer plus its backing storage from disk.
+        
+        If ``single_instance_space`` is provided, it is validated against the
+        space reconstructed from the on-disk metadata and, if compatible,
+        reused instead of keeping the reconstructed copy.  This avoids
+        allocating duplicate ``Space`` objects when many buffers with
+        identical spaces are loaded simultaneously (e.g. for
+        ``CombinedBatch``).
+        """
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
         
@@ -163,16 +172,25 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         offset = int(metadata["offset"])
         count = int(metadata["count"])
         capacity = int(metadata["capacity"]) if "capacity" in metadata else None
-        single_instance_space = bsu.json_to_space(
+        loaded_space = bsu.json_to_space(
             metadata["single_instance_space"], backend, device
         )
+
+        if single_instance_space is not None:
+            assert single_instance_space == loaded_space, \
+                f"Provided single_instance_space does not match the space loaded from metadata. " \
+                f"Provided: {single_instance_space}, Loaded: {loaded_space}"
+            del loaded_space
+            use_space = single_instance_space
+        else:
+            use_space = loaded_space
         
         storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["storage_cls"])
         storage_path = os.path.join(path, metadata["storage_path_relative"])
 
         storage = storage_cls.load_from(
             storage_path,
-            single_instance_space,
+            use_space,
             capacity=capacity,
             read_only=read_only,
             multiprocessing=multiprocessing,

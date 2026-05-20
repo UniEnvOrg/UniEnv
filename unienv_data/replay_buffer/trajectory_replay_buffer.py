@@ -118,12 +118,20 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
         device: Optional[BDeviceType] = None,
         read_only: bool = False,
         multiprocessing: bool = False,
+        step_data_single_instance_space : Optional[Space[BatchT, BDeviceType, BDtypeType, BRNGType]] = None,
+        episode_data_single_instance_space : Optional[Space[EpisodeBatchT, BDeviceType, BDtypeType, BRNGType]] = None,
         step_storage_kwargs: Dict[str, Any] = {},
         step_episode_id_storage_kwargs: Dict[str, Any] = {},
         episode_storage_kwargs: Dict[str, Any] = {},
         **storage_kwargs
     ) -> "TrajectoryReplayBuffer[BatchT, EpisodeBatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
-        """Load a trajectory replay buffer and its subordinate buffers from disk."""
+        """Load a trajectory replay buffer and its subordinate buffers from disk.
+        
+        If ``step_data_single_instance_space`` or
+        ``episode_data_single_instance_space`` are provided, they are
+        validated against the spaces reconstructed from each sub-buffer's
+        metadata and reused, avoiding duplicate ``Space`` allocations.
+        """
         with open(os.path.join(path, "metadata.json"), "r") as f:
             metadata = json.load(f)
         
@@ -136,6 +144,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
             device=device,
             read_only=read_only,
             multiprocessing=multiprocessing,
+            single_instance_space=step_data_single_instance_space,
             **step_storage_kwargs
         )
         step_episode_id_storage_kwargs.update(storage_kwargs)
@@ -156,6 +165,7 @@ class TrajectoryReplayBuffer(BatchBase[TrajectoryData[BatchT, EpisodeBatchT], BA
                 device=device,
                 read_only=read_only,
                 multiprocessing=multiprocessing,
+                single_instance_space=episode_data_single_instance_space,
                 **episode_storage_kwargs
             )
         else:
