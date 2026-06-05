@@ -70,7 +70,7 @@ class ImageStorage(ListStorageBase[
         quality = int(metadata["quality"])
         if "capacity" in metadata:
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
-        length = None if capacity is None else metadata["length"]
+        length = metadata["length"]
 
         return ImageStorage(
             single_instance_space,

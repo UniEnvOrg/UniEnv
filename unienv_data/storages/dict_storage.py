@@ -308,6 +308,54 @@ class DictStorage(SpaceStorage[
         for storage in self.storage_map.values():
             storage.shrink_length(length)
 
+    @property
+    def has_open_segment(self) -> bool:
+        open_states = {storage.has_open_segment for storage in self.storage_map.values()}
+        assert len(open_states) <= 1, f"DictStorage children have inconsistent open-segment states: {open_states}"
+        return next(iter(open_states)) if open_states else False
+
+    @property
+    def pending_segment_length(self) -> int:
+        lengths = {storage.pending_segment_length for storage in self.storage_map.values()}
+        assert len(lengths) <= 1, f"DictStorage children have inconsistent pending-segment lengths: {lengths}"
+        return next(iter(lengths)) if lengths else 0
+
+    def mark_segment_start(self, start_index: int) -> None:
+        for storage in self.storage_map.values():
+            storage.mark_segment_start(start_index)
+
+    def append(self, value) -> None:
+        _, residual = map_transform(
+            value,
+            self.storage_map,
+            lambda key, data, storage: storage.append(data),
+            nested_separator=self.nested_separator,
+        )
+        assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
+
+    def mark_segment_end(self) -> None:
+        for storage in self.storage_map.values():
+            storage.mark_segment_end()
+
+    def abort_segment(self) -> None:
+        for storage in self.storage_map.values():
+            storage.abort_segment()
+
+    def get_segments(self):
+        reference_segments = None
+        for storage in self.storage_map.values():
+            child_segments = storage.get_segments()
+            if child_segments is None:
+                continue
+            child_segments = list(child_segments)
+            if reference_segments is None:
+                reference_segments = child_segments
+            else:
+                assert reference_segments == child_segments, (
+                    f"DictStorage children returned mismatched segment lists: {reference_segments} vs {child_segments}"
+                )
+        return reference_segments
+
     def __len__(self):
         return len(next(iter(self.storage_map.values())))
 

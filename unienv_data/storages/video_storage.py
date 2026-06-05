@@ -1,6 +1,7 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, cast
 from fractions import Fraction
 from collections import deque
+import uuid
 
 from unienv_interface.space import BoxSpace
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -480,7 +481,7 @@ class VideoStorage(EpisodeStorageBase[
 
         if "capacity" in metadata:
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
-        length = None if capacity is None else metadata["length"]
+        length = metadata["length"]
 
         return VideoStorage(
             single_instance_space,
@@ -501,6 +502,205 @@ class VideoStorage(EpisodeStorageBase[
 
     # ========== Instance Implementations ==========
     single_file_ext = None
+
+    def _invalidate_decoder_cache(self):
+        for decoder in self._decoder_cache.values():
+            try:
+                decoder.close()
+            except Exception:
+                pass
+        self._decoder_cache.clear()
+
+    def _get_active_segment_temp_filename(self) -> str:
+        suffix = f".{self.file_ext}" if self.file_ext is not None else ""
+        return os.path.join(self._cache_path, f".active-{uuid.uuid4().hex}.tmp{suffix}")
+
+    @property
+    def pending_segment_length(self) -> int:
+        return getattr(self, "_active_segment_length", 0)
+
+    @property
+    def has_open_segment(self) -> bool:
+        return getattr(self, "_active_segment_start_index", None) is not None
+
+    def mark_segment_start(self, start_index):
+        assert self.is_mutable, "Cannot open a segment on a read-only storage"
+        assert not self.has_open_segment, "A video segment is already open"
+
+        normalized_start = int(start_index) if self.capacity is None else int(start_index) % self.capacity
+        temp_filename = self._get_active_segment_temp_filename()
+        logging.getLogger("libav").setLevel(self.PyAV_LOG_LEVEL)
+        container = None
+        try:
+            container = av.open(temp_filename, mode='w')
+            output_stream = container.add_stream(self.codec, rate=self.fps)
+            if len(self.single_instance_space.shape) == 3:
+                output_stream.width = self.single_instance_space.shape[1]
+                output_stream.height = self.single_instance_space.shape[0]
+            else:
+                output_stream.width = self.single_instance_space.shape[1]
+                output_stream.height = self.single_instance_space.shape[0]
+            if self.file_pixel_format is not None:
+                output_stream.pix_fmt = self.file_pixel_format
+        except Exception:
+            try:
+                if container is not None:
+                    container.close()
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+            finally:
+                av.logging.restore_default_callback()
+            raise
+
+        self._active_segment_start_index = normalized_start
+        self._active_segment_index = normalized_start
+        self._active_segment_length = 0
+        self._active_segment_temp_filename = temp_filename
+        self._active_segment_container = container
+        self._active_segment_stream = output_stream
+
+    def append(self, frame):
+        if not self.has_open_segment:
+            raise RuntimeError("Cannot append a video frame without an open segment")
+        if self.capacity is not None and self._active_segment_length >= self.capacity:
+            raise RuntimeError("Active video segment is full; finalize it before appending more frames")
+
+        if self.backend.is_backendarray(frame):
+            frame_np = self.backend.to_numpy(frame)
+        else:
+            frame_np = np.asarray(frame)
+
+        video_frame = av.VideoFrame.from_ndarray(
+            frame_np,
+            format=self.buffer_pixel_format,
+            channel_last=True,
+        )
+        try:
+            packets = self._active_segment_stream.encode(video_frame)
+            if packets:
+                self._active_segment_container.mux(packets)
+        except Exception:
+            self.abort_segment()
+            raise
+        self._active_segment_length += 1
+        if self.capacity is None:
+            self._active_segment_index = self._active_segment_index + 1
+        else:
+            self._active_segment_index = (self._active_segment_index + 1) % self.capacity
+
+    def mark_segment_end(self):
+        if not self.has_open_segment:
+            return
+
+        temp_filename = self._active_segment_temp_filename
+        start_index = int(self._active_segment_start_index)
+        length = int(self._active_segment_length)
+
+        try:
+            packets = self._active_segment_stream.encode()
+            if packets:
+                self._active_segment_container.mux(packets)
+        finally:
+            try:
+                if hasattr(self._active_segment_stream, 'close'):
+                    self._active_segment_stream.close()
+            finally:
+                self._active_segment_container.close()
+                av.logging.restore_default_callback()
+
+        if length == 0:
+            if temp_filename is not None and os.path.exists(temp_filename):
+                os.remove(temp_filename)
+            self._clear_active_segment_state()
+            self._invalidate_decoder_cache()
+            return
+
+        if self.capacity is None:
+            end_index = start_index + length - 1
+        else:
+            end_index = (start_index + length - 1) % self.capacity
+
+        self.remove_index_range(start_index, end_index)
+        final_filename = self._make_filename(start_index, end_index)
+        os.replace(temp_filename, final_filename)
+        self._add_file_range(start_index, end_index)
+        self._clear_active_segment_state()
+
+    def abort_segment(self):
+        if not self.has_open_segment:
+            return
+
+        temp_filename = getattr(self, "_active_segment_temp_filename", None)
+        try:
+            if hasattr(self, "_active_segment_stream") and self._active_segment_stream is not None and hasattr(self._active_segment_stream, 'close'):
+                self._active_segment_stream.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "_active_segment_container") and self._active_segment_container is not None:
+                self._active_segment_container.close()
+        except Exception:
+            pass
+        if temp_filename is not None and os.path.exists(temp_filename):
+            try:
+                os.remove(temp_filename)
+            except FileNotFoundError:
+                pass
+        self._clear_active_segment_state()
+        self._invalidate_decoder_cache()
+
+    def _clear_active_segment_state(self):
+        self._active_segment_start_index = None
+        self._active_segment_index = None
+        self._active_segment_length = 0
+        self._active_segment_temp_filename = None
+        self._active_segment_container = None
+        self._active_segment_stream = None
+
+    def get_segments(self):
+        return list(self._file_ranges)
+
+    def _active_segment_physical_indices(self) -> List[int]:
+        if not self.has_open_segment or self._active_segment_length <= 0:
+            return []
+        start_index = int(self._active_segment_start_index)
+        length = int(self._active_segment_length)
+        if self.capacity is None:
+            return list(range(start_index, start_index + length))
+        end_index = (start_index + length - 1) % self.capacity
+        if start_index <= end_index:
+            return list(range(start_index, end_index + 1))
+        return list(range(start_index, self.capacity)) + list(range(0, end_index + 1))
+
+    def _requested_physical_indices(self, index: Union[IndexableType, BArrayType]) -> List[int]:
+        limit = self.capacity if self.capacity is not None else self.length
+        if limit == 0:
+            return []
+        if isinstance(index, int):
+            return [int(index)]
+        if index is Ellipsis:
+            return list(range(limit))
+        if isinstance(index, slice):
+            return list(range(*index.indices(limit)))
+        if self.backend.is_backendarray(index):
+            if self.backend.dtype_is_boolean(index.dtype):
+                index = self.backend.nonzero(index)[0]
+            else:
+                index = (index + limit) % limit
+            return [int(x) for x in self.backend.to_numpy(index)]
+        return []
+
+    def _overlaps_active_segment(self, index: Union[IndexableType, BArrayType]) -> bool:
+        if not self.has_open_segment or self._active_segment_length <= 0:
+            return False
+        active_indices = set(self._active_segment_physical_indices())
+        requested_indices = self._requested_physical_indices(index)
+        return any(requested_index in active_indices for requested_index in requested_indices)
+
+    def get(self, index: Union[IndexableType, BArrayType]):
+        if self._overlaps_active_segment(index):
+            raise RuntimeError("Cannot read from VideoStorage while a segment is open; finalize or abort it first")
+        return super().get(index)
 
     @staticmethod
     def get_auto_codec(
@@ -610,6 +810,10 @@ class VideoStorage(EpisodeStorageBase[
             video_reader.close()
         return data
 
+    def remove_index_range(self, start_index: int, end_index: int):
+        super().remove_index_range(start_index, end_index)
+        self._invalidate_decoder_cache()
+
     # PyAV Implementation (Commented out due to bugs with hevc codec)
     def set_to_file(self, filename : str, value : BArrayType):
         # ImageIO Implementation
@@ -686,6 +890,8 @@ class VideoStorage(EpisodeStorageBase[
     #     )
 
     def dumps(self, path):
+        if self.has_open_segment:
+            raise RuntimeError("Cannot dump VideoStorage while a segment is open; finalize or abort it first")
         assert os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         metadata = {
@@ -702,7 +908,15 @@ class VideoStorage(EpisodeStorageBase[
             json.dump(metadata, f)
         super().dumps(path)
 
+    def clear(self):
+        if self.has_open_segment:
+            self.abort_segment()
+        super().clear()
+        self._invalidate_decoder_cache()
+
     def close(self):
+        if self.has_open_segment:
+            self.abort_segment()
         for decoder in self._decoder_cache.values():
             decoder.close()
         self._decoder_cache.clear()

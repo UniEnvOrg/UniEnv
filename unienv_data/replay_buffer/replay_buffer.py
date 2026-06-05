@@ -5,7 +5,7 @@ import multiprocessing as mp
 import ctypes
 from contextlib import nullcontext
 
-from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type
+from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence, Callable, Type, List
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import Space
@@ -53,6 +53,58 @@ def index_with_offset(
             nonzero_index = index + len_transitions
         data_index = (nonzero_index + offset) % len_transitions
         return data_index
+
+def _chunk_to_logical_range(chunk: List[int], count: int) -> Optional[Tuple[int, int]]:
+    if len(chunk) == 0:
+        return None
+    if len(chunk) >= count:
+        return (0, count)
+    return (int(chunk[0]), int((chunk[-1] + 1) % count))
+
+def _map_physical_segments_to_logical(
+    physical_segments: Sequence[Tuple[int, int]],
+    *,
+    offset: int,
+    count: int,
+    capacity: Optional[int],
+) -> Optional[List[Tuple[int, int]]]:
+    if capacity is None:
+        return sorted(((int(start), int(end) + 1) for start, end in physical_segments), key=lambda item: item[0])
+    if count == 0:
+        return []
+
+    logical_segments: List[Tuple[int, int]] = []
+    for start, end in physical_segments:
+        if start <= end:
+            physical_indexes = range(int(start), int(end) + 1)
+        else:
+            physical_indexes = list(range(int(start), capacity)) + list(range(0, int(end) + 1))
+
+        logical_positions: List[int] = []
+        for physical_index in physical_indexes:
+            logical_index = (physical_index - offset) % capacity
+            if logical_index < count:
+                logical_positions.append(int(logical_index))
+
+        if not logical_positions:
+            continue
+
+        chunk = [logical_positions[0]]
+        for logical_index in logical_positions[1:]:
+            if (chunk[-1] + 1) % count != logical_index:
+                chunk_range = _chunk_to_logical_range(chunk, count)
+                if chunk_range is not None:
+                    logical_segments.append(chunk_range)
+                chunk = [logical_index]
+            else:
+                chunk.append(logical_index)
+
+        chunk_range = _chunk_to_logical_range(chunk, count)
+        if chunk_range is not None:
+            logical_segments.append(chunk_range)
+
+    logical_segments.sort(key=lambda item: item[0])
+    return logical_segments
 
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Ring-buffer style batch storage built on top of a ``SpaceStorage``.
@@ -124,7 +176,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 metadata = json.load(f)
             if metadata.get('type', None) != __class__.__name__:
                 return None
-            return int(metadata["capacity"])
+            capacity = metadata.get("capacity", None)
+            return None if capacity is None else int(capacity)
         return None
     
     @staticmethod
@@ -171,7 +224,9 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         assert metadata['type'] == __class__.__name__, f"Metadata type {metadata['type']} does not match expected type {__class__.__name__}"
         offset = int(metadata["offset"])
         count = int(metadata["count"])
-        capacity = int(metadata["capacity"]) if "capacity" in metadata else None
+        capacity = metadata.get("capacity", None)
+        if capacity is not None:
+            capacity = int(capacity)
         loaded_space = bsu.json_to_space(
             metadata["single_instance_space"], backend, device
         )
@@ -403,6 +458,72 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             if outflow > 0:
                 self.offset = (self.offset + outflow) % self.capacity
             self.count = min(self.count + B, self.capacity)
+
+    def append(self, value):
+        with self._lock_scope():
+            if self.capacity is None:
+                physical_index = self.count
+                self.storage.extend_length(1)
+                opened_segment = False
+                try:
+                    if not self.storage.has_open_segment:
+                        self.storage.mark_segment_start(physical_index)
+                        opened_segment = True
+                    self.storage.append(value)
+                except Exception:
+                    try:
+                        self.storage.shrink_length(1)
+                    finally:
+                        if opened_segment:
+                            try:
+                                self.storage.abort_segment()
+                            except Exception:
+                                pass
+                    raise
+                self.count += 1
+                return
+
+            physical_index = (self.offset + self.count) % self.capacity
+            if self.storage.has_open_segment and self.storage.pending_segment_length >= self.capacity:
+                self.storage.mark_segment_end()
+
+            opened_segment = False
+            try:
+                if not self.storage.has_open_segment:
+                    self.storage.mark_segment_start(physical_index)
+                    opened_segment = True
+                self.storage.append(value)
+            except Exception:
+                if opened_segment:
+                    try:
+                        self.storage.abort_segment()
+                    except Exception:
+                        pass
+                raise
+
+            outflow = max(0, self.count + 1 - self.capacity)
+            if outflow > 0:
+                self.offset = (self.offset + outflow) % self.capacity
+            self.count = min(self.count + 1, self.capacity)
+
+    def mark_segment_end(self):
+        with self._lock_scope():
+            self.storage.mark_segment_end()
+
+    def get_segments(self):
+        with self._lock_scope():
+            storage_segments = self.storage.get_segments()
+            if storage_segments is None:
+                return None
+            logical_segments = _map_physical_segments_to_logical(
+                storage_segments,
+                offset=self.offset,
+                count=self.count,
+                capacity=self.capacity,
+            )
+            if logical_segments is None:
+                return None
+            return logical_segments
 
     def get_column(self, nested_keys):
         if hasattr(self.storage, "get_column"):

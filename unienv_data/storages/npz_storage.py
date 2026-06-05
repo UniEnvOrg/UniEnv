@@ -65,7 +65,7 @@ class NPZStorage(ListStorageBase[
         compressed = metadata.get("compressed", True)
         if "capacity" in metadata:
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
-        length = None if capacity is None else metadata["length"]
+        length = metadata["length"]
 
         return NPZStorage(
             single_instance_space,

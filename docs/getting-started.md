@@ -66,6 +66,8 @@ buffer = ReplayBuffer.create(
 print(buffer.single_space)
 ```
 
+If you are logging online, use `append()` for each step and `mark_segment_end()` when the segment closes. Segment-aware storages can then report logical ranges through `get_segments()`.
+
 This already shows the basic pattern:
 
 - define the structure of one sample with a `Space`

@@ -78,6 +78,8 @@ print(normalized_action_space)
 print(buffer.single_space)
 ```
 
+For online logging, append one sample at a time with `ReplayBuffer.append(value)` and close each segment with `mark_segment_end()`. Segment visibility depends on the storage backend: legacy storages may expose writes immediately, while `VideoStorage` finalizes its active segment before it becomes readable.
+
 In practice, you would pair these components with your own `Env`, `FuncEnv`, `World`, or `WorldNode` implementations, then add wrappers and storage backends as needed.
 
 ## Documentation

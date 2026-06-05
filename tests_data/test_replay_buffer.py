@@ -1,9 +1,16 @@
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tuple as TupleT, Sequence as SequenceT, Union as UnionT, List
 from unienv_data import *
 from unienv_data.storages.flattened import FlattenedStorage
-from unienv_data.storages.hdf5 import HDF5Storage
+try:
+    from unienv_data.storages.hdf5 import HDF5Storage
+except ModuleNotFoundError:
+    HDF5Storage = None
+from unienv_data.storages.npz_storage import NPZStorage
 from unienv_data.storages.pytorch import PytorchTensorStorage
-from unienv_data.storages.parquet import ParquetStorage
+try:
+    from unienv_data.storages.parquet import ParquetStorage
+except ModuleNotFoundError:
+    ParquetStorage = None
 from unienv_data.samplers import *
 from unienv_data.batches import *
 from unienv_interface.space import *
@@ -54,6 +61,49 @@ def perform_rb_fill_test(
     flat_ref_slice = sfu.flatten_data(batched_check_space, ref_slice)
     assert space.backend.all(flat_sampled_slice == flat_ref_slice)
     return slice(-check_size, None), flat_ref_slice
+
+def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "dump"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+    )
+
+    samples = [
+        np.array([1.0, 2.0], dtype=np.float32),
+        np.array([3.0, 4.0], dtype=np.float32),
+        np.array([5.0, 6.0], dtype=np.float32),
+    ]
+    for sample in samples:
+        rb.append(sample)
+
+    rb.dumps(str(cache_path))
+
+    assert ReplayBuffer.get_capacity_from_path(str(cache_path)) is None
+
+    loaded = ReplayBuffer.load_from(
+        str(cache_path),
+        backend=rb.backend,
+        device=rb.device,
+        compressed=False,
+    )
+
+    assert loaded.capacity is None
+    assert loaded.count == len(samples)
+    assert loaded.offset == 0
+    np.testing.assert_array_equal(loaded.get_at(slice(None)), np.stack(samples, axis=0))
+    for i, sample in enumerate(samples):
+        np.testing.assert_array_equal(loaded.get_at(i), sample)
 
 def check_fixed_capacity_replay_buffer(
     rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -177,6 +227,7 @@ def test_torch_replay_buffer(
         )
     )
 
+@pytest.mark.skipif(HDF5Storage is None, reason="h5py is not installed")
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024, 2048])
 def test_hdf5_replay_buffer(
@@ -203,6 +254,7 @@ def test_hdf5_replay_buffer(
         load_kwargs={}
     )
 
+@pytest.mark.skipif(ParquetStorage is None, reason="parquet dependencies are not installed")
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024, 2048])
 def test_parquet_replay_buffer(
@@ -229,6 +281,7 @@ def test_parquet_replay_buffer(
         load_kwargs={}
     )
 
+@pytest.mark.skipif(ParquetStorage is None, reason="parquet dependencies are not installed")
 @pytest.mark.parametrize("capacity", [10, 50])
 @pytest.mark.parametrize("seed", [0, 1024])
 def test_parquet_dict_replay_buffer(

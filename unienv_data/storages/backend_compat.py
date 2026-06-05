@@ -213,6 +213,34 @@ class ToBackendOrDeviceStorage(
 
     def shrink_length(self, length):
         self.inner_storage.shrink_length(length)
+
+    @property
+    def has_open_segment(self) -> bool:
+        return self.inner_storage.has_open_segment
+
+    @property
+    def pending_segment_length(self) -> int:
+        return self.inner_storage.pending_segment_length
+
+    def mark_segment_start(self, start_index: int) -> None:
+        self.inner_storage.mark_segment_start(start_index)
+
+    def append(self, value) -> None:
+        self.inner_storage.append(data_to(
+            value,
+            source_backend=self.backend,
+            target_backend=self.inner_backend,
+            target_device=self.inner_device,
+        ))
+
+    def mark_segment_end(self) -> None:
+        self.inner_storage.mark_segment_end()
+
+    def abort_segment(self) -> None:
+        self.inner_storage.abort_segment()
+
+    def get_segments(self):
+        return self.inner_storage.get_segments()
     
     def __len__(self):
         return len(self.inner_storage)

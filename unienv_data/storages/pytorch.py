@@ -167,6 +167,7 @@ class PytorchTensorStorage(SpaceStorage[
 
     def clear(self) -> None:
         assert self.is_mutable, "Storage is not mutable"
+        self.abort_segment()
         pass
     
     def dumps(self, path: Union[str, os.PathLike]) -> None:

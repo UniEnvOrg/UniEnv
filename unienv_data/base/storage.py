@@ -4,6 +4,7 @@ from typing import Generic, TypeVar, Optional, Any, Dict, Union, Tuple, Sequence
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 from unienv_interface.space import Space
+from unienv_interface.space.space_utils import batch_utils as sbu
 from .common import BatchBase, BatchT, IndexableType
 
 class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -86,6 +87,58 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     ):
         """Bind the storage to the space of one stored element."""
         self.single_instance_space = single_instance_space
+        self._single_sample_batched_space = sbu.batch_space(self.single_instance_space, 1)
+        self._active_segment_start_index: Optional[int] = None
+        self._active_segment_index: Optional[int] = None
+
+    @property
+    def has_open_segment(self) -> bool:
+        return self._active_segment_start_index is not None
+
+    @property
+    def pending_segment_length(self) -> int:
+        return 0
+
+    def get_segments(self):
+        return None
+
+    def mark_segment_start(self, start_index: int) -> None:
+        assert not self.has_open_segment, "A segment is already open"
+        if self.capacity is None:
+            self._active_segment_start_index = int(start_index)
+            self._active_segment_index = int(start_index)
+        else:
+            self._active_segment_start_index = int(start_index) % self.capacity
+            self._active_segment_index = self._active_segment_start_index
+
+    def append(self, value) -> None:
+        """Append one structured sample to the storage.
+
+        Appended values may be immediately visible or only visible after
+        ``mark_segment_end()`` depending on the storage implementation.
+        """
+        if not self.has_open_segment or self._active_segment_index is None:
+            raise RuntimeError(f"Cannot append to {type(self).__name__} without an open segment")
+
+        batched_value = sbu.concatenate(self._single_sample_batched_space, [value])
+        current_index = self._active_segment_index
+        self.set(slice(current_index, current_index + 1), batched_value)
+        if self.capacity is None:
+            self._active_segment_index = current_index + 1
+        else:
+            self._active_segment_index = (current_index + 1) % self.capacity
+
+    def mark_segment_end(self) -> None:
+        if not self.has_open_segment:
+            return
+        self._active_segment_start_index = None
+        self._active_segment_index = None
+
+    def abort_segment(self) -> None:
+        if not self.has_open_segment:
+            return
+        self._active_segment_start_index = None
+        self._active_segment_index = None
     
     def extend_length(self, length : int) -> None:
         """
@@ -138,6 +191,7 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         Clear all data inside the storage and set the length to 0 if the storage has unlimited capacity.
         For storages with fixed capacity, this should reset the storage to its initial state.
         """
+        self.abort_segment()
         if self.capacity is None:
             self.shrink_length(len(self))
 

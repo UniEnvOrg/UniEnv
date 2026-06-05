@@ -127,6 +127,7 @@ class ListStorageBase(SpaceStorage[
 
     def clear(self):
         assert self.is_mutable, "Cannot clear a read-only storage"
+        self.abort_segment()
         if self.capacity is None:
             self.length = 0
         shutil.rmtree(self._cache_path)

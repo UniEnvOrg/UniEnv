@@ -1,2 +1,1 @@
 from .replay_buffer import ReplayBuffer
-from .trajectory_replay_buffer import TrajectoryReplayBuffer

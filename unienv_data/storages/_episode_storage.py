@@ -120,12 +120,16 @@ class EpisodeStorageBase(SpaceStorage[
         all_filenames = glob.glob(os.path.join(self._cache_path, f"*_*.{self.file_ext}" if self.file_ext is not None else "*_*"))
         self._file_ranges = []
         for filename in all_filenames:
-            base = os.path.basename(filename)
-            name_part = base[:-(len(self.file_ext) + 1)] if self.file_ext is not None else base
-            start_str, end_str = name_part.split("_")
-            start_idx = int(start_str)
-            end_idx = int(end_str)
-            self._file_ranges.append((start_idx, end_idx))
+            try:
+                base = os.path.basename(filename)
+                name_part = base[:-(len(self.file_ext) + 1)] if self.file_ext is not None else base
+                start_str, end_str = name_part.split("_")
+                start_idx = int(start_str)
+                end_idx = int(end_str)
+                self._file_ranges.append((start_idx, end_idx))
+            except (ValueError, TypeError):
+                LOGGER.debug("Skipping non-episode file during cache rebuild: %s", filename)
+                continue
         # Sort by start index for consistent iteration
         self._file_ranges.sort(key=lambda x: x[0])
         self._invalidate_file_range_lookup_cache()
@@ -140,6 +144,9 @@ class EpisodeStorageBase(SpaceStorage[
         """Remove a file range from the cache."""
         self._file_ranges = [(s, e) for s, e in self._file_ranges if not (s == start_idx and e == end_idx)]
         self._invalidate_file_range_lookup_cache()
+
+    def get_segments(self):
+        return list(self._file_ranges)
 
     def _invalidate_file_range_lookup_cache(self):
         self._cache_index_starts = None
