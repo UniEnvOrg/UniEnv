@@ -28,7 +28,7 @@ Key properties:
 - optional multiprocessing-safe counters and locking
 - step-wise `append(value)` with implicit segment starts
 - `mark_segment_end()` to finalize the current segment
-- `get_segments()` for segment-aware storages, or `None` for legacy/default ones
+- `get_segments()` for ReplayBuffer-owned segment metadata, with a legacy fallback for old metadata
 
 Typical creation pattern:
 
@@ -87,10 +87,10 @@ buffer.append(torch.tensor([1, 2], dtype=torch.int64))
 buffer.append(torch.tensor([3, 4], dtype=torch.int64))
 buffer.mark_segment_end()
 
-assert buffer.get_segments() is None
+assert buffer.get_segments() == [(0, 2)]
 ```
 
-For segment-aware storages, `ReplayBuffer.get_segments()` returns logical chronological half-open ranges. With fixed capacity, round-robin overwrite is supported and the ranges stay in logical buffer order.
+For segment-aware storages, `ReplayBuffer.get_segments()` returns logical chronological half-open ranges derived from ReplayBuffer-owned physical metadata. `segments_known` is the flag that says whether ReplayBuffer is tracking segment boundaries itself; `physical_segments` stores those boundaries as inclusive physical index ranges. With fixed capacity, round-robin overwrite is supported and the ranges stay in logical buffer order.
 
 > Visibility note: the base storage append path writes through the active index and may make values visible immediately, but some implementations (notably `VideoStorage`) buffer data until `mark_segment_end()`.
 

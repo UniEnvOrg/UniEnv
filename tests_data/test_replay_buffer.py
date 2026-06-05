@@ -22,6 +22,7 @@ import torch
 import numpy as np
 import tempfile
 import os
+import json
 import pytest
 from unienv_interface.space.space_utils import batch_utils as sbu
 
@@ -87,6 +88,7 @@ def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
     for sample in samples:
         rb.append(sample)
 
+    rb.mark_segment_end()
     rb.dumps(str(cache_path))
 
     assert ReplayBuffer.get_capacity_from_path(str(cache_path)) is None
@@ -104,6 +106,139 @@ def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
     np.testing.assert_array_equal(loaded.get_at(slice(None)), np.stack(samples, axis=0))
     for i, sample in enumerate(samples):
         np.testing.assert_array_equal(loaded.get_at(i), sample)
+
+
+def test_replay_buffer_dump_requires_closed_segment_and_preserves_closed_segments(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "open_segment_dump"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+    )
+
+    rb.append(np.array([1.0, 2.0], dtype=np.float32))
+    rb.append(np.array([3.0, 4.0], dtype=np.float32))
+
+    with pytest.raises(RuntimeError, match="mark_segment_end"):
+        rb.dumps(str(cache_path))
+
+    rb.mark_segment_end()
+    rb.dumps(str(cache_path))
+
+    metadata_path = cache_path / "metadata.json"
+    with metadata_path.open("r") as f:
+        metadata = json.load(f)
+    assert "active_segment_start_physical" not in metadata
+    assert "active_segment_length" not in metadata
+
+    loaded = ReplayBuffer.load_from(
+        str(cache_path),
+        backend=rb.backend,
+        device=rb.device,
+        compressed=False,
+    )
+
+    assert loaded.get_segments() == [(0, 2)]
+    np.testing.assert_array_equal(loaded.get_at(slice(None)), np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+
+
+def test_replay_buffer_dump_and_load_preserves_physical_segment_metadata(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "segment_dump"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+    )
+
+    rb.append(np.array([1.0, 2.0], dtype=np.float32))
+    rb.append(np.array([3.0, 4.0], dtype=np.float32))
+    rb.mark_segment_end()
+    rb.extend(np.array([[5.0, 6.0], [7.0, 8.0]], dtype=np.float32))
+
+    assert rb.get_segments() == [(0, 2), (2, 4)]
+    rb.dumps(str(cache_path))
+
+    metadata_path = cache_path / "metadata.json"
+    with metadata_path.open("r") as f:
+        metadata = json.load(f)
+    assert metadata["physical_segments"] == [[0, 1], [2, 3]]
+    assert metadata["segments_known"] is True
+    assert "active_segment_start_physical" not in metadata
+    assert "active_segment_length" not in metadata
+
+    loaded = ReplayBuffer.load_from(
+        str(cache_path),
+        backend=rb.backend,
+        device=rb.device,
+        compressed=False,
+    )
+
+    assert loaded.segment_tracking_state == "tracked"
+    assert loaded.get_segments() == [(0, 2), (2, 4)]
+
+
+def test_legacy_metadata_without_segment_fields_returns_none_for_default_storage(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "legacy_segment_dump"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+    )
+
+    rb.append(np.array([1.0, 2.0], dtype=np.float32))
+    rb.mark_segment_end()
+    rb.dumps(str(cache_path))
+
+    metadata_path = cache_path / "metadata.json"
+    with metadata_path.open("r") as f:
+        metadata = json.load(f)
+    for key in (
+        "segment_tracking_state",
+        "segments_known",
+        "physical_segments",
+        "active_segment_start_physical",
+        "active_segment_length",
+    ):
+        metadata.pop(key, None)
+    with metadata_path.open("w") as f:
+        json.dump(metadata, f)
+
+    loaded = ReplayBuffer.load_from(
+        str(cache_path),
+        backend=rb.backend,
+        device=rb.device,
+        compressed=False,
+    )
+
+    assert loaded.segment_tracking_state == "legacy_unknown"
+    assert loaded.get_segments() is None
 
 def check_fixed_capacity_replay_buffer(
     rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],

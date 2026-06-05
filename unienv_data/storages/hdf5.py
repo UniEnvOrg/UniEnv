@@ -235,7 +235,8 @@ class HDF5Storage(SpaceStorage[
             storage_path_relative="storage" + (__class__.single_file_ext or ""),
             count=count,
             offset=0,
-            cache_path=None
+            cache_path=None,
+            segments_known=False,
         )
 
     @staticmethod
