@@ -85,6 +85,18 @@ def _normalize_physical_segments(
             normalized_segments.append(normalized_segment)
     return normalized_segments
 
+def _load_segment_metadata(
+    metadata: Dict[str, Any],
+    *,
+    capacity: Optional[int],
+) -> Optional[List[Tuple[int, int]]]:
+    if "physical_segments" not in metadata:
+        return None
+    physical_segments = metadata.get("physical_segments")
+    if physical_segments is None:
+        return None
+    return _normalize_physical_segments(physical_segments, capacity=capacity)
+
 def _expand_physical_segment(
     segment: Tuple[int, int],
     capacity: Optional[int],
@@ -179,9 +191,15 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         cache_path : Optional[Union[str, os.PathLike]] = None,
         capacity : Optional[int] = None,
         multiprocessing : bool = False,
+        maintain_segment_metadata : bool = False,
         **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
         """Create a new replay buffer and its backing storage."""
+        if multiprocessing and maintain_segment_metadata:
+            raise RuntimeError(
+                "ReplayBuffer.create() does not support maintain_segment_metadata=True with multiprocessing=True for mutable buffers; "
+                "load a read-only buffer instead."
+            )
         storage_path_relative = "storage" + (storage_cls.single_file_ext or "")
         if cache_path is not None:
             os.makedirs(cache_path, exist_ok=True)
@@ -199,7 +217,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             0,
             0,
             cache_path=cache_path,
-            multiprocessing=multiprocessing
+            multiprocessing=multiprocessing,
+            maintain_segment_metadata=maintain_segment_metadata,
         )
     
     @staticmethod
@@ -296,7 +315,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             use_space = single_instance_space
         else:
             use_space = loaded_space
-        
+
+        physical_segments = _load_segment_metadata(metadata, capacity=capacity)
+        if multiprocessing and not read_only and physical_segments is not None:
+            raise RuntimeError(
+                "ReplayBuffer.load_from() does not support multiprocessing=True with maintained segment metadata unless read_only=True."
+            )
+
         storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["storage_cls"])
         storage_path = os.path.join(path, metadata["storage_path_relative"])
 
@@ -309,25 +334,6 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             **storage_kwargs
         )
 
-        has_segment_metadata = any(
-            field in metadata
-            for field in (
-                "segments_known",
-                "physical_segments",
-            )
-        )
-
-        segments_known = False
-        physical_segments: List[Tuple[int, int]] = []
-
-        if has_segment_metadata:
-            segments_known = bool(metadata.get("segments_known", True))
-            if segments_known:
-                physical_segments = _normalize_physical_segments(
-                    metadata.get("physical_segments"),
-                    capacity=capacity,
-                )
-
         return ReplayBuffer(
             storage,
             metadata["storage_path_relative"],
@@ -335,7 +341,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             offset,
             cache_path=path,
             multiprocessing=multiprocessing,
-            segments_known=segments_known,
+            maintain_segment_metadata=physical_segments is not None,
             physical_segments=physical_segments,
         )
 
@@ -361,9 +367,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 "storage_cls": get_full_class_name(type(self.storage)),
                 "storage_path_relative": self.storage_path_relative,
                 "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
-                "segment_tracking_state": self.segment_tracking_state,
-                "segments_known": self._segments_known,
-                "physical_segments": [list(segment) for segment in self._physical_segments],
+                "physical_segments": None if not self._maintain_segment_metadata else [list(segment) for segment in self._physical_segments],
             }
             with open(os.path.join(path, "metadata.json"), "w") as f:
                 json.dump(metadata, f)
@@ -377,7 +381,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         cache_path : Optional[Union[str, os.PathLike]] = None,
         multiprocessing : bool = False,
         *,
-        segments_known : bool = True,
+        maintain_segment_metadata : bool = False,
         physical_segments : Optional[Sequence[Tuple[int, int]]] = None,
         active_segment_start_physical : Optional[int] = None,
         active_segment_length : int = 0,
@@ -387,6 +391,14 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path
         self._multiprocessing = multiprocessing
+        self._maintain_segment_metadata = bool(maintain_segment_metadata or physical_segments is not None)
+
+        if self._multiprocessing and self._maintain_segment_metadata and self.storage.is_mutable:
+            raise RuntimeError(
+                "ReplayBuffer does not support maintain_segment_metadata=True with multiprocessing=True for mutable buffers; "
+                "load the buffer read-only or disable multiprocessing."
+            )
+
         if multiprocessing and storage.is_mutable:
             assert storage.is_multiprocessing_safe, "Storage is not multiprocessing safe"
             self._lock = mp.RLock()
@@ -397,14 +409,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._count_value = int(count)
             self._offset_value = int(offset)
 
-        self._segments_known = bool(segments_known)
-
         self._physical_segments = (
             _normalize_physical_segments(physical_segments, capacity=self.capacity)
-            if self._segments_known
+            if self._maintain_segment_metadata
             else []
         )
-        if self._segments_known and active_segment_start_physical is not None and int(active_segment_length) > 0:
+        if self._maintain_segment_metadata and active_segment_start_physical is not None and int(active_segment_length) > 0:
             self._active_segment_start_physical = int(active_segment_start_physical)
             if self.capacity is not None:
                 self._active_segment_start_physical %= self.capacity
@@ -462,12 +472,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.storage.capacity
 
     @property
-    def segment_tracking_state(self) -> str:
-        return "tracked" if self._segments_known else "legacy_unknown"
-
-    @property
-    def segments_known(self) -> bool:
-        return self._segments_known
+    def maintain_segment_metadata(self) -> bool:
+        return self._maintain_segment_metadata
 
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
@@ -563,7 +569,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return list(range(start, self.capacity)) + list(range(0, end + 1))
 
     def _remove_physical_range_from_metadata(self, start_physical: int, length: int) -> None:
-        if not self._segments_known or length <= 0:
+        if not self._maintain_segment_metadata or length <= 0:
             return
 
         if self.capacity is None:
@@ -611,7 +617,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             B = sbu.batch_size_data(value)
             if B == 0:
                 return
-            if self._active_segment_start_physical is not None and self._active_segment_length > 0:
+            if self.storage.has_open_segment or (
+                self._maintain_segment_metadata
+                and self._active_segment_start_physical is not None
+                and self._active_segment_length > 0
+            ):
                 raise RuntimeError("Cannot extend while an append-built segment is open; call mark_segment_end() first")
 
             old_count = self.count
@@ -622,7 +632,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self.storage.extend_length(B)
                 self.storage.set(slice(self.count, self.count + B), value)
                 self.count = old_count + B
-                if self._segments_known:
+                if self._maintain_segment_metadata:
                     self._physical_segments.append((old_count, old_count + B - 1))
                 return
             
@@ -631,7 +641,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self.storage.set(Ellipsis, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
                 self.count = self.capacity
                 self.offset = 0
-                if self._segments_known:
+                if self._maintain_segment_metadata:
                     self._physical_segments = [(0, self.capacity - 1)]
                 self._active_segment_start_physical = None
                 self._active_segment_length = 0
@@ -642,12 +652,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
             outflow = max(0, old_count + B - self.capacity)
-            if outflow > 0 and self._segments_known:
+            if outflow > 0 and self._maintain_segment_metadata:
                 self._remove_physical_range_from_metadata(old_offset, outflow)
             if outflow > 0:
                 self.offset = (old_offset + outflow) % self.capacity
             self.count = min(old_count + B, self.capacity)
-            if self._segments_known:
+            if self._maintain_segment_metadata:
                 self._physical_segments.append((start_physical, (start_physical + B - 1) % self.capacity))
 
     def append(self, value):
@@ -673,7 +683,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                                 pass
                     raise
                 self.count = old_count + 1
-                if self._segments_known:
+                if self._maintain_segment_metadata:
                     self._append_to_active_segment(physical_index)
                 return
 
@@ -696,18 +706,18 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 raise
 
             outflow = max(0, old_count + 1 - self.capacity)
-            if outflow > 0 and self._segments_known:
+            if outflow > 0 and self._maintain_segment_metadata:
                 self._remove_physical_range_from_metadata(self.offset, outflow)
             if outflow > 0:
                 self.offset = (self.offset + outflow) % self.capacity
             self.count = min(old_count + 1, self.capacity)
-            if self._segments_known:
+            if self._maintain_segment_metadata:
                 self._append_to_active_segment(physical_index)
 
     def mark_segment_end(self):
         with self._lock_scope():
             self.storage.mark_segment_end()
-            if self._segments_known and self._active_segment_start_physical is not None and self._active_segment_length > 0:
+            if self._maintain_segment_metadata and self._active_segment_start_physical is not None and self._active_segment_length > 0:
                 active_end_physical = (
                     self._active_segment_start_physical + self._active_segment_length - 1
                     if self.capacity is None
@@ -719,7 +729,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def get_segments(self):
         with self._lock_scope():
-            if self._segments_known:
+            if self._maintain_segment_metadata:
                 return _physical_segments_to_logical_half_open(
                     self._physical_segments,
                     offset=self.offset,
@@ -746,8 +756,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self.offset,
                 cache_path=self.cache_path,
                 multiprocessing=self._multiprocessing,
-                segments_known=self._segments_known,
-                physical_segments=list(self._physical_segments),
+                maintain_segment_metadata=self._maintain_segment_metadata,
+                physical_segments=list(self._physical_segments) if self._maintain_segment_metadata else None,
                 active_segment_start_physical=self._active_segment_start_physical,
                 active_segment_length=self._active_segment_length,
             )
@@ -759,7 +769,6 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self.storage.clear()
             self.count = 0
             self.offset = 0
-            self._segments_known = True
             self._physical_segments = []
             self._active_segment_start_physical = None
             self._active_segment_length = 0

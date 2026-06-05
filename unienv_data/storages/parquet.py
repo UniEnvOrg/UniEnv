@@ -367,7 +367,7 @@ class ParquetStorage(SpaceStorage[
             count=count,
             offset=0,
             cache_path=None,
-            segments_known=False,
+            maintain_segment_metadata=False,
         )
 
     # ========== Instance Methods ==========

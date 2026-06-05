@@ -7,7 +7,7 @@ version = "0.0.1b13"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
-    "xbarray>=0.0.1a16",
+    "xbarray>=0.0.1a18",
     "pillow",
     "cloudpickle",
     "pyvers",

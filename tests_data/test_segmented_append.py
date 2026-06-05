@@ -58,6 +58,7 @@ def test_replay_buffer_append_with_flattened_storage_wrapper():
         inner_storage_cls=PytorchTensorStorage,
         capacity=4,
         is_memmap=False,
+        maintain_segment_metadata=True,
     )
 
     sample = torch.tensor([3, 4], dtype=torch.int64)
@@ -83,6 +84,7 @@ def test_replay_buffer_owned_segments_append_mark_and_extend(tmp_path):
         cache_path=str(tmp_path / "rb_owned_segments"),
         capacity=None,
         compressed=False,
+        maintain_segment_metadata=True,
     )
 
     assert rb.get_segments() == []
@@ -116,6 +118,7 @@ def test_replay_buffer_fixed_capacity_append_clips_active_segment(tmp_path):
         cache_path=str(tmp_path / "rb_append_clip"),
         capacity=3,
         compressed=False,
+        maintain_segment_metadata=True,
     )
 
     for value in range(5):
@@ -161,6 +164,7 @@ def test_replay_buffer_fixed_capacity_extend_clips_and_rebases_segments(tmp_path
         cache_path=str(tmp_path / "rb_extend_clip"),
         capacity=4,
         compressed=False,
+        maintain_segment_metadata=True,
     )
 
     rb.extend(np.array(
@@ -190,6 +194,7 @@ def test_replay_buffer_fixed_capacity_extend_larger_than_capacity_replaces_segme
         cache_path=str(tmp_path / "rb_extend_replace"),
         capacity=4,
         compressed=False,
+        maintain_segment_metadata=True,
     )
 
     rb.append(np.array([1.0, 2.0], dtype=np.float32))
@@ -247,7 +252,7 @@ def test_video_storage_segmented_append_and_logical_segments(tmp_path):
     np.testing.assert_array_equal(rb.get_at(3), seg2[1])
 
 
-def test_legacy_metadata_without_segment_fields_converts_storage_segments_to_logical_ranges(tmp_path):
+def test_replay_buffer_without_physical_segments_falls_back_to_storage_segments(tmp_path):
     av = pytest.importorskip("av")
     codec = _pick_available_encoder(av, ("libx264rgb", "libx264"))
     if codec is None:
@@ -288,14 +293,8 @@ def test_legacy_metadata_without_segment_fields_converts_storage_segments_to_log
     metadata_path = cache_path / "metadata.json"
     with metadata_path.open("r") as f:
         metadata = json.load(f)
-    for key in (
-        "segment_tracking_state",
-        "segments_known",
-        "physical_segments",
-        "active_segment_start_physical",
-        "active_segment_length",
-    ):
-        metadata.pop(key, None)
+    assert metadata["physical_segments"] is None
+    metadata.pop("physical_segments", None)
     with metadata_path.open("w") as f:
         json.dump(metadata, f)
 
@@ -306,11 +305,10 @@ def test_legacy_metadata_without_segment_fields_converts_storage_segments_to_log
         compressed=False,
     )
 
-    assert loaded.segment_tracking_state == "legacy_unknown"
     assert loaded.get_segments() == [(0, 4)]
 
 
-def test_legacy_metadata_without_segment_fields_converts_wrapped_fixed_capacity_segments(tmp_path):
+def test_replay_buffer_without_physical_segments_falls_back_to_wrapped_storage_segments(tmp_path):
     av = pytest.importorskip("av")
     codec = _pick_available_encoder(av, ("libx264rgb", "libx264"))
     if codec is None:
@@ -355,14 +353,8 @@ def test_legacy_metadata_without_segment_fields_converts_wrapped_fixed_capacity_
     metadata_path = cache_path / "metadata.json"
     with metadata_path.open("r") as f:
         metadata = json.load(f)
-    for key in (
-        "segment_tracking_state",
-        "segments_known",
-        "physical_segments",
-        "active_segment_start_physical",
-        "active_segment_length",
-    ):
-        metadata.pop(key, None)
+    assert metadata["physical_segments"] is None
+    metadata.pop("physical_segments", None)
     with metadata_path.open("w") as f:
         json.dump(metadata, f)
 
@@ -373,7 +365,6 @@ def test_legacy_metadata_without_segment_fields_converts_wrapped_fixed_capacity_
         compressed=False,
     )
 
-    assert loaded.segment_tracking_state == "legacy_unknown"
     assert loaded.offset == 2
     assert loaded.count == 4
     assert loaded.get_segments() == [(0, 4)]

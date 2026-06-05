@@ -79,6 +79,7 @@ def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
         capacity=None,
         compressed=False,
     )
+    assert not rb.maintain_segment_metadata
 
     samples = [
         np.array([1.0, 2.0], dtype=np.float32),
@@ -92,6 +93,9 @@ def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
     rb.dumps(str(cache_path))
 
     assert ReplayBuffer.get_capacity_from_path(str(cache_path)) is None
+    with (cache_path / "metadata.json").open("r") as f:
+        metadata = json.load(f)
+    assert metadata["physical_segments"] is None
 
     loaded = ReplayBuffer.load_from(
         str(cache_path),
@@ -103,6 +107,7 @@ def test_unbounded_replay_buffer_roundtrip_with_npz_storage(tmp_path):
     assert loaded.capacity is None
     assert loaded.count == len(samples)
     assert loaded.offset == 0
+    assert loaded.get_segments() is None
     np.testing.assert_array_equal(loaded.get_at(slice(None)), np.stack(samples, axis=0))
     for i, sample in enumerate(samples):
         np.testing.assert_array_equal(loaded.get_at(i), sample)
@@ -123,7 +128,9 @@ def test_replay_buffer_dump_requires_closed_segment_and_preserves_closed_segment
         cache_path=str(cache_path),
         capacity=None,
         compressed=False,
+        maintain_segment_metadata=True,
     )
+    assert rb.maintain_segment_metadata
 
     rb.append(np.array([1.0, 2.0], dtype=np.float32))
     rb.append(np.array([3.0, 4.0], dtype=np.float32))
@@ -166,6 +173,7 @@ def test_replay_buffer_dump_and_load_preserves_physical_segment_metadata(tmp_pat
         cache_path=str(cache_path),
         capacity=None,
         compressed=False,
+        maintain_segment_metadata=True,
     )
 
     rb.append(np.array([1.0, 2.0], dtype=np.float32))
@@ -180,9 +188,6 @@ def test_replay_buffer_dump_and_load_preserves_physical_segment_metadata(tmp_pat
     with metadata_path.open("r") as f:
         metadata = json.load(f)
     assert metadata["physical_segments"] == [[0, 1], [2, 3]]
-    assert metadata["segments_known"] is True
-    assert "active_segment_start_physical" not in metadata
-    assert "active_segment_length" not in metadata
 
     loaded = ReplayBuffer.load_from(
         str(cache_path),
@@ -191,11 +196,10 @@ def test_replay_buffer_dump_and_load_preserves_physical_segment_metadata(tmp_pat
         compressed=False,
     )
 
-    assert loaded.segment_tracking_state == "tracked"
     assert loaded.get_segments() == [(0, 2), (2, 4)]
 
 
-def test_legacy_metadata_without_segment_fields_returns_none_for_default_storage(tmp_path):
+def test_replay_buffer_without_physical_segments_returns_none_when_storage_does_not_expose_segments(tmp_path):
     space = BoxSpace(
         NumpyComputeBackend,
         -10.0,
@@ -219,14 +223,7 @@ def test_legacy_metadata_without_segment_fields_returns_none_for_default_storage
     metadata_path = cache_path / "metadata.json"
     with metadata_path.open("r") as f:
         metadata = json.load(f)
-    for key in (
-        "segment_tracking_state",
-        "segments_known",
-        "physical_segments",
-        "active_segment_start_physical",
-        "active_segment_length",
-    ):
-        metadata.pop(key, None)
+    metadata.pop("physical_segments", None)
     with metadata_path.open("w") as f:
         json.dump(metadata, f)
 
@@ -237,8 +234,101 @@ def test_legacy_metadata_without_segment_fields_returns_none_for_default_storage
         compressed=False,
     )
 
-    assert loaded.segment_tracking_state == "legacy_unknown"
     assert loaded.get_segments() is None
+
+    loaded.dumps(str(cache_path))
+    with metadata_path.open("r") as f:
+        re_dumped_metadata = json.load(f)
+    assert re_dumped_metadata["physical_segments"] is None
+
+
+def test_replay_buffer_create_with_multiprocessing_defaults_to_no_segment_metadata(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "mp_default"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+        multiprocessing=True,
+    )
+
+    assert not rb.maintain_segment_metadata
+    assert rb.is_multiprocessing_safe
+
+    sample = np.array([9.0, 10.0], dtype=np.float32)
+    rb.append(sample)
+    np.testing.assert_array_equal(rb.get_at(0), sample)
+
+
+def test_replay_buffer_rejects_mutable_multiprocessing_with_segment_metadata(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+
+    with pytest.raises(RuntimeError, match="maintain_segment_metadata=True with multiprocessing=True"):
+        ReplayBuffer.create(
+            NPZStorage,
+            space,
+            cache_path=str(tmp_path / "mp_segment_reject"),
+            capacity=None,
+            compressed=False,
+            multiprocessing=True,
+            maintain_segment_metadata=True,
+        )
+
+
+def test_replay_buffer_allows_read_only_multiprocessing_with_segment_metadata(tmp_path):
+    space = BoxSpace(
+        NumpyComputeBackend,
+        -10.0,
+        10.0,
+        np.float32,
+        shape=(2,),
+    )
+    cache_path = tmp_path / "readonly_segment_load"
+    rb = ReplayBuffer.create(
+        NPZStorage,
+        space,
+        cache_path=str(cache_path),
+        capacity=None,
+        compressed=False,
+        maintain_segment_metadata=True,
+    )
+
+    rb.append(np.array([1.0, 2.0], dtype=np.float32))
+    rb.append(np.array([3.0, 4.0], dtype=np.float32))
+    rb.mark_segment_end()
+    rb.dumps(str(cache_path))
+
+    loaded = ReplayBuffer.load_from(
+        str(cache_path),
+        backend=rb.backend,
+        device=rb.device,
+        compressed=False,
+        read_only=True,
+        multiprocessing=True,
+    )
+
+    assert loaded.maintain_segment_metadata
+    assert not loaded.is_mutable
+    assert loaded.is_multiprocessing_safe
+    assert loaded.get_segments() == [(0, 2)]
+    np.testing.assert_array_equal(
+        loaded.get_at(slice(None)),
+        np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+    )
 
 def check_fixed_capacity_replay_buffer(
     rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],
