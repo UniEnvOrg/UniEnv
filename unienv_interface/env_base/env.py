@@ -19,6 +19,26 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
     plus the standard ``reset``/``step``/``render`` lifecycle. Concrete
     implementations may be single-instance or batched depending on
     ``batch_size``.
+
+    Batched-environment space invariant
+    -----------------------------------
+    The ``observation_space``, ``action_space``, and ``context_space`` (when
+    present) always describe the data that the environment *actually returns
+    and accepts* – including any batch dimension.
+
+    * ``batch_size is None`` → the environment is **unbatched**.  The spaces
+      describe single-instance values (no leading batch axis).
+    * ``batch_size == N`` (including ``N == 1``) → the environment is
+      **batched** with a leading batch dimension of size *N*.  The spaces
+      *already* include that leading batch dimension.  Callers, wrappers,
+      and downstream code must **not** apply an additional ``batch_space``
+      (or equivalent) on top of these spaces – doing so would double-batch
+      and produce incorrect shapes.
+
+    This invariant matters whenever code builds source/target spaces from
+    the env (e.g. replay-buffer builders, data transformations, or
+    wrappers that unbatch per-slot data): always use the env-side spaces
+    as-is and only unbatch/slice the *data*, never re-batch the *space*.
     """
     # metadata of the environment
     metadata: dict[str, Any] = {
@@ -32,8 +52,19 @@ class Env(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFram
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType]
 
+    # Batch size of the environment.
+    # ``None``  → unbatched (single instance, no leading batch axis).
+    # ``int``   → batched; the value is the leading batch dimension.
+    #             ``batch_size == 1`` is still a *batched* environment whose
+    #             spaces already carry a leading axis of size 1.
+    # IMPORTANT: when batch_size is not None, observation_space, action_space,
+    # and context_space already include the batch dimension.  Do NOT wrap
+    # them in batch_space() again.
     batch_size : Optional[int] = None
 
+    # Action / observation / context spaces.
+    # For batched envs these already describe batched values (leading axis
+    # of size ``batch_size``).  See the class-level invariant above.
     action_space: Space[ActType, BDeviceType, BDtypeType, BRNGType]
     observation_space: Space[ObsType, BDeviceType, BDtypeType, BRNGType]
     context_space: Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None

@@ -2,6 +2,17 @@
 
 This wrapper sits around any ``Env`` and writes every *step* transition into one
 or more ``ReplayBuffer`` instances according to the chosen ``replay_mode``.
+
+Environment-space invariant
+---------------------------
+This wrapper relies on the :class:`~unienv_interface.env_base.env.Env` contract
+that **when an env is batched, its ``observation_space``, ``action_space``, and
+``context_space`` already include the leading batch dimension**.  The internal
+source/target space builders (``_build_canonical_source_space`` and the default
+DictSpace builder) therefore use the env-side spaces *as-is* and never wrap
+them in an additional ``batch_space`` call.  Re-batching those spaces would
+double-batch and produce incorrect shapes – this was the root cause of a
+previous bug in this module.
 """
 
 from __future__ import annotations
@@ -661,9 +672,11 @@ class ReplayBufferCollectionWrapper(
         Only includes subspace keys that are present in *rb_single_space*.
 
         Env-side spaces (``obs``, ``next_obs``, ``action``, ``context``)
-        are used **as-is** from the wrapped environment.  When the env is
-        batched those spaces are already batched, so we must NOT apply
-        ``batch_space`` on top of them (that would double-batch).
+        are used **as-is** from the wrapped environment, per the
+        :class:`~unienv_interface.env_base.env.Env` batched-space invariant:
+        when the env is batched those spaces already describe batched
+        values, so we must NOT apply ``batch_space`` on top of them (that
+        would double-batch and produce incorrect shapes).
 
         Scalar / flag fields (``reward``, ``terminated``, ``truncated``,
         ``done``) are derived from the replay-buffer subspace template:
@@ -682,10 +695,11 @@ class ReplayBufferCollectionWrapper(
         rb_subspaces = rb_single_space.spaces
 
         # --- env-side subspaces (obs, action, context) ---
-        # Use the env spaces as-is.  If the env is batched these are
-        # already batched; if unbatched they are single-instance spaces.
-        # We must NOT call batch_space() on them – that would double-batch
-        # when the env is already batched.
+        # Use the env spaces as-is.  Per the Env batched-space invariant,
+        # if the env is batched these are already batched; if unbatched
+        # they are single-instance spaces.  We must NOT call
+        # batch_space() on them – that would double-batch when the env
+        # is already batched.
         obs_space = self.observation_space
         act_space = self.action_space
 
@@ -720,7 +734,8 @@ class ReplayBufferCollectionWrapper(
                     f"Remove 'context' from the replay buffer space or use an "
                     f"environment that provides context."
                 )
-            # Use the env context_space as-is (already batched if env is batched).
+            # Use the env context_space as-is – per the Env batched-space
+            # invariant it is already batched when the env is batched.
             spaces["context"] = self.context_space
 
         # --- optional env_index ---

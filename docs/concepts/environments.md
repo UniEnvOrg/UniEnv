@@ -64,6 +64,32 @@ When `batch_size` is set:
 - `reset(mask=...)` can reset only selected batch elements
 - helper methods such as `update_observation_post_reset` merge masked resets back into a full batch
 
+### Space invariant for batched environments
+
+A key contract that all `Env` and `FuncEnv` implementations share:
+
+> **If an environment is batched, then its `observation_space`, `action_space`,
+> and `context_space` (when present) already describe batched values.**
+
+Concretely:
+
+| `batch_size` | Meaning | Spaces |
+|---|---|---|
+| `None` | Unbatched – single instance, no leading batch axis. | Describe single-instance values. |
+| `N` (including `1`) | Batched – leading batch dimension of size `N`. | **Already include** the leading batch axis of size `N`. |
+
+`batch_size == 1` is **still a batched environment**. Its spaces carry a leading dimension of size 1; they are *not* the same as the unbatched spaces.
+
+#### Why this matters
+
+Code that builds source/target spaces from the env – replay-buffer builders, data transformations, wrappers that unbatch per-slot data – must use the env-side spaces **as-is**. Applying an additional `batch_space(...)` on top of an already-batched env space will double-batch and produce incorrect shapes.
+
+Common patterns:
+
+- **Correct**: `source_space = env.observation_space` (works for both batched and unbatched envs).
+- **Incorrect**: `source_space = batch_space(env.observation_space, env.batch_size)` when the env is already batched – this adds a second batch dimension.
+- **Unbatching per-slot data**: use `get_at(env.observation_space, data, i)` to slice slot `i` out of the batched data; the resulting per-slot space is the single-instance space obtained by *unbatching* `env.observation_space`, not by re-batching it.
+
 ## Wrappers
 
 UniEnv wrappers work at the `Env` layer. They can change:

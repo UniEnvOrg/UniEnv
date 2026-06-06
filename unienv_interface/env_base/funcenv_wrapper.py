@@ -25,6 +25,16 @@ class FuncEnvWrapper(
 
     This mirrors :class:`Wrapper` but preserves the explicit state-passing style
     of the functional environment API.
+
+    Space-forwarding invariant
+    --------------------------
+    By default the wrapper forwards the wrapped ``FuncEnv``'s
+    ``action_space``, ``observation_space``, and ``context_space`` unchanged.
+    Because the :class:`FuncEnv` contract guarantees that these spaces
+    already include the batch dimension when the env is batched, subclasses
+    that override a space must ensure the replacement still matches the
+    batching status of the underlying env.  Never wrap an already-batched
+    env space in an additional ``batch_space`` call.
     """
     # ========== Public Attribute Getter / Setters ===========
     @property

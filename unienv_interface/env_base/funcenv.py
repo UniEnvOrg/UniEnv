@@ -28,6 +28,14 @@ class FuncEnv(
     instance. Instead, every lifecycle method takes a state object and returns
     the updated state explicitly, which makes the interface easier to compose
     with JAX-style functional code.
+
+    Batched-environment space invariant
+    -----------------------------------
+    The same invariant as :class:`Env` applies: when ``batch_size`` is not
+    ``None`` (including ``batch_size == 1``), the ``observation_space``,
+    ``action_space``, and ``context_space`` already include the leading
+    batch dimension.  Callers, wrappers, and downstream code must **not**
+    apply an additional ``batch_space`` on top of these spaces.
     """
     metadata : Dict[str, Any] = {
         "render_modes": []
@@ -36,8 +44,12 @@ class FuncEnv(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType] = None
 
+    # Batch size – see :class:`Env` for the full invariant.
+    # ``None`` → unbatched; ``int`` → batched (spaces already include the
+    # leading batch axis, even when batch_size == 1).
     batch_size : Optional[int] = None
 
+    # Spaces already include the batch dimension for batched envs.
     observation_space: Space[Any, BDeviceType, BDtypeType, BRNGType]
     action_space: Space[Any, BDeviceType, BDtypeType, BRNGType]
     context_space: Optional[Space[ContextType, BDeviceType, BDtypeType, BRNGType]] = None

@@ -26,6 +26,16 @@ class Wrapper(
 
     The wrapper forwards all operations to ``env`` by default while allowing
     subclasses to override spaces, RNG handling, and selected lifecycle methods.
+
+    Space-forwarding invariant
+    --------------------------
+    By default the wrapper exposes the wrapped env's ``action_space``,
+    ``observation_space``, and ``context_space`` unchanged.  Because the
+    :class:`Env` contract guarantees that these spaces already include the
+    batch dimension when the env is batched, subclasses that *do* override
+    a space must ensure the replacement still matches the batching status
+    of the underlying env.  Never wrap an already-batched env space in an
+    additional ``batch_space`` call.
     """
     # ========== Public Attribute Getters ==========
     @property

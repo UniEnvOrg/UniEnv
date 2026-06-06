@@ -13,8 +13,16 @@ class BatchifyWrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
-    """
-    This wrapper will rescale the action space to a new range.
+    """Add a leading batch dimension of size 1 to an unbatched environment.
+
+    Wraps an env with ``batch_size is None`` and exposes it as a batched env
+    with ``batch_size == 1``.  The wrapper-facing ``observation_space`` and
+    ``context_space`` are batched (leading axis of 1); the wrapper-facing
+    ``action_space`` is also batched so that callers always pass a batched
+    action tensor.
+
+    See :class:`~unienv_interface.env_base.env.Env` for the batched-space
+    invariant that this wrapper upholds.
     """
 
     def __init__(
@@ -56,8 +64,16 @@ class UnBatchifyWrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
-    """
-    This wrapper will rescale the action space to a new range.
+    """Strip the batch dimension from a ``batch_size == 1`` environment.
+
+    Wraps an env with ``batch_size == 1`` and exposes it as an unbatched env
+    (``batch_size is None``).  The wrapper-facing ``observation_space`` and
+    ``context_space`` have the leading axis removed; the wrapper-facing
+    ``action_space`` is the single-instance space.
+
+    Can only be applied to envs whose ``batch_size == 1``.  See
+    :class:`~unienv_interface.env_base.env.Env` for the batched-space
+    invariant that this wrapper inverts.
     """
 
     def __init__(
