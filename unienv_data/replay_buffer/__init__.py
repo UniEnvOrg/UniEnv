@@ -1,1 +1,2 @@
 from .replay_buffer import ReplayBuffer
+from .collection_wrapper import ReplayBufferCollectionWrapper
