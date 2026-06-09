@@ -158,10 +158,9 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
             return None
             
         all_contexts = []
-        for node in self.nodes:
-            if node.context_space is not None:
-                context = node.get_context()
-                all_contexts.append(context)
+        for node in self._cached_context_nodes:
+            context = node.get_context()
+            all_contexts.append(context)
         return self._flatten_data(all_contexts)
 
     def get_observation(self) -> CombinedDataT:
@@ -169,16 +168,15 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         assert self.observation_space is not None, "Observation space is None, cannot get observation."
         
         all_observations = []
-        for node in self.nodes:
-            if node.observation_space is not None:
-                obs = node.get_observation()
-                all_observations.append(obs)
+        for node in self._cached_observation_nodes:
+            obs = node.get_observation()
+            all_observations.append(obs)
         return self._flatten_data(all_observations)
 
     def get_info(self) -> Optional[Dict[str, Any]]:
         """Get info by merging all node info dictionaries."""
         all_info = []
-        for node in self.nodes:
+        for node in self._cached_info_nodes:
             info = node.get_info()
             if info is not None:
                 all_info.append(info)
@@ -188,13 +186,12 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         """Set action by routing keys to appropriate nodes."""
         assert self.action_space is not None, "Action space is None, cannot set action."
         
-        for node in self.nodes:
-            if node.action_space is not None:
-                if isinstance(node.action_space, DictSpace):
-                    # Extract relevant keys for this node
-                    node_action = {key: action[key] for key in node.action_space.spaces.keys() if key in action}
-                else:
-                    # If not a DictSpace, pass the entire action (only if there's one node with non-DictSpace)
-                    node_action = action
-                if node_action:
-                    node.set_next_action(node_action)
+        for node in self._cached_action_nodes:
+            if isinstance(node.action_space, DictSpace):
+                # Extract relevant keys for this node
+                node_action = {key: action[key] for key in node.action_space.spaces.keys() if key in action}
+            else:
+                # If not a DictSpace, pass the entire action (only if there's one node with non-DictSpace)
+                node_action = action
+            if node_action:
+                node.set_next_action(node_action)

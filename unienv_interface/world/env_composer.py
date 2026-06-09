@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable, Callable, Type
+from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, Iterable, Callable, Type, List
 
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -6,6 +6,17 @@ from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGT
 from .world import World
 from .node import WorldNode
 from .nodes.combined_node import CombinedWorldNode
+
+# Maps short phase names (used by CombinedWorldNode.get_priority_order) to the
+# corresponding priority-set attribute on a plain WorldNode.
+_PLAIN_NODE_PHASE_ATTR: Dict[str, str] = {
+    'reload': 'reload_priorities',
+    'after_reload': 'after_reload_priorities',
+    'reset': 'reset_priorities',
+    'after_reset': 'after_reset_priorities',
+    'pre_step': 'pre_environment_step_priorities',
+    'post_step': 'post_environment_step_priorities',
+}
 
 
 class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
@@ -120,6 +131,17 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
 
     # ========== Env interface ==========
 
+    def _get_priority_order(self, phase: str) -> List[int]:
+        """Return the descending priority order for a lifecycle phase.
+
+        When the root node is a :class:`CombinedWorldNode`, the pre-computed
+        cached order is returned directly.  For a plain :class:`WorldNode` the
+        order is computed on the fly from the node's priority-set attribute.
+        """
+        if isinstance(self.node, CombinedWorldNode):
+            return self.node.get_priority_order(phase)
+        return sorted(getattr(self.node, _PLAIN_NODE_PHASE_ATTR[phase]), reverse=True)
+
     def reload(
         self,
         *,
@@ -139,14 +161,14 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         self.world.reload(seed=seed, mask=mask, **kwargs)
 
         # 2. Nodes add entities to the scene
-        for p in sorted(self.node.reload_priorities, reverse=True):
+        for p in self._get_priority_order('reload'):
             self.node.reload(priority=p, seed=seed, mask=mask, **kwargs)
 
         # 3. World compiles scene with all entities added by nodes
         self.world.after_reload(seed=seed, mask=mask, **kwargs)
 
         # 4. Nodes cache references to entities (now that scene is compiled)
-        for p in sorted(self.node.after_reload_priorities, reverse=True):
+        for p in self._get_priority_order('after_reload'):
             self.node.after_reload(priority=p, mask=mask)
 
         context = self.node.get_context() if self.node.context_space is not None else None
@@ -171,14 +193,14 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         self.world.reset(seed=seed, mask=mask, **kwargs)
         
         # 2. Nodes reset
-        for p in sorted(self.node.reset_priorities, reverse=True):
+        for p in self._get_priority_order('reset'):
             self.node.reset(priority=p, seed=seed, mask=mask, **kwargs)
 
         # 3. World post-reset hook
         self.world.after_reset(seed=seed, mask=mask, **kwargs)
         
         # 4. Nodes post-reset hook
-        for p in sorted(self.node.after_reset_priorities, reverse=True):
+        for p in self._get_priority_order('after_reset'):
             self.node.after_reset(priority=p, mask=mask)
 
         # 5. Read final state
@@ -204,12 +226,12 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         # 2. Update-level substep loop
         actual_dt = None
         for _ in range(self._n_update_substeps):
-            for p in sorted(self.node.pre_environment_step_priorities, reverse=True):
+            for p in self._get_priority_order('pre_step'):
                 self.node.pre_environment_step(self._update_dt, priority=p)
             for _ in range(self._n_world_substeps):
                 actual_dt = self.world.step()
             post_dt = self._update_dt if self._update_dt is not None else actual_dt
-            for p in sorted(self.node.post_environment_step_priorities, reverse=True):
+            for p in self._get_priority_order('post_step'):
                 self.node.post_environment_step(post_dt, priority=p)
 
         # 3. Read results

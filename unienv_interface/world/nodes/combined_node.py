@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable, Generic, Sequence, Callable
+from typing import Optional, Dict, Set, Mapping, Any, Tuple, Union, Iterable, Generic, Sequence, Callable, List
 from math import lcm
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
@@ -8,6 +8,17 @@ from ..world import World
 from ..node import WorldNode, ContextType, ObsType, ActType
 
 CombinedDataT = Union[Dict[str, Any], BArrayType]
+
+# Mapping from short phase names (used in the public cache API) to the
+# corresponding priority-set attribute on WorldNode.
+_PHASE_ATTR_MAP: Dict[str, str] = {
+    'reload': 'reload_priorities',
+    'after_reload': 'after_reload_priorities',
+    'reset': 'reset_priorities',
+    'after_reset': 'after_reset_priorities',
+    'pre_step': 'pre_environment_step_priorities',
+    'post_step': 'post_environment_step_priorities',
+}
 
 class CombinedWorldNode(WorldNode[
     Optional[CombinedDataT], CombinedDataT, CombinedDataT,
@@ -119,6 +130,11 @@ class CombinedWorldNode(WorldNode[
         self._action_substeps = 0
         self._cached_actions = {}
 
+        # Stage-1: build dispatch caches (priority orders, participants) and
+        # space-dependent node-list caches.
+        self._build_dispatch_caches()
+        self._refresh_space_caches()
+
     @staticmethod
     def aggregate_spaces(
         spaces : Dict[str, Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]],
@@ -178,6 +194,85 @@ class CombinedWorldNode(WorldNode[
             direct_return=self.direct_return,
         )
 
+    # ========== Cache management (stage-1) ==========
+    def _build_dispatch_caches(self) -> None:
+        """Build priority-order and per-priority participant caches.
+
+        These depend only on child-node priority sets and routing ratios, which
+        are fixed at construction time, so this method is called once from
+        ``__init__``.
+        """
+        # Sorted priority orders (descending) per phase
+        self._cached_priority_orders: Dict[str, List[int]] = {}
+        # (phase, priority) -> list of participating child nodes
+        self._cached_participants: Dict[Tuple[str, int], List[WorldNode]] = {}
+        # phase -> {priority -> [(node, ratio, effective_dt), ...]}
+        # Only built for pre_step / post_step where the runtime needs ratio + dt.
+        self._cached_step_entries: Dict[str, Dict[int, List[Tuple[WorldNode, int, Optional[float]]]]] = {}
+        # Aggregated priority sets (union of child priority sets per attr), cached
+        # so the aggregated priority properties don't recompute unions on each access.
+        self._cached_aggregated_priorities: Dict[str, Set[int]] = {}
+        # Info-node list: every child participates in get_info() (no flag gates it),
+        # so this is static and fixed at construction.
+        self._cached_info_nodes: List[WorldNode] = list(self.nodes)
+
+        for phase, attr in _PHASE_ATTR_MAP.items():
+            order = sorted(self._collect_priorities(self.nodes, attr), reverse=True)
+            self._cached_priority_orders[phase] = order
+            # Cache the aggregated (unioned) priority set for the property accessor.
+            self._cached_aggregated_priorities[attr] = set().union(
+                *(getattr(n, attr) for n in self.nodes)
+            ) if self.nodes else set()
+
+            for p in order:
+                participants_at_p = [n for n in self.nodes if p in getattr(n, attr)]
+                self._cached_participants[(phase, p)] = participants_at_p
+
+            # For pre_step / post_step, build enriched entries
+            if phase in ('pre_step', 'post_step'):
+                step_entries: Dict[int, List[Tuple[WorldNode, int, Optional[float]]]] = {}
+                for p in order:
+                    step_entries[p] = [
+                        (n, self._update_ratios[n.name], n.effective_update_timestep)
+                        for n in self._cached_participants[(phase, p)]
+                    ]
+                self._cached_step_entries[phase] = step_entries
+
+    def _refresh_space_caches(self) -> None:
+        """Rebuild node-list caches that depend on child spaces / signal flags.
+
+        Called once at construction and again after the final ``after_reload``
+        priority, because child nodes may only set their final spaces during
+        ``after_reload`` (e.g. robots whose DOF count is only known after the
+        scene is compiled).
+        """
+        self._cached_context_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.context_space is not None
+        ]
+        self._cached_observation_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.observation_space is not None
+        ]
+        self._cached_action_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.action_space is not None
+        ]
+        self._cached_reward_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.has_reward
+        ]
+        self._cached_termination_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.has_termination_signal
+        ]
+        self._cached_truncation_nodes: List[WorldNode] = [
+            n for n in self.nodes if n.has_truncation_signal
+        ]
+
+    def get_priority_order(self, phase: str) -> List[int]:
+        """Return the cached descending priority order for a named lifecycle phase.
+
+        Supported phase names: ``'reload'``, ``'after_reload'``, ``'reset'``,
+        ``'after_reset'``, ``'pre_step'``, ``'post_step'``.
+        """
+        return self._cached_priority_orders[phase]
+
     # ========== Node query methods ==========
     def get_node(self, nested_keys: Union[str, Sequence[str]]) -> Optional[WorldNode]:
         """Resolve a child node by dotted-path-like key traversal."""
@@ -230,111 +325,86 @@ class CombinedWorldNode(WorldNode[
 
     @property
     def reset_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'reset_priorities')
+        return self._cached_aggregated_priorities['reset_priorities']
 
     @property
     def reload_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'reload_priorities')
+        return self._cached_aggregated_priorities['reload_priorities']
 
     @property
     def after_reset_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'after_reset_priorities')
+        return self._cached_aggregated_priorities['after_reset_priorities']
 
     @property
     def after_reload_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'after_reload_priorities')
+        return self._cached_aggregated_priorities['after_reload_priorities']
 
     @property
     def pre_environment_step_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'pre_environment_step_priorities')
+        return self._cached_aggregated_priorities['pre_environment_step_priorities']
 
     @property
     def post_environment_step_priorities(self) -> Set[int]:
-        return self._collect_priorities(self.nodes, 'post_environment_step_priorities')
+        return self._cached_aggregated_priorities['post_environment_step_priorities']
 
     # ========== Lifecycle methods ==========
     def pre_environment_step(self, dt, *, priority : int = 0):
         """Dispatch pre-step callbacks to child nodes at the matching frequency."""
-        all_prios = self.pre_environment_step_priorities
-        if all_prios and priority == max(all_prios):
+        order = self._cached_priority_orders['pre_step']
+        if order and priority == order[0]:
             self._pre_substeps = (self._pre_substeps % self._update_period) + 1
 
-        for node in self.nodes:
-            if priority in node.pre_environment_step_priorities:
-                ratio = self._update_ratios[node.name]
-                if (self._pre_substeps - 1) % ratio == 0:
-                    node.pre_environment_step(node.effective_update_timestep, priority=priority)
+        for node, ratio, eff_dt in self._cached_step_entries['pre_step'].get(priority, ()):
+            if (self._pre_substeps - 1) % ratio == 0:
+                node.pre_environment_step(eff_dt, priority=priority)
     
     def get_context(self):
         assert self.context_space is not None, "Context space is None, cannot get context."
         return self.aggregate_data(
-            {
-                node.name: node.get_context()
-                for node in self.nodes
-                if node.context_space is not None
-            },
+            {node.name: node.get_context() for node in self._cached_context_nodes},
             direct_return=self.direct_return,
         )
 
     def get_observation(self):
         assert self.observation_space is not None, "Observation space is None, cannot get observation."
         return self.aggregate_data(
-            {
-                node.name: node.get_observation() 
-                for node in self.nodes 
-                if node.observation_space is not None
-            },
+            {node.name: node.get_observation() for node in self._cached_observation_nodes},
             direct_return=self.direct_return,
         )
     
     def get_reward(self):
         assert self.has_reward, "This node does not provide a reward."
         if self.world.batch_size is None:
-            return sum(
-                node.get_reward() 
-                for node in self.nodes 
-                if node.has_reward
-            )
+            return sum(node.get_reward() for node in self._cached_reward_nodes)
         else:
             rewards = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_floating_dtype, device=self.device)
-            for node in self.nodes:
-                if node.has_reward:
-                    rewards = rewards + node.get_reward()
+            for node in self._cached_reward_nodes:
+                rewards = rewards + node.get_reward()
             return rewards
     
     def get_termination(self):
         assert self.has_termination_signal, "This node does not provide a termination signal."
         if self.world.batch_size is None:
-            return any(
-                node.get_termination() 
-                for node in self.nodes 
-                if node.has_termination_signal
-            )
+            return any(node.get_termination() for node in self._cached_termination_nodes)
         else:
             terminations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
-            for node in self.nodes:
-                if node.has_termination_signal:
-                    terminations = self.backend.logical_or(terminations, node.get_termination())
+            for node in self._cached_termination_nodes:
+                terminations = self.backend.logical_or(terminations, node.get_termination())
             return terminations
         
     def get_truncation(self):
         assert self.has_truncation_signal, "This node does not provide a truncation signal."
         if self.world.batch_size is None:
-            return any(
-                node.get_truncation() 
-                for node in self.nodes 
-                if node.has_truncation_signal
-            )
+            return any(node.get_truncation() for node in self._cached_truncation_nodes)
         else:
             truncations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
-            for node in self.nodes:
-                if node.has_truncation_signal:
-                    truncations = self.backend.logical_or(truncations, node.get_truncation())
+            for node in self._cached_truncation_nodes:
+                truncations = self.backend.logical_or(truncations, node.get_truncation())
             return truncations
     
     def get_info(self) -> Optional[Dict[str, Any]]:
         infos = {}
-        for node in self.nodes:
+        for node in self._cached_info_nodes:
             info = node.get_info()
             if info is not None:
                 infos[node.name] = info
@@ -372,83 +442,80 @@ class CombinedWorldNode(WorldNode[
             assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
             child_actions = action
 
-        for node in self.nodes:
-            if node.action_space is not None:
-                if node.name in child_actions:
-                    self._cached_actions[node.name] = child_actions[node.name]
-                ratio = self._action_ratios[node.name]
-                if (self._action_substeps - 1) % ratio == 0:
-                    node.set_next_action(self._cached_actions[node.name])
+        for node in self._cached_action_nodes:
+            if node.name in child_actions:
+                self._cached_actions[node.name] = child_actions[node.name]
+            ratio = self._action_ratios[node.name]
+            if (self._action_substeps - 1) % ratio == 0:
+                node.set_next_action(self._cached_actions[node.name])
     
     def post_environment_step(self, dt, *, priority : int = 0):
         """Dispatch post-step callbacks to child nodes at the matching frequency."""
-        all_prios = self.post_environment_step_priorities
-        if all_prios and priority == max(all_prios):
+        order = self._cached_priority_orders['post_step']
+        if order and priority == order[0]:
             self._post_substeps = (self._post_substeps % self._update_period) + 1
 
-        for node in self.nodes:
-            if priority in node.post_environment_step_priorities:
-                ratio = self._update_ratios[node.name]
-                if (self._post_substeps - 1) % ratio == 0:
-                    node.post_environment_step(node.effective_update_timestep, priority=priority)
+        for node, ratio, eff_dt in self._cached_step_entries['post_step'].get(priority, ()):
+            if (self._post_substeps - 1) % ratio == 0:
+                node.post_environment_step(eff_dt, priority=priority)
 
-        if all_prios and priority == max(all_prios):
+        if order and priority == order[0]:
             assert self._pre_substeps == self._post_substeps
     
     def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
         """Forward reset calls to children that participate at ``priority``."""
-        for node in self.nodes:
-            if priority in node.reset_priorities:
-                node.reset(
-                    priority=priority,
-                    seed=seed,
-                    mask=mask,
-                    **pernode_kwargs.get(node.name, {})
-                )
+        for node in self._cached_participants.get(('reset', priority), ()):
+            node.reset(
+                priority=priority,
+                seed=seed,
+                mask=mask,
+                **pernode_kwargs.get(node.name, {})
+            )
 
     def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
         """Forward reload calls to children that participate at ``priority``."""
-        for node in self.nodes:
-            if priority in node.reload_priorities:
-                node.reload(
-                    priority=priority,
-                    seed=seed,
-                    mask=mask,
-                    **pernode_kwargs.get(node.name, {})
-                )
+        for node in self._cached_participants.get(('reload', priority), ()):
+            node.reload(
+                priority=priority,
+                seed=seed,
+                mask=mask,
+                **pernode_kwargs.get(node.name, {})
+            )
 
     def after_reset(self, *, priority : int = 0, mask = None):
         """Forward post-reset hooks and reset internal routing counters."""
-        all_prios = self.after_reset_priorities
-        if all_prios and priority == max(all_prios):
+        order = self._cached_priority_orders['after_reset']
+        if order and priority == order[0]:
             self._pre_substeps = 0
             self._post_substeps = 0
             self._action_substeps = 0
             self._cached_actions.clear()
 
-        for node in self.nodes:
-            if priority in node.after_reset_priorities:
-                node.after_reset(priority=priority, mask=mask)
+        for node in self._cached_participants.get(('after_reset', priority), ()):
+            node.after_reset(priority=priority, mask=mask)
 
     def after_reload(self, *, priority : int = 0, mask = None):
         """Call after_reload on child nodes. Similar to after_reset but for reload flow."""
-        all_prios = self.after_reload_priorities
-        if all_prios and priority == max(all_prios):
+        order = self._cached_priority_orders['after_reload']
+        if order and priority == order[0]:
             self._pre_substeps = 0
             self._post_substeps = 0
             self._action_substeps = 0
             self._cached_actions.clear()
 
-        for node in self.nodes:
-            if priority in node.after_reload_priorities:
-                node.after_reload(priority=priority, mask=mask)
+        for node in self._cached_participants.get(('after_reload', priority), ()):
+            node.after_reload(priority=priority, mask=mask)
 
         # After child nodes finish their lowest-priority after_reload (the last call
         # in the priority sequence), re-aggregate spaces so that the cached
         # action_space / observation_space / context_space reflect the final,
         # post-build spaces that nodes like robots set during after_reload.
-        if all_prios and priority == min(all_prios):
+        # Also refresh space-dependent dispatch caches so that subsequent
+        # get_observation / get_context / set_next_action calls see the updated
+        # child spaces.
+        if order and priority == order[-1]:
             self._refresh_spaces()
+            self._refresh_space_caches()
 
     def close(self):
         """Close every child node."""
