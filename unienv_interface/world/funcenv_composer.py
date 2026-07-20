@@ -100,9 +100,21 @@ class FuncWorldEnv(FuncEnv[
 		return self.node.render_mode
 
 	@property
+	def control_timestep(self) -> Optional[float]:
+		"""Simulation time represented by one environment control step.
+
+		This is the resolved control timestep: the explicit node
+		``control_timestep`` when configured, otherwise the effective
+		update timestep, otherwise the world timestep.  It is ``None``
+		when none of these are defined (e.g. an asynchronous real-time
+		world).
+		"""
+		return self._control_dt
+
+	@property
 	def render_fps(self) -> Optional[int]:
-		if self.node.control_timestep is not None:
-			return int(round(1 / self.node.control_timestep))
+		if self.control_timestep is not None:
+			return int(round(1 / self.control_timestep))
 		return None
 
 	# ========== Node query methods ==========
@@ -258,6 +270,7 @@ class FuncWorldEnv(FuncEnv[
 
 		# 2. Update-level substep loop
 		actual_dt = None
+		control_step_elapsed_time = None
 		for _ in range(self._n_update_substeps):
 			for p in sorted(self.node.pre_environment_step_priorities, reverse=True):
 				world_state, node_state = self.node.pre_environment_step(
@@ -265,6 +278,12 @@ class FuncWorldEnv(FuncEnv[
 				)
 			for _ in range(self._n_world_substeps):
 				world_state, actual_dt = self.world.step(world_state)
+				assert actual_dt is not None, \
+					"FuncWorld.step() must return the elapsed time, not None."
+				if control_step_elapsed_time is None:
+					control_step_elapsed_time = actual_dt
+				else:
+					control_step_elapsed_time = control_step_elapsed_time + actual_dt
 			post_dt = self._update_dt if self._update_dt is not None else actual_dt
 			for p in sorted(self.node.post_environment_step_priorities, reverse=True):
 				world_state, node_state = self.node.post_environment_step(
@@ -301,7 +320,8 @@ class FuncWorldEnv(FuncEnv[
 		else:
 			truncated = False
 
-		info = self.node.get_info(world_state, node_state) or {}
+		info = dict(self.node.get_info(world_state, node_state) or {})
+		info['control_step_elapsed_time'] = control_step_elapsed_time
 		return WorldFuncEnvState(world_state, node_state), obs, reward, terminated, truncated, info
 
 	def close(self, state: WorldFuncEnvState) -> None:
