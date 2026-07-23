@@ -242,6 +242,12 @@ class RealWorld(World[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         self._last_step_time = current_time
         return elapsed_time
 
-    def reset(self) -> None:
+    def reset(
+        self,
+        *,
+        seed : Optional[int] = None,
+        mask : Optional[BArrayType] = None,
+        **kwargs
+    ) -> None:
         """Start a new wall-clock timing sequence."""
         self._last_step_time = time.monotonic()
