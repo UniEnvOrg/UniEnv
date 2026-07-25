@@ -35,6 +35,12 @@ class CombinedWorldNode(WorldNode[
 
     supported_render_modes = ('dict', 'auto')
 
+    # Reserved internal priority always present in the aggregated
+    # ``after_reset_priorities`` / ``after_reload_priorities`` so the combined
+    # node's after-hooks are invoked even when no child registers one, which
+    # guarantees the routing state (``_update_substeps`` etc.) is reset.
+    _INTERNAL_RESET_PRIORITY = -10**6
+
     def __init__(
         self,
         name : str,
@@ -124,9 +130,15 @@ class CombinedWorldNode(WorldNode[
         self._update_period = lcm(*self._update_ratios.values()) if self._update_ratios else 1
         self._action_period = lcm(*self._action_ratios.values()) if self._action_ratios else 1
 
-        # Substep counters
-        self._pre_substeps = 0
-        self._post_substeps = 0
+        # Substep counters.
+        # ``_update_substeps`` is the single shared counter for the per-node
+        # update-frequency ratio dispatch used by both pre_environment_step and
+        # post_environment_step. It is incremented exactly once per update
+        # substep: at the top pre_step priority when any child has pre_step
+        # priorities, otherwise at the top post_step priority (a composition
+        # with no pre-step priorities). This keeps the counter consistent
+        # regardless of whether a step has pre-step participants.
+        self._update_substeps = 0
         self._action_substeps = 0
         self._cached_actions = {}
 
@@ -217,12 +229,16 @@ class CombinedWorldNode(WorldNode[
         self._cached_info_nodes: List[WorldNode] = list(self.nodes)
 
         for phase, attr in _PHASE_ATTR_MAP.items():
-            order = sorted(self._collect_priorities(self.nodes, attr), reverse=True)
+            child_prios = self._collect_priorities(self.nodes, attr)
+            # Always reserve the internal reset priority for after_reset /
+            # after_reload so the combined node's routing state is reset even
+            # when no child registers a hook at these phases.
+            if attr in ('after_reset_priorities', 'after_reload_priorities'):
+                child_prios = child_prios | {self._INTERNAL_RESET_PRIORITY}
+            order = sorted(child_prios, reverse=True)
             self._cached_priority_orders[phase] = order
             # Cache the aggregated (unioned) priority set for the property accessor.
-            self._cached_aggregated_priorities[attr] = set().union(
-                *(getattr(n, attr) for n in self.nodes)
-            ) if self.nodes else set()
+            self._cached_aggregated_priorities[attr] = child_prios
 
             for p in order:
                 participants_at_p = [n for n in self.nodes if p in getattr(n, attr)]
@@ -350,12 +366,17 @@ class CombinedWorldNode(WorldNode[
     # ========== Lifecycle methods ==========
     def pre_environment_step(self, dt, *, priority : int = 0):
         """Dispatch pre-step callbacks to child nodes at the matching frequency."""
-        order = self._cached_priority_orders['pre_step']
-        if order and priority == order[0]:
-            self._pre_substeps = (self._pre_substeps % self._update_period) + 1
+        pre_order = self._cached_priority_orders['pre_step']
+        # Advance the shared update counter exactly once per update substep:
+        # at the top pre_step priority when any child registers one. When no
+        # child registers a pre_step priority (composition with no pre-step
+        # priorities), the counter is advanced in post_environment_step
+        # instead, so it is NOT advanced here.
+        if pre_order and priority == pre_order[0]:
+            self._update_substeps = (self._update_substeps % self._update_period) + 1
 
         for node, ratio, eff_dt in self._cached_step_entries['pre_step'].get(priority, ()):
-            if (self._pre_substeps - 1) % ratio == 0:
+            if (self._update_substeps - 1) % ratio == 0:
                 node.pre_environment_step(eff_dt, priority=priority)
     
     def get_context(self):
@@ -433,7 +454,9 @@ class CombinedWorldNode(WorldNode[
 
     def set_next_action(self, action):
         """Route combined actions to child nodes, respecting per-node control rates."""
-        assert self.action_space is not None, "Action space is None, cannot set action."
+        if self.action_space is None:
+            assert action is None, "Cannot provide an action when action_space is None."
+            return
         self._action_substeps = (self._action_substeps % self._action_period) + 1
 
         if self._action_node_name_direct is not None:
@@ -451,16 +474,21 @@ class CombinedWorldNode(WorldNode[
     
     def post_environment_step(self, dt, *, priority : int = 0):
         """Dispatch post-step callbacks to child nodes at the matching frequency."""
-        order = self._cached_priority_orders['post_step']
-        if order and priority == order[0]:
-            self._post_substeps = (self._post_substeps % self._update_period) + 1
+        pre_order = self._cached_priority_orders['pre_step']
+        post_order = self._cached_priority_orders['post_step']
+        # Advance the shared update counter here only when no child registers a
+        # pre_step priority (composition with no pre-step priorities);
+        # otherwise it was already advanced in pre_environment_step.
+        if not pre_order and post_order and priority == post_order[0]:
+            self._update_substeps = (self._update_substeps % self._update_period) + 1
 
         for node, ratio, eff_dt in self._cached_step_entries['post_step'].get(priority, ()):
-            if (self._post_substeps - 1) % ratio == 0:
+            if (self._update_substeps - 1) % ratio == 0:
                 node.post_environment_step(eff_dt, priority=priority)
 
-        if order and priority == order[0]:
-            assert self._pre_substeps == self._post_substeps
+        # With a single shared counter the pre/post balance is trivially
+        # consistent (there is only one counter), so no equality assert is
+        # needed here.
     
     def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
         """Forward reset calls to children that participate at ``priority``."""
@@ -485,9 +513,12 @@ class CombinedWorldNode(WorldNode[
     def after_reset(self, *, priority : int = 0, mask = None):
         """Forward post-reset hooks and reset internal routing counters."""
         order = self._cached_priority_orders['after_reset']
-        if order and priority == order[0]:
-            self._pre_substeps = 0
-            self._post_substeps = 0
+        # Reset routing state at the top after_reset priority (existing
+        # behaviour) and at the reserved internal priority (guarantees a reset
+        # even when no child registers an after_reset priority). Both are
+        # idempotent.
+        if (order and priority == order[0]) or priority == self._INTERNAL_RESET_PRIORITY:
+            self._update_substeps = 0
             self._action_substeps = 0
             self._cached_actions.clear()
 
@@ -497,9 +528,8 @@ class CombinedWorldNode(WorldNode[
     def after_reload(self, *, priority : int = 0, mask = None):
         """Call after_reload on child nodes. Similar to after_reset but for reload flow."""
         order = self._cached_priority_orders['after_reload']
-        if order and priority == order[0]:
-            self._pre_substeps = 0
-            self._post_substeps = 0
+        if (order and priority == order[0]) or priority == self._INTERNAL_RESET_PRIORITY:
+            self._update_substeps = 0
             self._action_substeps = 0
             self._cached_actions.clear()
 

@@ -199,7 +199,9 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
         action: CombinedDataT,
     ) -> tuple[WorldStateT, CombinedNodeStateT]:
         """Set action by routing keys to appropriate nodes."""
-        assert self.action_space is not None, "Action space is None, cannot set action."
+        if self.action_space is None:
+            assert action is None, "Cannot provide an action when action_space is None."
+            return world_state, node_state
         
         next_node_state = node_state.copy()
         for node in self.nodes:

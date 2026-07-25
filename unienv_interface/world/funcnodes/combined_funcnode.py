@@ -27,8 +27,17 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 	supported_render_modes = ('dict', 'auto')
 
+	# Reserved internal priority always present in the aggregated
+	# ``after_reset_priorities`` / ``after_reload_priorities`` so the combined
+	# node's after-hooks are invoked even when no child registers one, which
+	# guarantees the routing state (the shared counter etc.) is reset.
+	_INTERNAL_RESET_PRIORITY = -10**6
+
+	# Shared update-substep counter. This key is intentionally the legacy
+	# ``"__pre_substeps"`` name so that previously persisted node states (which
+	# store ``"__pre_substeps"`` and a now-ignored ``"__post_substeps"``) load
+	# without migration: the stale ``"__post_substeps"`` entry is simply ignored.
 	_COUNTER_PRE = "__pre_substeps"
-	_COUNTER_POST = "__post_substeps"
 	_COUNTER_ACTION = "__action_substeps"
 	_CACHED_ACTIONS = "__cached_actions"
 
@@ -228,11 +237,17 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 	@property
 	def after_reset_priorities(self) -> Set[int]:
-		return self._collect_priorities(self.nodes, 'after_reset_priorities')
+		# Always include the reserved internal priority so the combined node's
+		# after_reset hook is invoked (and routing state reset) even when no
+		# child registers an after_reset priority.
+		return self._collect_priorities(self.nodes, 'after_reset_priorities') | {self._INTERNAL_RESET_PRIORITY}
 
 	@property
 	def after_reload_priorities(self) -> Set[int]:
-		return self._collect_priorities(self.nodes, 'after_reload_priorities')
+		# Always include the reserved internal priority so the combined node's
+		# after_reload hook is invoked (and routing state reset) even when no
+		# child registers an after_reload priority.
+		return self._collect_priorities(self.nodes, 'after_reload_priorities') | {self._INTERNAL_RESET_PRIORITY}
 
 	@property
 	def pre_environment_step_priorities(self) -> Set[int]:
@@ -258,7 +273,6 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
 				node_states[node.name] = node_state
 		node_states[self._COUNTER_PRE] = 0
-		node_states[self._COUNTER_POST] = 0
 		node_states[self._COUNTER_ACTION] = 0
 		node_states[self._CACHED_ACTIONS] = {}
 		return world_state, node_states
@@ -278,7 +292,6 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
 				node_states[node.name] = node_state
 		node_states[self._COUNTER_PRE] = 0
-		node_states[self._COUNTER_POST] = 0
 		node_states[self._COUNTER_ACTION] = 0
 		node_states[self._CACHED_ACTIONS] = {}
 		return world_state, node_states
@@ -321,9 +334,12 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		"""Forward post-reset hooks and reset internal routing counters."""
 		node_state = node_state.copy()
 		all_prios = self.after_reset_priorities
-		if all_prios and priority == max(all_prios):
+		# Reset routing state at the top after_reset priority (existing
+		# behaviour) and at the reserved internal priority (guarantees a reset
+		# even when no child registers an after_reset priority). Both are
+		# idempotent.
+		if (all_prios and priority == max(all_prios)) or priority == self._INTERNAL_RESET_PRIORITY:
 			node_state[self._COUNTER_PRE] = 0
-			node_state[self._COUNTER_POST] = 0
 			node_state[self._COUNTER_ACTION] = 0
 			node_state[self._CACHED_ACTIONS] = {}
 
@@ -345,9 +361,12 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		"""Call after_reload on child nodes. Similar to after_reset but for reload flow."""
 		node_state = node_state.copy()
 		all_prios = self.after_reload_priorities
-		if all_prios and priority == max(all_prios):
+		# Reset routing state at the top after_reload priority (existing
+		# behaviour) and at the reserved internal priority (guarantees a reset
+		# even when no child registers an after_reload priority). Both are
+		# idempotent.
+		if (all_prios and priority == max(all_prios)) or priority == self._INTERNAL_RESET_PRIORITY:
 			node_state[self._COUNTER_PRE] = 0
-			node_state[self._COUNTER_POST] = 0
 			node_state[self._COUNTER_ACTION] = 0
 			node_state[self._CACHED_ACTIONS] = {}
 
@@ -367,8 +386,13 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
-		all_prios = self.pre_environment_step_priorities
-		if all_prios and priority == max(all_prios):
+		pre_prios = self.pre_environment_step_priorities
+		# Advance the shared update counter exactly once per update substep:
+		# at the top pre_step priority when any child registers one. When no
+		# child registers a pre_step priority (composition with no pre-step
+		# priorities), the counter is advanced in post_environment_step
+		# instead, so it is NOT advanced here.
+		if pre_prios and priority == max(pre_prios):
 			node_state[self._COUNTER_PRE] = (node_state[self._COUNTER_PRE] % self._update_period) + 1
 
 		for node in self.nodes:
@@ -386,7 +410,9 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		node_state: CombinedNodeStateT,
 		action: CombinedDataT,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
-		assert self.action_space is not None, "Action space is None, cannot set action."
+		if self.action_space is None:
+			assert action is None, "Cannot provide an action when action_space is None."
+			return world_state, node_state
 
 		node_state = node_state.copy()
 		node_state[self._COUNTER_ACTION] = (node_state[self._COUNTER_ACTION] % self._action_period) + 1
@@ -419,20 +445,25 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		node_state = node_state.copy()
-		all_prios = self.post_environment_step_priorities
-		if all_prios and priority == max(all_prios):
-			node_state[self._COUNTER_POST] = (node_state[self._COUNTER_POST] % self._update_period) + 1
+		pre_prios = self.pre_environment_step_priorities
+		post_prios = self.post_environment_step_priorities
+		# Advance the shared update counter here only when no child registers a
+		# pre_step priority (composition with no pre-step priorities);
+		# otherwise it was already advanced in pre_environment_step.
+		if not pre_prios and post_prios and priority == max(post_prios):
+			node_state[self._COUNTER_PRE] = (node_state[self._COUNTER_PRE] % self._update_period) + 1
 
 		for node in self.nodes:
 			if priority in node.post_environment_step_priorities:
 				ratio = self._update_ratios[node.name]
-				if (node_state[self._COUNTER_POST] - 1) % ratio == 0:
+				if (node_state[self._COUNTER_PRE] - 1) % ratio == 0:
 					ns = node_state[node.name]
 					world_state, ns = node.post_environment_step(world_state, ns, node.effective_update_timestep, priority=priority)
 					node_state[node.name] = ns
 
-		if all_prios and priority == max(all_prios):
-			assert node_state[self._COUNTER_PRE] == node_state[self._COUNTER_POST]
+		# With a single shared counter the pre/post balance is trivially
+		# consistent (there is only one counter), so no equality assert is
+		# needed here.
 		return world_state, node_state
 
 	def close(self, world_state: WorldStateT, node_state: CombinedNodeStateT) -> WorldStateT:  # type: ignore[override]

@@ -184,7 +184,9 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
 
     def set_next_action(self, action: CombinedDataT) -> None:
         """Set action by routing keys to appropriate nodes."""
-        assert self.action_space is not None, "Action space is None, cannot set action."
+        if self.action_space is None:
+            assert action is None, "Cannot provide an action when action_space is None."
+            return
         
         for node in self._cached_action_nodes:
             if isinstance(node.action_space, DictSpace):
