@@ -52,16 +52,12 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         """Override to flatten child spaces into a single merged DictSpace."""
         self.context_space = self._flatten_spaces(
             [node.context_space for node in self.nodes if node.context_space is not None],
-            ignore_duplicate_keys=False,
         )
         self.observation_space = self._flatten_spaces(
             [node.observation_space for node in self.nodes if node.observation_space is not None],
-            ignore_duplicate_keys=False,
         )
-        # For actions, overlapping keys are allowed; routing is key-based per node.
         self.action_space = self._flatten_spaces(
             [node.action_space for node in self.nodes if node.action_space is not None],
-            ignore_duplicate_keys=True,
         )
         # _action_node_name_direct is not used in the flat variant (routing is key-based).
         self._action_node_name_direct = None
@@ -69,14 +65,12 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
     @staticmethod
     def _flatten_spaces(
         spaces: list[Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]],
-        ignore_duplicate_keys: bool = False,
     ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
         """
         Flatten a list of spaces by merging their keys.
         
         Args:
             spaces: List of spaces to flatten
-            ignore_duplicate_keys: Whether to ignore duplicate keys when merging spaces
             
         Returns:
             Merged DictSpace or None if no spaces
@@ -102,7 +96,7 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
                 f"Found non-DictSpace: {type(space).__name__}"
             )
             for key in space.spaces.keys():
-                if key in merged_spaces and not ignore_duplicate_keys:
+                if key in merged_spaces:
                     raise ValueError(
                         f"Overlapping key '{key}' found in spaces of FlatCombinedWorldNode. "
                         f"Keys must be unique across all nodes. "

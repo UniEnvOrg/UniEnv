@@ -51,28 +51,23 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
         # Validate and flatten spaces
         self.context_space = self._flatten_spaces(
             [node.context_space for node in self.nodes if node.context_space is not None],
-            ignore_duplicate_keys=False
         )
         self.observation_space = self._flatten_spaces(
             [node.observation_space for node in self.nodes if node.observation_space is not None],
-            ignore_duplicate_keys=False
         )
         self.action_space = self._flatten_spaces(
             [node.action_space for node in self.nodes if node.action_space is not None],
-            ignore_duplicate_keys=True  # For actions, we allow overlapping keys since they will be routed to nodes
         )
 
     @staticmethod
     def _flatten_spaces(
         spaces: list[Space[Any, BDeviceType, BDtypeType, BRNGType]],
-        ignore_duplicate_keys: bool = False,
     ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
         """
         Flatten a list of spaces by merging their keys.
         
         Args:
             spaces: List of spaces to flatten
-            ignore_duplicate_keys: Whether to ignore duplicate keys when merging spaces
             
         Returns:
             Merged DictSpace or None if no spaces
@@ -98,7 +93,7 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
                 f"Found non-DictSpace: {type(space).__name__}"
             )
             for key in space.spaces.keys():
-                if key in merged_spaces and not ignore_duplicate_keys:
+                if key in merged_spaces:
                     raise ValueError(
                         f"Overlapping key '{key}' found in spaces of FlatCombinedFuncWorldNode. "
                         f"Keys must be unique across all nodes. "

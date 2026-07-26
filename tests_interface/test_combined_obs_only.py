@@ -417,6 +417,64 @@ def test_flat_combined_func_env_obs_only():
 
 
 # ---------------------------------------------------------------------------
+# Flat variants reject overlapping action keys
+# ---------------------------------------------------------------------------
+
+class DictActionNode(ObsOnlyNode):
+    """Obs-only WorldNode that also exposes a DictSpace action with a given key."""
+
+    def __init__(self, *args, action_key: str = "act", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_space = DictSpace(
+            NumpyComputeBackend,
+            {action_key: BoxSpace(NumpyComputeBackend, low=-1.0, high=1.0, dtype=np.float32, shape=(1,))},
+        )
+
+
+class FuncDictActionNode(FuncObsOnlyNode):
+    """Obs-only FuncWorldNode that also exposes a DictSpace action with a given key."""
+
+    def __init__(self, *args, action_key: str = "act", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_space = DictSpace(
+            NumpyComputeBackend,
+            {action_key: BoxSpace(NumpyComputeBackend, low=-1.0, high=1.0, dtype=np.float32, shape=(1,))},
+        )
+
+
+def test_flat_combined_world_rejects_overlapping_action_keys():
+    """FlatCombinedWorldNode raises when two children share an action key."""
+    from unienv_interface.world.nodes.flat_combined_node import FlatCombinedWorldNode
+
+    world = RealWorld(NumpyComputeBackend, world_timestep=0.01)
+    n1 = DictActionNode(world, "n1", obs_key="v1", action_key="shared")
+    n2 = DictActionNode(world, "n2", obs_key="v2", action_key="shared")
+    with pytest.raises(ValueError, match="Overlapping key 'shared'"):
+        FlatCombinedWorldNode("flat", [n1, n2])
+
+    # Distinct action keys are still accepted.
+    n2_ok = DictActionNode(world, "n2", obs_key="v2", action_key="other")
+    combined = FlatCombinedWorldNode("flat", [n1, n2_ok])
+    assert set(combined.action_space.spaces.keys()) == {"shared", "other"}
+
+
+def test_flat_combined_func_rejects_overlapping_action_keys():
+    """FlatCombinedFuncWorldNode raises when two children share an action key."""
+    from unienv_interface.world.funcnodes.flat_combined_funcnode import FlatCombinedFuncWorldNode
+
+    world = DummyFuncWorld(world_timestep=0.01)
+    n1 = FuncDictActionNode(world, "n1", obs_key="v1", action_key="shared")
+    n2 = FuncDictActionNode(world, "n2", obs_key="v2", action_key="shared")
+    with pytest.raises(ValueError, match="Overlapping key 'shared'"):
+        FlatCombinedFuncWorldNode("flat", [n1, n2])
+
+    # Distinct action keys are still accepted.
+    n2_ok = FuncDictActionNode(world, "n2", obs_key="v2", action_key="other")
+    combined = FlatCombinedFuncWorldNode("flat", [n1, n2_ok])
+    assert set(combined.action_space.spaces.keys()) == {"shared", "other"}
+
+
+# ---------------------------------------------------------------------------
 # Routing-state reset on env.reset() (FIX 3 regression)
 # ---------------------------------------------------------------------------
 
