@@ -404,6 +404,22 @@ class CombinedFuncWorldNode(FuncWorldNode[
 					node_state[node.name] = ns
 		return world_state, node_state
 
+	def _split_child_actions(self, action: CombinedDataT) -> Dict[str, Any]:
+		"""Map an incoming combined action to per-node actions for the nodes
+		that receive a *new* action this call, keyed by node name.
+
+		The default implementation routes by node name (nested actions) or
+		passes the action through to the single direct-return action node.
+		Subclasses may override this to implement a different routing scheme
+		(e.g. :class:`FlatCombinedFuncWorldNode` slices flat action dicts by
+		data keys); :meth:`set_next_action` owns the counter / cache / ratio
+		dispatch orchestration and should not need to be overridden.
+		"""
+		if self._action_node_name_direct is not None:
+			return {self._action_node_name_direct: action}
+		assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
+		return action
+
 	def set_next_action(
 		self,
 		world_state: WorldStateT,
@@ -417,22 +433,19 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		node_state = node_state.copy()
 		node_state[self._COUNTER_ACTION] = (node_state[self._COUNTER_ACTION] % self._action_period) + 1
 
-		if self._action_node_name_direct is not None:
-			child_actions = {self._action_node_name_direct: action}
-		else:
-			assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
-			child_actions = action
-
+		child_actions = self._split_child_actions(action)
 		cached = node_state[self._CACHED_ACTIONS].copy()
 		for node in self.nodes:
-			if node.action_space is not None:
-				if node.name in child_actions:
-					cached[node.name] = child_actions[node.name]
-				ratio = self._action_ratios[node.name]
-				if (node_state[self._COUNTER_ACTION] - 1) % ratio == 0:
-					ns = node_state[node.name]
-					world_state, ns = node.set_next_action(world_state, ns, cached[node.name])
-					node_state[node.name] = ns
+			if node.action_space is None:
+				continue
+			if node.name in child_actions:
+				cached[node.name] = child_actions[node.name]
+			ratio = self._action_ratios[node.name]
+			# Dispatch at the node's control-rate tick, but only once it has
+			# received at least one action (sparse/partial actions are valid).
+			if (node_state[self._COUNTER_ACTION] - 1) % ratio == 0 and node.name in cached:
+				world_state, ns = node.set_next_action(world_state, node_state[node.name], cached[node.name])
+				node_state[node.name] = ns
 		node_state[self._CACHED_ACTIONS] = cached
 		return world_state, node_state
 

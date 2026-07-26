@@ -452,6 +452,22 @@ class CombinedWorldNode(WorldNode[
                 result[node.name] = r
         return result if result else None
 
+    def _split_child_actions(self, action: CombinedDataT) -> Dict[str, Any]:
+        """Map an incoming combined action to per-node actions for the nodes
+        that receive a *new* action this call, keyed by node name.
+
+        The default implementation routes by node name (nested actions) or
+        passes the action through to the single direct-return action node.
+        Subclasses may override this to implement a different routing scheme
+        (e.g. :class:`FlatCombinedWorldNode` slices flat action dicts by data
+        keys); :meth:`set_next_action` owns the counter / cache / ratio
+        dispatch orchestration and should not need to be overridden.
+        """
+        if self._action_node_name_direct is not None:
+            return {self._action_node_name_direct: action}
+        assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
+        return action
+
     def set_next_action(self, action):
         """Route combined actions to child nodes, respecting per-node control rates."""
         if self.action_space is None:
@@ -459,17 +475,14 @@ class CombinedWorldNode(WorldNode[
             return
         self._action_substeps = (self._action_substeps % self._action_period) + 1
 
-        if self._action_node_name_direct is not None:
-            child_actions = {self._action_node_name_direct: action}
-        else:
-            assert isinstance(action, Mapping), "Action must be a mapping when there are multiple action spaces."
-            child_actions = action
-
+        child_actions = self._split_child_actions(action)
         for node in self._cached_action_nodes:
             if node.name in child_actions:
                 self._cached_actions[node.name] = child_actions[node.name]
             ratio = self._action_ratios[node.name]
-            if (self._action_substeps - 1) % ratio == 0:
+            # Dispatch at the node's control-rate tick, but only once it has
+            # received at least one action (sparse/partial actions are valid).
+            if (self._action_substeps - 1) % ratio == 0 and node.name in self._cached_actions:
                 node.set_next_action(self._cached_actions[node.name])
     
     def post_environment_step(self, dt, *, priority : int = 0):

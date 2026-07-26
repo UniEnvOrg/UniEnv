@@ -4,7 +4,7 @@ Unlike CombinedWorldNode which nests data under node names as keys,
 FlatCombinedWorldNode merges dictionary values directly, requiring all 
 nodes to have DictSpace observations/actions/contexts with unique keys.
 """
-from typing import Optional, Dict, Any, Union, Iterable, Sequence
+from typing import Optional, Dict, Any, Union, Iterable, Mapping, Sequence
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 
@@ -182,18 +182,26 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
                 all_info.append(info)
         return self._flatten_data(all_info)
 
-    def set_next_action(self, action: CombinedDataT) -> None:
-        """Set action by routing keys to appropriate nodes."""
-        if self.action_space is None:
-            assert action is None, "Cannot provide an action when action_space is None."
-            return
-        
+    def _split_child_actions(self, action: CombinedDataT) -> Dict[str, Any]:
+        """Split a flat action dict into per-node slices keyed by node name.
+
+        Each DictSpace child receives the sub-dict of its own keys (only when
+        at least one of its keys is present, so partial actions are valid); a
+        single non-DictSpace action node receives the entire action. The
+        inherited :meth:`CombinedWorldNode.set_next_action` handles caching
+        and per-node control-rate dispatch.
+        """
+        child_actions: Dict[str, Any] = {}
         for node in self._cached_action_nodes:
             if isinstance(node.action_space, DictSpace):
-                # Extract relevant keys for this node
+                assert isinstance(action, Mapping), (
+                    f"Action must be a mapping to route keys to DictSpace child node "
+                    f"'{node.name}' of FlatCombinedWorldNode, got {type(action).__name__}."
+                )
                 node_action = {key: action[key] for key in node.action_space.spaces.keys() if key in action}
+                if node_action:
+                    child_actions[node.name] = node_action
             else:
-                # If not a DictSpace, pass the entire action (only if there's one node with non-DictSpace)
-                node_action = action
-            if node_action:
-                node.set_next_action(node_action)
+                # Single non-DictSpace action node receives the entire action.
+                child_actions[node.name] = action
+        return child_actions
