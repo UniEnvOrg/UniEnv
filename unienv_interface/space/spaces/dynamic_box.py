@@ -181,6 +181,31 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         return self.backend.broadcast_to(self._high, shape)
 
     @property
+    def low(self) -> BArrayType:
+        """Broadcasted lower bounds at the space's broadcast shape.
+
+        For a dynamic box there is no single fixed shape — only a range
+        ``[shape_low, shape_high]`` per axis. The stored ``_low``/``_high``
+        arrays are broadcastable to ``self._broadcast_shape`` (``shape_low``
+        with size ``1`` on every dynamic axis, i.e. axes where
+        ``shape_low != shape_high``). This property returns the bounds
+        broadcast to that ``_broadcast_shape``, mirroring ``BoxSpace.low``
+        (which broadcasts to ``self.shape``). Comparisons against data of any
+        in-range shape broadcast correctly because dynamic axes carry size 1
+        here. Use ``get_low(shape)`` / ``get_high(shape)`` to materialize the
+        bounds at a specific concrete shape.
+        """
+        return self.backend.broadcast_to(self._low, self._broadcast_shape)
+
+    @property
+    def high(self) -> BArrayType:
+        """Broadcasted upper bounds at the space's broadcast shape.
+
+        See ``low`` for the rationale behind the chosen shape.
+        """
+        return self.backend.broadcast_to(self._high, self._broadcast_shape)
+
+    @property
     def shape_low(self) -> Tuple[int, ...]:
         """Return the lower shape of the BoxSpace."""
         return tuple(self._shape_low)
@@ -251,7 +276,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             A sampled value from the Box
         """
 
-        target_shape = self.backend.random.random_uniform(
+        rng, target_shape = self.backend.random.random_uniform(
             len(self.shape_low),
             rng=rng,
             dtype=self.backend.default_floating_dtype
@@ -436,6 +461,60 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 and self.backend.all(self.backend.isclose(self.high, other.high))
             )
         except:
+            return False
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this dynamic box is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``DynamicBoxSpace`` on the same backend with
+        equal dtype, ``self``'s shape range is contained within ``other``'s
+        (``other.shape_low <= self.shape_low`` and
+        ``self.shape_high <= other.shape_high`` per dimension, inf-aware via
+        plain integer comparison), and the value bounds of ``self`` are
+        contained within ``other``'s. The value-bounds check is performed by
+        broadcasting both spaces' bounds to a common shape (the elementwise
+        maximum of the two ``shape_high`` vectors along each axis, restricted
+        to axes where the two ranges overlap) via ``get_low``/``get_high``.
+
+        .. note::
+            This class exposes ``get_low``/``get_high`` but no ``low``/``high``
+            properties, even though ``__eq__`` and ``contains`` reference
+            ``self.low``/``self.high``. This implementation deliberately avoids
+            ``self.low``/``self.high`` and uses ``get_low``/``get_high``
+            instead; the pre-existing bug in ``__eq__``/``contains`` is left
+            untouched per scope.
+        """
+        try:
+            if not (isinstance(other, DynamicBoxSpace) and self.backend == other.backend):
+                return False
+            if self.dtype != other.dtype:
+                return False
+            if len(self.shape_low) != len(other.shape_low):
+                return False
+            # Shape-range containment (per-dim, inf-aware via plain int compare).
+            for dim_self_low, dim_self_high, dim_other_low, dim_other_high in zip(
+                self.shape_low, self.shape_high, other.shape_low, other.shape_high
+            ):
+                if not (dim_other_low <= dim_self_low and dim_self_high <= dim_other_high):
+                    return False
+            # Value-bounds containment at a common broadcastable shape. Both
+            # spaces store bounds broadcastable to their respective
+            # ``_broadcast_shape``; pick a shape that is broadcast-compatible
+            # with both by using the per-axis max of the two ``shape_high``
+            # vectors (clamped to axes where bounds are stored as size 1, which
+            # is always the case for dynamic axes).
+            common_shape = tuple(
+                max(s_hi, o_hi) for s_hi, o_hi in zip(self.shape_high, other.shape_high)
+            )
+            self_low = self.get_low(common_shape)
+            self_high = self.get_high(common_shape)
+            other_low = other.get_low(common_shape)
+            other_high = other.get_high(common_shape)
+            return bool(
+                self.backend.all(other_low <= self_low)
+                and self.backend.all(other_high >= self_high)
+            )
+        except Exception:
             return False
     
     def data_to(

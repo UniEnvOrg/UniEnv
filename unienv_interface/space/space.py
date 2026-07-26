@@ -66,7 +66,73 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         raise NotImplementedError
-    
+
+    def is_subspaceeq(self, other: "Space") -> bool:
+        """Return whether this space is a non-strict subspace of ``other`` (``self ⊆ other``).
+
+        A space ``a`` is a non-strict subspace of ``b`` (``a ⊆ b``) when every
+        valid sample of ``a`` is also a valid member of ``b``; equality is
+        allowed, i.e. ``a == b`` implies ``a.is_subspaceeq(b)``.
+
+        The primary use case is a controller that declares its REQUIRED
+        observation space and checks
+        ``required.is_subspaceeq(env_observation_space)``: for ``DictSpace``
+        this must hold even when the environment space exposes EXTRA keys
+        beyond the required ones (unlike ``DictSpace.contains``, which demands
+        exact key equality). Controller-required-space checks should typically
+        use ``is_subspaceeq`` rather than the strict ``is_subspace`` because a
+        controller's required space may exactly equal the env space.
+
+        Comparison policy (structural only):
+
+        * The two spaces must share the same backend type.
+        * Dtypes must be strictly equal; no implicit cast widening is performed.
+        * ``device`` is intentionally ignored — two spaces on different devices
+          may still be in a subspace relation.
+
+        Cross-type comparisons (e.g. ``BoxSpace`` vs ``DictSpace``) return
+        ``False`` rather than raising. Subclasses override this method to
+        provide concrete structural containment checks; the base implementation
+        raises ``NotImplementedError`` to mirror the abstract-method style of
+        this class.
+        """
+        raise NotImplementedError
+
+    def is_subspace(self, other: "Space") -> bool:
+        """Return whether this space is a STRICT subspace of ``other`` (``self ⊂ other``).
+
+        Defined uniformly for all spaces as::
+
+            self.is_subspace(other)  ⟺  self.is_subspaceeq(other) and not other.is_subspaceeq(self)
+
+        I.e. ``self ⊆ other`` holds but ``other ⊆ self`` does not, so ``self``
+        is a PROPER (strict) subspace of ``other``. This is the ``⊂`` relation
+        versus the non-strict ``⊆`` provided by :meth:`is_subspaceeq`.
+
+        This definition is used instead of relying on ``__eq__`` because some
+        space classes only have identity ``__eq__``; defining strict
+        containment via the symmetric non-strict check works uniformly for all
+        classes regardless of their ``__eq__`` implementation.
+
+        For structurally-distinct-but-mutually-containing spaces (which should
+        not occur under the strict dtype/shape policies enforced by the
+        per-class ``is_subspaceeq`` implementations) this degrades gracefully
+        to ``False``: if both ``self.is_subspaceeq(other)`` and
+        ``other.is_subspaceeq(self)`` hold, the two spaces are considered
+        equivalent and neither is a STRICT subspace of the other.
+
+        If either side's ``is_subspaceeq`` is not implemented (the base
+        :meth:`is_subspaceeq` raises ``NotImplementedError``), the exception
+        propagates to the caller — it is NOT swallowed into ``False`` so that
+        callers can tell that the comparison is unsupported.
+
+        Note: controller-required-space checks should typically use
+        :meth:`is_subspaceeq` (a controller's required space may exactly equal
+        the env space, in which case the strict ``is_subspace`` would return
+        ``False``).
+        """
+        return self.is_subspaceeq(other) and not other.is_subspaceeq(self)
+
     def __eq__(self, other : "Space"):
         """Return boolean specifying if this space is equal to another space."""
         return self is other

@@ -94,6 +94,23 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
     def __eq__(self, other: Any) -> bool:
         """Check whether ``other`` is equivalent to this instance."""
         return isinstance(other, TupleSpace) and self.spaces == other.spaces
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this tuple space is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``TupleSpace`` on the same backend, the two
+        have the same arity, and for every index ``i`` the child
+        ``self.spaces[i].is_subspaceeq(other.spaces[i])`` holds recursively.
+        ``device`` is ignored.
+        """
+        if not (isinstance(other, TupleSpace) and self.backend == other.backend):
+            return False
+        if len(self.spaces) != len(other.spaces):
+            return False
+        return all(
+            self.spaces[i].is_subspaceeq(other.spaces[i])
+            for i in range(len(self.spaces))
+        )
     
     def __copy__(self) -> "TupleSpace[BDeviceType, BDtypeType, BRNGType]":
         """Create a shallow copy of the Dict space."""

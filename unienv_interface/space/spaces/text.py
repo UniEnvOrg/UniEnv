@@ -71,19 +71,27 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
     ) -> Tuple[BRNGType, str]:
         charset_list = self._char_list or tuple(sorted(alphanumeric))
         rng, length = self.backend.random.random_discrete_uniform(
-            1,
+            (1,),
             self.min_length,
             self.max_length + 1,
             rng=rng,
             dtype=self.backend.default_integer_dtype,
         )
         length = int(length[0])
-        index = self.backend.random.random_permutation(
-            length,
+        # Draw `length` i.i.d. character indices from the charset. We use
+        # ``random_discrete_uniform`` (rather than ``random_permutation``)
+        # because the sampled string length may exceed the charset size, in
+        # which case a permutation of ``range(length)`` would index out of the
+        # charset. Each character is drawn independently with replacement.
+        rng, index = self.backend.random.random_discrete_uniform(
+            (length,),
+            0,
+            len(charset_list),
             rng=rng,
+            dtype=self.backend.default_integer_dtype,
         )
         sample = "".join(
-            charset_list[index[i]] for i in range(length)
+            charset_list[int(index[i])] for i in range(length)
         ) if length > 0 else ""
         return rng, sample
 
@@ -123,6 +131,28 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             and self.max_length == other.max_length
             and self.charset == other.charset
         )
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this text space is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``TextSpace`` on the same backend, ``self``'s
+        charset is a subset of ``other``'s charset (a ``None`` charset on
+        ``self`` is a subset of any charset; a ``None`` charset on ``other``
+        only contains a ``None`` charset on ``self``), ``self.min_length >=
+        other.min_length`` and ``self.max_length <= other.max_length``.
+        ``device`` is ignored.
+        """
+        if not (isinstance(other, TextSpace) and self.backend == other.backend):
+            return False
+        if self.min_length < other.min_length or self.max_length > other.max_length:
+            return False
+        if self.charset is None:
+            # An unconstrained charset is only contained by another unconstrained one.
+            return other.charset is None
+        if other.charset is None:
+            # other accepts everything, so self's charset is contained.
+            return True
+        return self.charset <= other.charset
     
     def data_to(self, data, backend = None, device = None):
         return data

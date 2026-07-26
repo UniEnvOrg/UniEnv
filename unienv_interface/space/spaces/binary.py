@@ -47,8 +47,11 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def sample(self, rng : BRNGType) -> Tuple[
         BRNGType, BArrayType
     ]:
-        return self.backend.astype(
-            self.backend.random.random_uniform(self.shape, rng=rng, device=self.device) > 0.5,
+        rng, uniform_sample = self.backend.random.random_uniform(
+            self.shape, rng=rng, device=self.device
+        )
+        return rng, self.backend.astype(
+            uniform_sample > 0.5,
             self.dtype,
             copy=False
         )
@@ -90,6 +93,21 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""
         return isinstance(other, BinarySpace) and self.backend == other.backend and self.shape == other.shape and self.dtype == other.dtype and self.device == other.device
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this binary space is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``BinarySpace`` on the same backend with equal
+        shape and dtype. Since a binary space contains exactly the boolean
+        tensors of its shape, two such spaces are in a subspace relation iff
+        they are structurally identical (modulo ``device``).
+        """
+        return (
+            isinstance(other, BinarySpace)
+            and self.backend == other.backend
+            and self.shape == other.shape
+            and self.dtype == other.dtype
+        )
     
     def data_to(self, data, backend = None, device = None):
         if backend is not None and backend != self.backend:

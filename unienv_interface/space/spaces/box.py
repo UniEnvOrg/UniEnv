@@ -289,6 +289,28 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             ret += ")"
         return ret
 
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this box is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``BoxSpace`` on the same backend, with equal
+        shape and dtype, and ``other``'s bounds contain ``self``'s bounds
+        elementwise (``other.low <= self.low`` and ``other.high >= self.high``).
+        Infinite bounds are handled correctly via direct comparison since
+        ``±inf`` compares as expected against finite values and itself.
+        ``device`` is ignored.
+        """
+        try:
+            if not (isinstance(other, BoxSpace) and self.backend == other.backend):
+                return False
+            if self.shape != other.shape or self.dtype != other.dtype:
+                return False
+            return bool(
+                self.backend.all(self.backend.broadcast_to(other.low, self.shape) <= self.low)
+                and self.backend.all(self.backend.broadcast_to(other.high, self.shape) >= self.high)
+            )
+        except Exception:
+            return False
+
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
         try:

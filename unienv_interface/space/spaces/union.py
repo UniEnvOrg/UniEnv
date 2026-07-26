@@ -105,6 +105,25 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         """Check whether ``other`` is equivalent to this instance."""
         return isinstance(other, UnionSpace) and self.spaces == other.spaces
 
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this union space is a non-strict subspace of ``other`` (⊆).
+
+        Kept simple: True iff ``other`` is a ``UnionSpace`` on the same backend
+        with the same number of alternatives and, for every index ``i``,
+        ``self.spaces[i].is_subspaceeq(other.spaces[i])`` holds (pairwise,
+        same-index recursion). This is a conservative structural check — it
+        does not attempt to reason about alternative reordering or set-union
+        semantics. ``device`` is ignored.
+        """
+        if not (isinstance(other, UnionSpace) and self.backend == other.backend):
+            return False
+        if len(self.spaces) != len(other.spaces):
+            return False
+        return all(
+            self.spaces[i].is_subspaceeq(other.spaces[i])
+            for i in range(len(self.spaces))
+        )
+
     def data_to(self, data, backend = None, device = None):
         if (backend is None or backend==self.backend) and (device is None or device==self.device):
             return data

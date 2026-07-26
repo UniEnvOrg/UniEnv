@@ -103,6 +103,26 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
 
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this dict space is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``DictSpace`` on the same backend, every key of
+        ``self`` is present in ``other`` (``self.keys() ⊆ other.keys()``), and
+        for every shared key ``self.spaces[k].is_subspaceeq(other.spaces[k])``
+        holds recursively. Unlike ``contains``, ``other`` is permitted to
+        expose EXTRA keys beyond those of ``self`` — this is the controller
+        required-observation-space use case where the environment may provide
+        additional observation entries. ``device`` is ignored.
+        """
+        if not (isinstance(other, DictSpace) and self.backend == other.backend):
+            return False
+        for key in self.spaces.keys():
+            if key not in other.spaces:
+                return False
+            if not self.spaces[key].is_subspaceeq(other.spaces[key]):
+                return False
+        return True
+
     def get_repr(
         self,
         abbreviate : bool = False,

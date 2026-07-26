@@ -82,6 +82,19 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def __eq__(self, other: Any) -> bool:
         """Check whether `other` is equivalent to this instance."""
         return isinstance(other, BatchedSpace) and self.backend == other.backend and self.batch_shape == other.batch_shape and self.single_space == other.single_space
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this batched space is a subspace of ``other``.
+
+        True iff ``other`` is a ``BatchedSpace`` on the same backend with equal
+        ``batch_shape`` and ``self.single_space.is_subspaceeq(other.single_space)``
+        holds recursively (non-strict ⊆). ``device`` is ignored.
+        """
+        if not (isinstance(other, BatchedSpace) and self.backend == other.backend):
+            return False
+        if self.batch_shape != other.batch_shape:
+            return False
+        return self.single_space.is_subspaceeq(other.single_space)
     
     def data_to(self, data, backend = None, device = None):
         if isinstance(data, np.ndarray) and data.dtype == object:

@@ -300,6 +300,59 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             and (self.node_feature_space == other.node_feature_space)
             and (self.edge_feature_space == other.edge_feature_space)
         )
+
+    def is_subspaceeq(self, other: Any) -> bool:
+        """Return whether this graph space is a non-strict subspace of ``other`` (⊆).
+
+        True iff ``other`` is a ``GraphSpace`` on the same backend, the node
+        and edge feature spaces are subspaces recursively, and ``self``'s
+        node/edge count ranges are contained within ``other``'s:
+
+        * ``other.min_nodes <= self.min_nodes`` and
+          ``self.max_nodes <= other.max_nodes`` (treating ``None`` as +∞);
+        * likewise for edges, with the additional requirement that
+          ``self.is_edge`` and ``other.is_edge`` agree (an edge-less space
+          cannot be a subspace of an edge-bearing one and vice versa).
+
+        ``device`` is ignored.
+        """
+        if not (isinstance(other, GraphSpace) and self.backend == other.backend):
+            return False
+        if self.is_edge != other.is_edge:
+            return False
+        # Node count range containment (None == +inf).
+        if other.min_nodes > self.min_nodes:
+            return False
+        # max_nodes: None == +inf. self.max <= other.max (with None as +inf).
+        self_max = self.max_nodes if self.max_nodes is not None else float("inf")
+        other_max = other.max_nodes if other.max_nodes is not None else float("inf")
+        if not (self_max <= other_max):
+            return False
+        # Edge count range containment (None == +inf).
+        if other.min_edges > self.min_edges:
+            return False
+        self_max_e = self.max_edges if self.max_edges is not None else float("inf")
+        other_max_e = other.max_edges if other.max_edges is not None else float("inf")
+        if not (self_max_e <= other_max_e):
+            return False
+        # Feature-space recursion.
+        if self.node_feature_space is None:
+            if other.node_feature_space is not None:
+                return False
+        else:
+            if other.node_feature_space is None:
+                return False
+            if not self.node_feature_space.is_subspaceeq(other.node_feature_space):
+                return False
+        if self.edge_feature_space is None:
+            if other.edge_feature_space is not None:
+                return False
+        else:
+            if other.edge_feature_space is None:
+                return False
+            if not self.edge_feature_space.is_subspaceeq(other.edge_feature_space):
+                return False
+        return True
     
     def data_to(self, data, backend = None, device = None):
         if backend is not None and backend != self.backend:
