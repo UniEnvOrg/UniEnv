@@ -30,4 +30,10 @@ These guides cover the parts of UniEnv you are most likely to reach for after th
 
     [Open the guide](development.md)
 
+-   **Remote Execution**
+
+    Remote environments, client-side world composition, and observer streams.
+
+    [Open the guide](remote-execution.md)
+
 </div>

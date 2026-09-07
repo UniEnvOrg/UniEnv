@@ -14,8 +14,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+network = [
+    "websockets>=15,<16",
+]
 dev = [
     "pytest",
+    "websockets>=15,<16",
     "gymnasium>=0.29.0",
     "moviepy>=2.1",
     "torch",
@@ -43,4 +47,4 @@ Changelog = "https://github.com/UniEnvOrg/UniEnv/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["*"]
-exclude = ["training*", "tests*"]
+exclude = ["training*", "tests*", "examples*"]

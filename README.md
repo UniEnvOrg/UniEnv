@@ -12,6 +12,7 @@ It gives you:
 - a functional environment variant for explicit state passing
 - backend-aware spaces, wrappers, and transformations
 - world and node composition utilities for multi-component environments
+- transport-independent remote execution and observer streams, with an optional WebSocket adapter
 - replay buffers, storages, samplers, and dataset adapters for offline data workflows
 
 The project is designed around one idea: environment code and dataset code should not have to be rewritten every time the simulator, robot, or tensor library changes.
@@ -91,6 +92,7 @@ Start with:
 - `docs/getting-started.md` for installation and the package map
 - `docs/concepts/` for the core abstractions
 - `docs/guides/` for wrappers, replay buffers, and dataset integrations
+- `docs/guides/remote-execution.md` for remote environments, nodes, and worlds (`pip install 'unienv[network]'`)
 
 ## Development
 

@@ -13,6 +13,18 @@ __all__ = [
     "json_to_space",
 ]
 
+SPACE_TYPES: typing.Dict[str, typing.Type[Space]] = {
+    "BoxSpace": BoxSpace,
+    "BinarySpace": BinarySpace,
+    "DynamicBoxSpace": DynamicBoxSpace,
+    "TupleSpace": TupleSpace,
+    "DictSpace": DictSpace,
+    "TextSpace": TextSpace,
+    "GraphSpace": GraphSpace,
+    "UnionSpace": UnionSpace,
+    "BatchedSpace": BatchedSpace,
+}
+
 @singledispatch
 def space_to_json(space : Space) -> typing.Dict[str, Any]:
     """
@@ -42,20 +54,10 @@ def json_to_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend,
     Returns:
         Space: The deserialized space.
     """
-    type_map = {
-        "BoxSpace": BoxSpace,
-        "BinarySpace": BinarySpace,
-        "DynamicBoxSpace": DynamicBoxSpace,
-        "TupleSpace": TupleSpace,
-        "DictSpace": DictSpace,
-        "TextSpace": TextSpace,
-        "GraphSpace": GraphSpace,
-        "UnionSpace": UnionSpace,
-    }
     type = json_data.get("type")
-    if type not in type_map:
+    if type not in SPACE_TYPES:
         raise ValueError(f"Unknown space type: {type}")
-    space_class = type_map[type]
+    space_class = SPACE_TYPES[type]
     if space_class not in json_to_space.registry:
         raise NotImplementedError(f"Deserialization for {space_class} is not implemented.")
     return json_to_space.dispatch(space_class)(json_data, map_backend, map_device)
@@ -122,7 +124,7 @@ def _json_to_dynamic_box_space(json_data: typing.Dict[str, Any], map_backend: Co
     new_dtype = bsu.deserialize_dtype(map_backend, json_data["dtype"])
 
     low = map_backend.from_numpy(np.array(json_data["low"], dtype=np_dtype), dtype=new_dtype, device=map_device)
-    high = map_backend.from_numpy(np.array(json_data["high"], dtype=new_dtype), device=map_device)
+    high = map_backend.from_numpy(np.array(json_data["high"], dtype=np_dtype), dtype=new_dtype, device=map_device)
     return DynamicBoxSpace(
         map_backend,
         low=low,
@@ -164,7 +166,7 @@ def _text_space_to_json(space: TextSpace) -> typing.Dict[str, Any]:
         "type": "TextSpace",
         "min_length": space.min_length,
         "max_length": space.max_length,
-        "charset": "".join(space.charset) if space.charset is not None else None,
+        "charset": "".join(sorted(space.charset)) if space.charset is not None else None,
     }
 
 @json_to_space.register(TextSpace)
