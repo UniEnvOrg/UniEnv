@@ -39,7 +39,9 @@ class IntrinsicsResult:
     image_size:
         ``(width, height)`` in pixels of the calibration images.
     mean_reprojection_error_px:
-        RMS reprojection error over all views, in pixels.
+        Mean of ``per_view_errors``, in pixels.  Deliberately the per-view mean
+        rather than the solver's pooled RMS, so this field and
+        ``per_view_errors`` are always mutually consistent.
     per_view_errors:
         RMS reprojection error of each view, in the order of the detections.
     n_views:
@@ -109,7 +111,7 @@ def calibrate_intrinsics_charuco(
 
     if hasattr(cv2.aruco, "calibrateCameraCharuco"):
         (
-            rms,
+            _rms,
             camera_matrix,
             dist_coeffs,
             rvecs,
@@ -127,7 +129,7 @@ def calibrate_intrinsics_charuco(
     else:
         # OpenCV >= 4.13 removed the free function: same maths via calibrateCamera.
         (
-            rms,
+            _rms,
             camera_matrix,
             dist_coeffs,
             rvecs,
@@ -152,7 +154,7 @@ def calibrate_intrinsics_charuco(
         K=np.asarray(camera_matrix, dtype=np.float64).reshape(3, 3),
         dist=np.asarray(dist_coeffs, dtype=np.float64).reshape(-1),
         image_size=size,
-        mean_reprojection_error_px=float(rms),
+        mean_reprojection_error_px=float(np.mean(per_view_errors)),
         per_view_errors=tuple(per_view_errors),
         n_views=len(views),
     )

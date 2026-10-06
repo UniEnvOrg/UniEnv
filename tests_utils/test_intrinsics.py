@@ -65,6 +65,9 @@ def test_calibration_recovers_known_intrinsics() -> None:
     assert result.dist.shape[0] >= 4
     assert len(result.per_view_errors) == 12
     assert result.mean_reprojection_error_px < 1.0
+    assert result.mean_reprojection_error_px == pytest.approx(
+        float(np.mean(result.per_view_errors))
+    )
     assert max(result.per_view_errors) < 2.0
 
     fx, fy = result.K[0, 0], result.K[1, 1]

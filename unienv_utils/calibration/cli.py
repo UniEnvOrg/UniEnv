@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -54,6 +55,13 @@ def cmd_print_board(args: argparse.Namespace) -> int:
         "Print at 100%% scale (no fit-to-page). Verify a checker = %.1f mm "
         "with calipers before calibrating.",
         cfg.checker_size_m * 1000.0,
+    )
+    # Operators must see this even with --quiet: a wrong print scale silently
+    # corrupts every downstream calibration.
+    print(
+        "Print at 100% scale (no fit-to-page). Verify a checker = "
+        f"{cfg.checker_size_m * 1000.0:.1f} mm with calipers before calibrating.",
+        file=sys.stderr,
     )
     return 0
 

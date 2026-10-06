@@ -174,6 +174,50 @@ def test_parallel_rotation_axes_warn_and_fail(
     )
 
 
+def test_opposite_single_axis_rotations_warn_and_fail(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """+/- rotations about one axis cancel only in a signed mean, not in reality."""
+    observations = []
+    for angle_deg in (30.0, -30.0, 20.0, -20.0, 10.0, 0.0):
+        T_base_gripper = _homogeneous(
+            [0.0, 0.0, np.radians(angle_deg)], [0.0, 0.0, 0.1]
+        )
+        observations.append(
+            HandEyeObservation(
+                T_base_gripper,
+                invert_T(GROUND_TRUTH_T_BASE_CAM)
+                @ T_base_gripper
+                @ GROUND_TRUTH_T_GRIPPER_BOARD,
+            )
+        )
+    with caplog.at_level(logging.WARNING, logger="unienv_utils.calibration.hand_eye"):
+        with pytest.raises(ValueError, match="degenerate"):
+            solve_hand_to_base(observations)
+    assert any(
+        "orientation diversity is low" in record.message for record in caplog.records
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [cv2.CALIB_HAND_EYE_TSAI, cv2.CALIB_HAND_EYE_DANIILIDIS],
+    ids=("TSAI", "DANIILIDIS"),
+)
+def test_alternative_solvers_recover_clean_rig(method: int) -> None:
+    """Argument-marshalling smoke test for the other cv2 hand-eye solvers."""
+    result = solve_hand_to_base(
+        _make_observations(rng=np.random.default_rng(123)), method=method
+    )
+    assert validate_T(result.T_base_cam)
+    assert np.linalg.norm(
+        result.T_base_cam[:3, 3] - GROUND_TRUTH_T_BASE_CAM[:3, 3]
+    ) < 1e-3
+    assert rotation_angle_deg(
+        result.T_base_cam[:3, :3].T @ GROUND_TRUTH_T_BASE_CAM[:3, :3]
+    ) < 0.1
+
+
 def test_diverse_poses_do_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.WARNING, logger="unienv_utils.calibration.hand_eye"):
         solve_hand_to_base(_make_observations())

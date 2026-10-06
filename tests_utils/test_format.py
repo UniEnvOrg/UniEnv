@@ -88,6 +88,39 @@ def test_optional_blocks_may_be_absent(tmp_path) -> None:
     assert document["board"] is None
 
 
+def test_missing_residual_values_round_trip_as_null(tmp_path) -> None:
+    residuals = {
+        "translation_mm_mean": None,
+        "translation_mm_max": 3.4,
+        "rotation_deg_max": 0.35,
+    }
+    path = _saved_document(tmp_path, residuals=residuals)
+    raw = path.read_text()
+
+    assert "NaN" not in raw
+    assert '"translation_mm_mean": null' in raw
+    # The file is strict JSON: no NaN/Infinity literals anywhere.
+    json.dumps(json.loads(raw), allow_nan=False)
+    document = load_calibration(path)
+    assert document["residuals"] == residuals
+    assert document["residuals"]["translation_mm_mean"] is None
+
+
+def test_save_fails_loudly_for_non_finite_residuals(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        save_calibration(
+            tmp_path / "nan.json",
+            T_base_cam=T_BASE_CAM,
+            camera_serial="1",
+            solver="hand-eye",
+            residuals={
+                "translation_mm_mean": float("nan"),
+                "translation_mm_max": 3.4,
+                "rotation_deg_max": 0.35,
+            },
+        )
+
+
 def test_load_rejects_unknown_format_version(tmp_path) -> None:
     path = _saved_document(tmp_path)
     raw = json.loads(path.read_text())

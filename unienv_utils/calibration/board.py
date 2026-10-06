@@ -7,6 +7,7 @@ canonical UniEnv board for hand-eye and multi-camera calibration.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -20,6 +21,10 @@ __all__ = [
     "render_board",
     "resolve_aruco_dict",
 ]
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_MARGIN_PX = 20
 
 
 def resolve_aruco_dict(name: str) -> int:
@@ -142,7 +147,7 @@ def make_board(cfg: CharucoBoardConfig) -> "cv2.aruco.CharucoBoard":
 def render_board(
     cfg: CharucoBoardConfig,
     pixels_per_meter: float,
-    margin_px: int = 20,
+    margin_px: int = _DEFAULT_MARGIN_PX,
 ) -> np.ndarray:
     """Render a printable grayscale image of the ChArUco board.
 
@@ -175,5 +180,9 @@ def render_board(
         )
     else:
         # OpenCV < 4.7: no margin support, this is what tianji falls back to.
+        if margin_px != _DEFAULT_MARGIN_PX:
+            logger.warning(
+                "OpenCV < 4.7 board.draw() ignores margin_px=%d.", margin_px
+            )
         image = board.draw((width_px, height_px))
     return np.asarray(image, dtype=np.uint8)

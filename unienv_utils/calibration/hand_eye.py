@@ -89,6 +89,21 @@ class HandEyeResult:
     n_poses: int
 
 
+def _canonical_axis(axis: np.ndarray) -> np.ndarray:
+    """Flip ``axis`` into a canonical hemisphere (first non-zero component > 0).
+
+    Rodrigues vectors for rotations about ``a`` and ``-a`` differ only by their
+    sign, so without this normalisation opposite-direction rotations about the
+    same axis cancel in the mean and hide the low-diversity warning.
+    """
+    for component in axis:
+        if component > 0.0:
+            return axis
+        if component < 0.0:
+            return -axis
+    return axis
+
+
 def _diversity_warning(observations: Sequence[HandEyeObservation]) -> str | None:
     """Return a warning message when the gripper poses are degenerate."""
     reference = np.asarray(observations[0].T_base_gripper, dtype=np.float64)[:3, :3]
@@ -101,7 +116,7 @@ def _diversity_warning(observations: Sequence[HandEyeObservation]) -> str | None
         max_angle_deg = max(max_angle_deg, angle_deg)
         if angle_deg > _AXIS_DEGENERATE_TOL_DEG:
             axis = cv2.Rodrigues(relative)[0].reshape(3)
-            axes.append(axis / np.linalg.norm(axis))
+            axes.append(_canonical_axis(axis / np.linalg.norm(axis)))
     if max_angle_deg < _MIN_RELATIVE_ROTATION_DEG:
         return (
             "orientation diversity is low: the gripper rotates by at most "

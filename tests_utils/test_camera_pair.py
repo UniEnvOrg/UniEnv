@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 import pytest
 
@@ -53,6 +55,20 @@ def _make_pairs(
     return pairs
 
 
+def _corrupt_translation(
+    pairs: list[PairObservation], indices: Iterable[int], delta_m: float = 0.05
+) -> list[PairObservation]:
+    """Return a copy of ``pairs`` with ``indices`` shifted ~5 cm along camera A x."""
+    corrupted = list(pairs)
+    for index in indices:
+        T_camA_board = corrupted[index].T_camA_board.copy()
+        T_camA_board[:3, 3] += np.array([delta_m, 0.0, 0.0])
+        corrupted[index] = PairObservation(
+            T_camA_board, corrupted[index].T_camB_board
+        )
+    return corrupted
+
+
 def test_solve_recovers_relative_pose_without_noise() -> None:
     result = solve_camera_relative(_make_pairs())
     assert result.n_pairs == 15
@@ -94,6 +110,52 @@ def test_transfer_to_base_composes_correctly() -> None:
         transfer_to_base(T_base_camA, GROUND_TRUTH_T_CAMA_CAMB)[:3, 3],
         (T_base_camA @ GROUND_TRUTH_T_CAMA_CAMB)[:3, 3],
     )
+
+
+def test_single_corrupted_pair_is_rejected() -> None:
+    """One pair off by ~5 cm must not drag the solve away from ground truth."""
+    pairs = _corrupt_translation(_make_pairs(16), [7])
+    result = solve_camera_relative(pairs)
+
+    assert result.n_pairs == 16
+    assert result.n_inliers == 15
+    assert result.inlier_mask[7] is False
+    assert all(keep for index, keep in enumerate(result.inlier_mask) if index != 7)
+    assert np.linalg.norm(
+        result.T_camA_camB[:3, 3] - GROUND_TRUTH_T_CAMA_CAMB[:3, 3]
+    ) < 0.002
+    # Residuals are computed over the inliers: clean candidates are exact.
+    assert result.translation_mm_max < 1e-6
+
+
+def test_outlier_rejection_can_be_disabled() -> None:
+    pairs = _corrupt_translation(_make_pairs(16), [7])
+    robust = solve_camera_relative(pairs)
+    naive = solve_camera_relative(pairs, reject_outliers=False)
+
+    assert naive.n_pairs == naive.n_inliers == 16
+    assert naive.inlier_mask == (True,) * 16
+    naive_error = float(np.linalg.norm(
+        naive.T_camA_camB[:3, 3] - GROUND_TRUTH_T_CAMA_CAMB[:3, 3]
+    ))
+    robust_error = float(np.linalg.norm(
+        robust.T_camA_camB[:3, 3] - GROUND_TRUTH_T_CAMA_CAMB[:3, 3]
+    ))
+    # The plain average is dragged ~3 mm by the single 5 cm corruption.
+    assert 0.001 < naive_error < 0.05
+    assert robust_error < 0.1 * naive_error
+
+
+def test_min_inliers_violation_raises() -> None:
+    pairs = _corrupt_translation(_make_pairs(10), [1, 4, 7])
+    with pytest.raises(ValueError, match="survived outlier rejection"):
+        solve_camera_relative(pairs)
+    # The same set solves when the caller accepts the 7 surviving observations.
+    result = solve_camera_relative(pairs, min_inliers=7)
+    assert result.n_inliers == 7
+    assert result.n_pairs == 10
+    with pytest.raises(ValueError, match="min_inliers"):
+        solve_camera_relative(pairs, min_inliers=0)
 
 
 def test_solve_camera_relative_validates_inputs() -> None:

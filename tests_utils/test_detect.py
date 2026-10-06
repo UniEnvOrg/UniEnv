@@ -7,6 +7,7 @@ import pytest
 
 cv2 = pytest.importorskip("cv2")
 
+from unienv_utils.calibration import detect as detect_module  # noqa: E402
 from unienv_utils.calibration.board import (  # noqa: E402
     CharucoBoardConfig,
     make_board,
@@ -85,6 +86,26 @@ def test_detect_charuco_accepts_bgr(
 def test_detect_charuco_returns_none_without_board(cfg: CharucoBoardConfig) -> None:
     blank = np.full((480, 640), 255, dtype=np.uint8)
     assert detect_charuco(blank, cfg) is None
+
+
+def test_detect_charuco_reuses_cached_builders(
+    cfg: CharucoBoardConfig, board_image: np.ndarray
+) -> None:
+    first = detect_charuco(board_image, cfg)
+    second = detect_charuco(board_image, CharucoBoardConfig())
+    assert first is not None and second is not None
+    assert np.array_equal(first.corners, second.corners)
+    assert np.array_equal(first.ids, second.ids)
+    # Equal configs share the cv2 objects instead of rebuilding them per call.
+    assert detect_module._get_board(cfg) is detect_module._get_board(
+        CharucoBoardConfig()
+    )
+    assert detect_module._get_detector_parameters() is (
+        detect_module._get_detector_parameters()
+    )
+    assert detect_module._get_dictionary(cfg.aruco_dict_name) is (
+        detect_module._get_dictionary(CharucoBoardConfig().aruco_dict_name)
+    )
 
 
 def test_detect_charuco_rejects_bad_input(cfg: CharucoBoardConfig) -> None:

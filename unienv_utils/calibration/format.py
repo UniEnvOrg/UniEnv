@@ -28,6 +28,8 @@ Schema::
     }
 
 All transforms map into the frame named by ``"frame"`` (translation in metres).
+Unavailable residual values are stored as JSON ``null`` (never ``NaN``) and load
+back as ``None``.
 """
 
 from __future__ import annotations
@@ -96,18 +98,19 @@ def _normalise_intrinsics(intrinsics: Any) -> dict[str, Any] | None:
     return block
 
 
-def _normalise_residuals(residuals: Any) -> dict[str, float] | None:
-    """Validate and normalise a residuals mapping."""
+def _normalise_residuals(residuals: Any) -> dict[str, float | None] | None:
+    """Validate and normalise a residuals mapping.
+
+    ``None`` values are kept as ``None`` so they are written as JSON ``null``
+    instead of the non-standard ``NaN`` literal.
+    """
     if residuals is None:
         return None
     if not isinstance(residuals, Mapping):
         raise ValueError(f"residuals must be a mapping or None, got {type(residuals)!r}.")
-    block: dict[str, float] = {}
+    block: dict[str, float | None] = {}
     for key, value in residuals.items():
-        if value is None:
-            block[str(key)] = float("nan")
-        else:
-            block[str(key)] = float(value)
+        block[str(key)] = None if value is None else float(value)
     missing = [key for key in REQUIRED_RESIDUAL_KEYS if key not in block]
     if missing:
         raise ValueError(f"residuals is missing required keys: {missing}.")
@@ -121,7 +124,7 @@ def save_calibration(
     camera_serial: str,
     solver: str,
     intrinsics: Any = None,
-    residuals: Mapping[str, float] | None = None,
+    residuals: Mapping[str, float | None] | None = None,
     board: CharucoBoardConfig | None = None,
     frame: str = _DEFAULT_FRAME,
     n_observations: int | None = None,
@@ -143,7 +146,8 @@ def save_calibration(
         ``resolution`` and optionally ``source``.
     residuals:
         Mapping with at least ``translation_mm_mean``, ``translation_mm_max``
-        and ``rotation_deg_max``.
+        and ``rotation_deg_max``.  Values may be ``None``; those are written as
+        JSON ``null``.
     board:
         Board configuration used for the calibration.
     frame:
@@ -177,13 +181,17 @@ def save_calibration(
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as handle:
-        json.dump(document, handle, indent=2)
+        # allow_nan=False keeps the file strict JSON: a real NaN/Infinity fails
+        # loudly here instead of being written as an invalid literal.
+        json.dump(document, handle, indent=2, allow_nan=False)
         handle.write("\n")
     return out_path
 
 
 def load_calibration(path: str | Path) -> dict[str, Any]:
     """Load and validate a calibration file.
+
+    Residual values stored as JSON ``null`` are returned as ``None``.
 
     Raises
     ------

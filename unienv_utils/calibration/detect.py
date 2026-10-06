@@ -10,6 +10,7 @@ keeps the false-positive rate under control.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import cv2
 import numpy as np
@@ -83,6 +84,30 @@ def make_detector_parameters() -> "cv2.aruco.DetectorParameters":
     return params
 
 
+# Construction caches: capture loops call detect_charuco per frame, so the
+# value-keyed board and the constant dictionary/parameters are built once.
+# The cv2 objects themselves are the cache *values*; the keys are hashable
+# Python values (the frozen CharucoBoardConfig and a dictionary name string).
+
+
+@lru_cache(maxsize=None)
+def _get_board(cfg: CharucoBoardConfig) -> "cv2.aruco.CharucoBoard":
+    """Return the cached ``CharucoBoard`` for ``cfg`` (keyed by value)."""
+    return make_board(cfg)
+
+
+@lru_cache(maxsize=None)
+def _get_dictionary(name: str) -> "cv2.aruco.Dictionary":
+    """Return the cached predefined dictionary for ``name``."""
+    return predefined_dictionary(name)
+
+
+@lru_cache(maxsize=None)
+def _get_detector_parameters() -> "cv2.aruco.DetectorParameters":
+    """Return the process-wide tuned ``DetectorParameters`` (built once)."""
+    return make_detector_parameters()
+
+
 def _to_gray(image: np.ndarray) -> np.ndarray:
     """Return a ``uint8`` grayscale copy of ``image`` (BGR/BGRA/gray accepted)."""
     arr = np.asarray(image)
@@ -125,9 +150,9 @@ def detect_charuco(
         ``None`` when the board is not visible well enough for calibration.
     """
     gray = _to_gray(image)
-    board = make_board(cfg)
-    dictionary = predefined_dictionary(cfg.aruco_dict_name)
-    params = make_detector_parameters()
+    board = _get_board(cfg)
+    dictionary = _get_dictionary(cfg.aruco_dict_name)
+    params = _get_detector_parameters()
     if hasattr(cv2.aruco, "ArucoDetector"):
         detector = cv2.aruco.ArucoDetector(dictionary, params)
         marker_corners, marker_ids, _ = detector.detectMarkers(gray)
@@ -189,7 +214,7 @@ def estimate_board_pose(
     dist_coeffs = np.asarray(dist, dtype=np.float64).reshape(-1)
     if detection.n_corners < _MIN_POSE_CORNERS:
         return None
-    board = make_board(cfg)
+    board = _get_board(cfg)
     if hasattr(cv2.aruco, "estimatePoseCharucoBoard"):
         rvec = np.zeros((3, 1), dtype=np.float64)
         tvec = np.zeros((3, 1), dtype=np.float64)
