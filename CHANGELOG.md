@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added `root_node` support to `CombinedWorldNode`, `FlatCombinedWorldNode`, `CombinedFuncWorldNode` and `FlatCombinedFuncWorldNode`. A `root_node` is passed separately (same world, not listed in `nodes`) and its data merges at the top level of the aggregated context/observation/action dicts instead of nesting under its own name:
+  - Sole-root contributor per channel follows the existing `direct_return` rule (`True`: the root's own space/data passes through unwrapped, any space type; `False`: wrapped under the reserved key `ROOT_NODE_KEY = ""`). Mixed root + named children requires a `DictSpace` root space whose keys merge next to the child entries; a root key equal to a child node name raises `ValueError`.
+  - Actions: the whole action is forwarded to a sole-root action provider, while in the mixed case the incoming mapping's keys are routed to children by name and every remaining key accumulates into the root's cached action. Each consumer is dispatched at its own control-rate/update-rate ratio tick with the usual hold-last semantics.
+  - The root rides all child machinery (priority union, lifecycle dispatch, reward summation, termination/truncation OR-ing, info, render, close, `get_nodes_by_fn`) while staying out of the public `nodes` list and out of `get_node`. In the functional variants the root's node state is persisted under `ROOT_NODE_KEY` (`""`), keeping `CombinedNodeStateT` a plain `Dict[str, Any]`.
+  - The flat variants treat the root as one more flat contributor for context/observation (keys merge at the top level) and route action keys that no child's action space claims to the root; without a root node such unclaimed keys raise `ValueError`.
+
 ## 0.0.1b12 & 0.0.1b13 (2026-04-22)
 
 - Bugfixed random read errors in `VideoStorage` when using the `pyav` backend by implementing a more robust seeking mechanism that handles edge cases such as seeking to non-keyframes and reaching the end of the video stream. 

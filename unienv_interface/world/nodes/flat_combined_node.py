@@ -4,12 +4,12 @@ Unlike CombinedWorldNode which nests data under node names as keys,
 FlatCombinedWorldNode merges dictionary values directly, requiring all 
 nodes to have DictSpace observations/actions/contexts with unique keys.
 """
-from typing import Optional, Dict, Any, Union, Iterable, Mapping, Sequence
+from typing import Optional, Dict, Any, Union, Iterable, Mapping, Sequence, Set
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
 
 from ..node import WorldNode
-from .combined_node import CombinedWorldNode, CombinedDataT
+from .combined_node import CombinedWorldNode, CombinedDataT, ROOT_NODE_KEY
 
 
 class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -24,6 +24,23 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
     - Keys across all nodes must be unique (no overlaps)
     
     The node names are only used for identification, not for nesting data.
+
+    Root node
+    ---------
+    An optional ``root_node`` (passed separately, sharing the same world and not
+    listed in ``nodes``) is handled as one more flat contributor:
+
+    - Its context / observation spaces and data are appended to the flatten list,
+      so its keys appear directly at the top level next to the children's keys
+      (an overlapping key raises ``ValueError``). When the root is the only
+      contributor its space/data is returned unwrapped, mirroring the existing
+      single-child flat behavior.
+    - For actions, every key not claimed by any child's action space is routed to
+      the root under the reserved internal key, while claimed keys are sliced to
+      their children exactly as before. Without a ``root_node`` such unclaimed
+      keys are rejected with a ``ValueError``.
+    - Rewards / signals / info / render and the lifecycle hooks include the root
+      like any other node (info and render use the root's own ``name``).
     """
 
     def __init__(
@@ -31,6 +48,7 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         name: str,
         nodes: Iterable[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]],
         render_mode: Optional[str] = 'auto',
+        root_node: Optional[WorldNode[Any, Any, Any, BArrayType, BDeviceType, BDtypeType, BRNGType]] = None,
     ):
         """
         Initialize a FlatCombinedWorldNode.
@@ -39,28 +57,47 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
             name: Name of this combined node
             nodes: Iterable of nodes to combine
             render_mode: Render mode ('dict', 'auto', or specific mode)
-            
+            root_node: Optional node merged at the top level of the flattened
+                data instead of nesting under its own name
+
         Raises:
             ValueError: If node spaces have overlapping keys or non-DictSpace types
         """
         # Always set direct_return=False for flat combination.
         # We'll handle the flattening ourselves; _refresh_spaces() is overridden below
         # and will be called by super().__init__() as part of the initial snapshot.
-        super().__init__(name=name, nodes=nodes, direct_return=False, render_mode=render_mode)
+        super().__init__(
+            name=name,
+            nodes=nodes,
+            direct_return=False,
+            render_mode=render_mode,
+            root_node=root_node,
+        )
 
     def _refresh_spaces(self) -> None:
-        """Override to flatten child spaces into a single merged DictSpace."""
-        self.context_space = self._flatten_spaces(
-            [node.context_space for node in self.nodes if node.context_space is not None],
-        )
-        self.observation_space = self._flatten_spaces(
-            [node.observation_space for node in self.nodes if node.observation_space is not None],
-        )
-        self.action_space = self._flatten_spaces(
-            [node.action_space for node in self.nodes if node.action_space is not None],
-        )
+        """Override to flatten child (and optional root node) spaces into a single merged DictSpace.
+
+        The root node's space is appended to the flatten list, i.e. it takes part
+        in the same overlapping-key rejection and is returned unwrapped when it is
+        the only contributor (matching the existing single-child flat behavior).
+        """
+        self.context_space = self._flatten_channel_spaces('context_space')
+        self.observation_space = self._flatten_channel_spaces('observation_space')
+        self.action_space = self._flatten_channel_spaces('action_space')
         # _action_node_name_direct is not used in the flat variant (routing is key-based).
         self._action_node_name_direct = None
+
+    def _flatten_channel_spaces(
+        self,
+        space_attr: str,
+    ) -> Optional[Space[Any, BDeviceType, BDtypeType, BRNGType]]:
+        """Flatten one space channel over the named children and the optional root node."""
+        spaces = [
+            getattr(node, space_attr) for node in self.nodes if getattr(node, space_attr) is not None
+        ]
+        if self.root_node is not None and getattr(self.root_node, space_attr) is not None:
+            spaces.append(getattr(self.root_node, space_attr))
+        return self._flatten_spaces(spaces)
 
     @staticmethod
     def _flatten_spaces(
@@ -147,25 +184,21 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         return merged_data
 
     def get_context(self) -> Optional[CombinedDataT]:
-        """Get context by flattening all node contexts into one dictionary."""
+        """Get context by flattening all node contexts (root node included) into one dictionary."""
         if self.context_space is None:
             return None
-            
-        all_contexts = []
-        for node in self._cached_context_nodes:
-            context = node.get_context()
-            all_contexts.append(context)
-        return self._flatten_data(all_contexts)
+
+        return self._flatten_data(
+            [node.get_context() for node in self._cached_context_nodes]
+        )
 
     def get_observation(self) -> CombinedDataT:
-        """Get observation by flattening all node observations into one dictionary."""
+        """Get observation by flattening all node observations (root node included) into one dictionary."""
         assert self.observation_space is not None, "Observation space is None, cannot get observation."
-        
-        all_observations = []
-        for node in self._cached_observation_nodes:
-            obs = node.get_observation()
-            all_observations.append(obs)
-        return self._flatten_data(all_observations)
+
+        return self._flatten_data(
+            [node.get_observation() for node in self._cached_observation_nodes]
+        )
 
     def get_info(self) -> Optional[Dict[str, Any]]:
         """Get info by merging all node info dictionaries."""
@@ -177,25 +210,60 @@ class FlatCombinedWorldNode(CombinedWorldNode[BArrayType, BDeviceType, BDtypeTyp
         return self._flatten_data(all_info)
 
     def _split_child_actions(self, action: CombinedDataT) -> Dict[str, Any]:
-        """Split a flat action dict into per-node slices keyed by node name.
+        """Split a flat action dict into per-node slices keyed by internal node key.
 
         Each DictSpace child receives the sub-dict of its own keys (only when
         at least one of its keys is present, so partial actions are valid); a
-        single non-DictSpace action node receives the entire action. The
-        inherited :meth:`CombinedWorldNode.set_next_action` handles caching
-        and per-node control-rate dispatch.
+        single non-DictSpace action node receives the entire action. Action keys
+        that no child claims are routed to the ``root_node`` (when one provides
+        an action space) under the reserved key; if no root node is provided they
+        are rejected with a ``ValueError``. The inherited
+        :meth:`CombinedWorldNode.set_next_action` handles caching and per-node
+        control-rate dispatch.
         """
         child_actions: Dict[str, Any] = {}
+        claimed_keys: Set[str] = set()
+        has_mapping_action = isinstance(action, Mapping)
         for node in self._cached_action_nodes:
+            if node is self.root_node:
+                continue
             if isinstance(node.action_space, DictSpace):
-                assert isinstance(action, Mapping), (
+                assert has_mapping_action, (
                     f"Action must be a mapping to route keys to DictSpace child node "
                     f"'{node.name}' of FlatCombinedWorldNode, got {type(action).__name__}."
                 )
                 node_action = {key: action[key] for key in node.action_space.spaces.keys() if key in action}
+                claimed_keys.update(node_action.keys())
                 if node_action:
                     child_actions[node.name] = node_action
             else:
                 # Single non-DictSpace action node receives the entire action.
                 child_actions[node.name] = action
+
+        root = self.root_node
+        if root is not None and root.action_space is not None:
+            if isinstance(root.action_space, DictSpace):
+                assert has_mapping_action, (
+                    f"Action must be a mapping to route keys to the DictSpace action space of "
+                    f"root_node '{root.name}' of FlatCombinedWorldNode, got {type(action).__name__}."
+                )
+                # Every key no child claims belongs to the root node.
+                root_action = {
+                    key: value for key, value in action.items() if key not in claimed_keys
+                }
+            else:
+                # A non-DictSpace root action space is only reachable as the sole
+                # action provider, in which case it receives the entire action.
+                root_action = action
+            if root_action:
+                child_actions[ROOT_NODE_KEY] = root_action
+        elif has_mapping_action:
+            unclaimed_keys = sorted(
+                key for key in action.keys() if key not in claimed_keys
+            )
+            if unclaimed_keys:
+                raise ValueError(
+                    f"Action key(s) {unclaimed_keys} of FlatCombinedWorldNode are not claimed by "
+                    f"any child node's action space and no root_node is provided to receive them."
+                )
         return child_actions
