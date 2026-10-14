@@ -86,7 +86,7 @@ class UnBatchifyWrapper(
             context_transformation=None if env.context_space is None else UnBatchifyTransformation(),
             observation_transformation=UnBatchifyTransformation(),
             action_transformation=BatchifyTransformation(),
-            target_action_space=next(iter(sbu.unbatch_spaces(env.action_space, 1)))
+            target_action_space=next(iter(sbu.unbatch_spaces(env.action_space)))
         )
 
     @property
