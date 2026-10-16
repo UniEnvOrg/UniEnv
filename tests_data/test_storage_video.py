@@ -1,5 +1,6 @@
 """VideoStorage specifics: codec selection, decoding paths and segment handling."""
 
+import gc
 import json
 import os
 
@@ -307,6 +308,54 @@ def test_hwaccel_selection(monkeypatch):
     monkeypatch.setattr(PyAvVideoReader, "available_hwdevices", staticmethod(lambda: []))
     assert PyAvVideoReader.get_auto_hwaccel() is None
     assert isinstance(PyAvVideoReader.available_hwdevices(), list)
+
+
+def _failing_hwaccel_open(monkeypatch):
+    """Make ``av.open`` fail whenever a hardware accelerator is requested."""
+    import av
+
+    real_open, calls = av.open, []
+
+    def fake_open(*args, hwaccel=None, **kwargs):
+        calls.append(hwaccel)
+        if hwaccel is not None:
+            raise av.error.ExternalError(542398533, "hardware device init failed")
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(av, "open", fake_open)
+    return calls
+
+
+def test_reader_falls_back_to_software_when_hwaccel_init_fails(tmp_path, monkeypatch):
+    from av.codec.hwaccel import HWAccel
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    frames = _frames(6)
+    storage = _storage(tmp_path)
+    storage.set(slice(None), frames)
+    filename = storage._make_filename(0, 5)
+    calls = _failing_hwaccel_open(monkeypatch)
+    monkeypatch.setattr(PyAvVideoReader, "get_auto_hwaccel",
+                        staticmethod(lambda: HWAccel(device_type="cuda", allow_software_fallback=True)))
+
+    with PyAvVideoReader(B, filename, buffer_pixel_format="rgb24", hwaccel="auto") as reader:
+        np.testing.assert_array_equal(next(reader), frames[0])
+    assert calls[0] is not None and calls[1] is None
+
+
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+def test_reader_without_software_fallback_raises_and_deletes_cleanly(tmp_path, monkeypatch):
+    import av
+    from av.codec.hwaccel import HWAccel
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    storage = _storage(tmp_path)
+    storage.set(slice(None), _frames(6))
+    _failing_hwaccel_open(monkeypatch)
+    strict = HWAccel(device_type="cuda", allow_software_fallback=False)
+    with pytest.raises(av.error.FFmpegError):
+        PyAvVideoReader(B, storage._make_filename(0, 5), hwaccel=strict)
+    gc.collect()  # the half-built reader's __del__ must not raise
 
 
 def test_reader_frame_index_conversions(tmp_path):

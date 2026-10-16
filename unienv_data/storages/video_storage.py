@@ -85,9 +85,17 @@ class PyAvVideoReader:
         seek_mode: Literal['exact', 'approximate'] = 'exact',
         device : Optional[BDeviceType] = None,
     ):        
+        self.container = None # so close()/__del__ work if opening fails
         if hwaccel == 'auto':
             hwaccel = __class__.get_auto_hwaccel()
-        self.container = av.open(filename, mode='r', hwaccel=hwaccel)
+        try:
+            self.container = av.open(filename, mode='r', hwaccel=hwaccel)
+        except av.error.FFmpegError:
+            # A listed hardware device can still fail to initialise (e.g. CUDA hidden
+            # via CUDA_VISIBLE_DEVICES or a driver mismatch); decode in software then
+            if hwaccel is None or not getattr(hwaccel, 'allow_software_fallback', False):
+                raise
+            self.container = av.open(filename, mode='r')
         self.video_stream = self.container.streams.video[0]
         
         self.video_reformatter : Optional[VideoReformatter] = None
