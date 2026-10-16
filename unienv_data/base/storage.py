@@ -7,6 +7,112 @@ from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu
 from .common import BatchBase, BatchT, IndexableType
 
+class SegmentWriter(abc.ABC):
+    """
+    Builds one contiguous segment of a storage off to the side.
+    Values appended to a writer land at an index range that is only chosen when the writer is committed,
+    so several writers of one storage can be filled at the same time (e.g. one per environment of a batched rollout)
+    and committed in any order. Obtain one with `SpaceStorage.open_segment_writer()`.
+    """
+
+    def __init__(self, storage : "SpaceStorage"):
+        self.storage = storage
+        self.length = 0
+        self.is_finished = False
+
+    def __len__(self) -> int:
+        return self.length
+
+    def append(self, value) -> None:
+        """Append one structured sample to the segment."""
+        if self.is_finished:
+            raise RuntimeError("Cannot append to a finished segment writer")
+        self._append(value)
+        self.length += 1
+
+    def finish(self) -> None:
+        """
+        Declare the segment complete (no more appends) and release what only appending needs (e.g. encoders).
+        Called by `commit()` if needed; finish early when the commit has to wait.
+        """
+        if not self.is_finished:
+            self._finish()
+            self.is_finished = True
+
+    @abc.abstractmethod
+    def _append(self, value) -> None:
+        raise NotImplementedError
+
+    def _finish(self) -> None:
+        pass
+
+    @abc.abstractmethod
+    def commit(self, start_index : int) -> None:
+        """
+        Write the segment to the storage indices `[start_index, start_index + len(self))`
+        (modulo the capacity of fixed-capacity storages). Storages with unlimited capacity must already be long enough.
+        The writer cannot be used afterwards.
+        """
+        raise NotImplementedError
+
+    def abort(self) -> None:
+        """Drop the segment without writing it."""
+        pass
+
+    def _commit_indices(self, start_index : int) -> Union[slice, BArrayType]:
+        capacity = self.storage.capacity
+        if capacity is None:
+            return slice(int(start_index), int(start_index) + self.length)
+        start_index = int(start_index) % capacity
+        if start_index + self.length <= capacity:
+            return slice(start_index, start_index + self.length)
+        backend = self.storage.backend
+        return (backend.arange(self.length, device=self.storage.device) + start_index) % capacity
+
+
+class BufferedSegmentWriter(SegmentWriter):
+    """Keeps the appended samples in memory and writes them with one `set()` on commit."""
+
+    def __init__(self, storage : "SpaceStorage"):
+        super().__init__(storage)
+        self._values = []
+
+    def _append(self, value) -> None:
+        self._values.append(value)
+
+    def commit(self, start_index : int) -> None:
+        self.finish()
+        if self.length > 0:
+            batched_space = sbu.batch_space(self.storage.single_instance_space, 1)
+            self.storage.set(self._commit_indices(start_index), sbu.concatenate(batched_space, self._values))
+        self._values = []
+
+    def abort(self) -> None:
+        self._values = []
+
+
+class MappedSegmentWriter(SegmentWriter):
+    """Forwards to a writer of an inner storage, mapping every appended sample with `transform`."""
+
+    def __init__(self, storage : "SpaceStorage", inner_writer : SegmentWriter, transform : Callable[[Any], Any]):
+        super().__init__(storage)
+        self.inner_writer = inner_writer
+        self.transform = transform
+
+    def _append(self, value) -> None:
+        self.inner_writer.append(self.transform(value))
+
+    def _finish(self) -> None:
+        self.inner_writer.finish()
+
+    def commit(self, start_index : int) -> None:
+        self.finish()
+        self.inner_writer.commit(start_index)
+
+    def abort(self) -> None:
+        self.inner_writer.abort()
+
+
 class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """
     SpaceStorage is an abstract base class for storages that hold instances of a specific space.
@@ -185,6 +291,15 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
     # by using hasattr(self, "get_column")
     # def get_column(self, nested_keys : Sequence[str]) -> "SpaceStorage[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
     #     raise NotImplementedError
+
+    def open_segment_writer(self) -> SegmentWriter:
+        """
+        A writer that builds one segment of this storage off to the side; see `SegmentWriter`.
+        Unlike `mark_segment_start()` / `append()`, any number of writers can be open at a time.
+        The default keeps the samples in memory until the commit; storages override it to stream instead.
+        """
+        assert self.is_mutable, f"Cannot write to a read-only {type(self).__name__}"
+        return BufferedSegmentWriter(self)
 
     def clear(self) -> None:
         """

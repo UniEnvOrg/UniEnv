@@ -7,7 +7,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.utils.symbol_util import *
 from unienv_interface.transformations import DataTransformation, transformation_to_json, json_to_transformation
 
-from unienv_data.base import SpaceStorage, BatchT
+from unienv_data.base import SpaceStorage, SegmentWriter, MappedSegmentWriter, BatchT
 
 import numpy as np
 import os
@@ -169,6 +169,13 @@ class TransformedStorage(SpaceStorage[
     def append(self, value) -> None:
         transformed_value = self.data_transformation.transform(self.single_instance_space, value)
         self.inner_storage.append(transformed_value)
+
+    def open_segment_writer(self) -> SegmentWriter:
+        return MappedSegmentWriter(
+            self,
+            self.inner_storage.open_segment_writer(),
+            lambda value: self.data_transformation.transform(self.single_instance_space, value),
+        )
 
     def mark_segment_end(self) -> None:
         self.inner_storage.mark_segment_end()

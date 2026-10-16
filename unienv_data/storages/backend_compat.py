@@ -8,7 +8,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.backends.serialization import serialize_backend, deserialize_backend
 from unienv_interface.utils.symbol_util import *
 
-from unienv_data.base import SpaceStorage, BatchT
+from unienv_data.base import SpaceStorage, SegmentWriter, MappedSegmentWriter, BatchT
 
 import os
 import json
@@ -232,6 +232,18 @@ class ToBackendOrDeviceStorage(
             target_backend=self.inner_backend,
             target_device=self.inner_device,
         ))
+
+    def open_segment_writer(self) -> SegmentWriter:
+        return MappedSegmentWriter(
+            self,
+            self.inner_storage.open_segment_writer(),
+            lambda value: data_to(
+                value,
+                source_backend=self.backend,
+                target_backend=self.inner_backend,
+                target_device=self.inner_device,
+            ),
+        )
 
     def mark_segment_end(self) -> None:
         self.inner_storage.mark_segment_end()

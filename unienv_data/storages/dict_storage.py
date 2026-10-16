@@ -6,7 +6,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils.symbol_util import *
 
-from unienv_data.base import SpaceStorage, BatchT
+from unienv_data.base import SpaceStorage, SegmentWriter, BatchT
 
 import numpy as np
 import os
@@ -337,6 +337,9 @@ class DictStorage(SpaceStorage[
         for storage in self.storage_map.values():
             storage.mark_segment_end()
 
+    def open_segment_writer(self) -> SegmentWriter:
+        return _DictSegmentWriter(self)
+
     def abort_segment(self) -> None:
         for storage in self.storage_map.values():
             storage.abort_segment()
@@ -436,3 +439,33 @@ class DictStorage(SpaceStorage[
 
     def close(self):
         self.storage_map = {}
+
+
+class _DictSegmentWriter(SegmentWriter):
+    """One segment writer per child storage; appended samples are split by key like `DictStorage.append()`."""
+
+    def __init__(self, storage : DictStorage):
+        super().__init__(storage)
+        self.writers = {key: child.open_segment_writer() for key, child in storage.storage_map.items()}
+
+    def _append(self, value) -> None:
+        _, residual = map_transform(
+            value,
+            self.writers,
+            lambda key, data, writer: writer.append(data),
+            nested_separator=self.storage.nested_separator,
+        )
+        assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
+
+    def _finish(self) -> None:
+        for writer in self.writers.values():
+            writer.finish()
+
+    def commit(self, start_index : int) -> None:
+        self.finish()
+        for writer in self.writers.values():
+            writer.commit(start_index)
+
+    def abort(self) -> None:
+        for writer in self.writers.values():
+            writer.abort()

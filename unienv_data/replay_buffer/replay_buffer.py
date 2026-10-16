@@ -13,7 +13,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.space.space_utils import serialization_utils as bsu
 from unienv_interface.utils.symbol_util import get_class_from_full_name, get_full_class_name
 
-from unienv_data.base import BatchBase, BatchT, IndexableType, SpaceStorage
+from unienv_data.base import BatchBase, BatchT, IndexableType, SpaceStorage, SegmentWriter
 import json
 
 def index_with_offset(
@@ -651,14 +651,64 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             start_physical = (self.offset + self.count) % self.capacity
             indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
-            outflow = max(0, old_count + B - self.capacity)
-            if outflow > 0 and self._maintain_segment_metadata:
-                self._remove_physical_range_from_metadata(old_offset, outflow)
-            if outflow > 0:
-                self.offset = (old_offset + outflow) % self.capacity
-            self.count = min(old_count + B, self.capacity)
-            if self._maintain_segment_metadata:
-                self._physical_segments.append((start_physical, (start_physical + B - 1) % self.capacity))
+            self._account_round_robin_write(start_physical, B)
+
+    def _account_round_robin_write(self, start_physical: int, B: int) -> None:
+        """Update count / offset / segment metadata after `B` (<= capacity) samples were written at the tail."""
+        old_count = self.count
+        old_offset = self.offset
+        outflow = max(0, old_count + B - self.capacity)
+        if outflow > 0 and self._maintain_segment_metadata:
+            self._remove_physical_range_from_metadata(old_offset, outflow)
+        if outflow > 0:
+            self.offset = (old_offset + outflow) % self.capacity
+        self.count = min(old_count + B, self.capacity)
+        if self._maintain_segment_metadata:
+            self._physical_segments.append((start_physical, (start_physical + B - 1) % self.capacity))
+
+    def open_segment_writer(self) -> SegmentWriter:
+        """
+        A writer that builds one segment off to the side; `commit_segment()` then appends it at the tail.
+        Unlike `append()` / `mark_segment_end()`, any number of writers can be open at a time
+        (e.g. one per environment of a batched rollout), and they can be committed in any order.
+        Storages that support it (e.g. `VideoStorage`) encode the samples as they are appended.
+        """
+        return self.storage.open_segment_writer()
+
+    def commit_segment(self, writer: SegmentWriter) -> None:
+        """Append the segment built by `writer` (from `open_segment_writer()`) at the tail, as `extend()` would."""
+        with self._lock_scope():
+            assert writer.storage is self.storage, "The writer was not opened on this replay buffer"
+            B = len(writer)
+            if B == 0:
+                writer.abort()
+                return
+            if self.storage.has_open_segment or (
+                self._maintain_segment_metadata
+                and self._active_segment_start_physical is not None
+                and self._active_segment_length > 0
+            ):
+                raise RuntimeError("Cannot commit a segment while an append-built segment is open; call mark_segment_end() first")
+
+            if self.capacity is None:
+                old_count = self.count
+                self.storage.extend_length(B)
+                try:
+                    writer.commit(old_count)
+                except Exception:
+                    self.storage.shrink_length(B)
+                    raise
+                self.count = old_count + B
+                if self._maintain_segment_metadata:
+                    self._physical_segments.append((old_count, old_count + B - 1))
+                return
+
+            if B > self.capacity:
+                writer.abort()
+                raise ValueError(f"Cannot commit a {B}-sample segment into a replay buffer of capacity {self.capacity}")
+            start_physical = (self.offset + self.count) % self.capacity
+            writer.commit(start_physical)
+            self._account_round_robin_write(start_physical, B)
 
     def append(self, value):
         with self._lock_scope():

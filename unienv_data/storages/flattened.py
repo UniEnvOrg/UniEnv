@@ -6,7 +6,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.utils.symbol_util import *
 
-from unienv_data.base import SpaceStorage, BatchT
+from unienv_data.base import SpaceStorage, SegmentWriter, MappedSegmentWriter, BatchT
 
 import numpy as np
 import os
@@ -154,6 +154,13 @@ class FlattenedStorage(SpaceStorage[
 
     def append(self, value) -> None:
         self.inner_storage.append(sfu.flatten_data(self.single_instance_space, value))
+
+    def open_segment_writer(self) -> SegmentWriter:
+        return MappedSegmentWriter(
+            self,
+            self.inner_storage.open_segment_writer(),
+            lambda value: sfu.flatten_data(self.single_instance_space, value),
+        )
 
     def mark_segment_end(self) -> None:
         self.inner_storage.mark_segment_end()
