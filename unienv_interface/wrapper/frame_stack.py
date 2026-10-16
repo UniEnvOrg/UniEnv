@@ -68,11 +68,25 @@ class FrameStackWrapper(
         return context
 
     def map_observation(self, observation: ObsType) -> Union[Dict[str, Any], Any]:
+        return self._stacked_observation(observation)
+
+    def _stacked_observation(
+        self,
+        observation: ObsType,
+        mask: Optional[BArrayType] = None
+    ) -> Union[Dict[str, Any], Any]:
+        """Build the stacked observation; with ``mask`` only the selected rows are returned
+        (``observation`` is then the masked observation returned by the inner reset)."""
         if self.obs_deque is not None:
             observation = self.obs_deque.get_output_data()
+            if mask is not None:
+                observation = sbu.get_at(self.obs_deque.output_space, observation, mask)
         
         if self.action_deque is not None:
             stacked_action = self.action_deque.get_output_data()
+            if mask is not None:
+                stacked_action = sbu.get_at(self.action_deque.output_space, stacked_action, mask)
+            observation = copy.copy(observation)
             observation['past_actions'] = stacked_action
         return observation
     
@@ -104,7 +118,6 @@ class FrameStackWrapper(
         seed: Optional[int] = None,
         **kwargs
     ) -> Tuple[ContextType, Union[Dict[str, Any], Any], Dict[str, Any]]:
-        # TODO: If a mask is provided, we should only reset the stack for the masked indices
         context, obs, info = self.env.reset(
             *args,
             mask=mask,
@@ -127,7 +140,7 @@ class FrameStackWrapper(
                 mask=mask
             )
         
-        return context, self.map_observation(obs), info
+        return context, self._stacked_observation(obs, mask), info
     
     def step(
         self,

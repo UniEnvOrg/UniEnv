@@ -229,7 +229,7 @@ class EpisodeRenderStackWrapper(
             self._has_post_episode = False
             self.video_episode_start_step = self.video_step_num
         
-        ret = self.env.reset(*args, seed=seed, **kwargs)
+        ret = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
         self._post_step_render()
         return ret
     
@@ -241,7 +241,9 @@ class EpisodeRenderStackWrapper(
         return self._step_frame
     
     def close(self):
-        self._post_episode()
+        if not self._has_post_episode:
+            self._post_episode()
+            self._has_post_episode = True
         super().close()
 
 class EpisodeVideoWrapper(
@@ -290,12 +292,7 @@ class EpisodeVideoWrapper(
                     f"episode_{self.video_episode_num}_step_{self.video_episode_start_step}_key_{mapping_key}.{self.store_format}",
                 )
                 frames = self._frame_sequence_to_numpy_rgb(frame_sequence)
-                clip = ImageSequenceClip(frames, fps=self.env.render_fps or 30)
-                clip.write_videofile(
-                    video_path,
-                    logger=None,
-                )
-                clip.close()
+                self._write_clip(ImageSequenceClip, frames, video_path)
         else:
             assert isinstance(self.episodic_frames, list)
             video_path = os.path.join(
@@ -303,11 +300,17 @@ class EpisodeVideoWrapper(
                 f"episode_{self.video_episode_num}_step_{self.video_episode_start_step}.{self.store_format}",
             )
             frames = self._frame_sequence_to_numpy_rgb(self.episodic_frames)
-            clip = ImageSequenceClip(frames, fps=self.env.render_fps or 30)
-            clip.write_videofile(
-                video_path,
-                logger=None,
-            )
+            self._write_clip(ImageSequenceClip, frames, video_path)
+
+    def _write_clip(self, clip_cls, frames: List[np.ndarray], video_path: str) -> None:
+        clip = clip_cls(frames, fps=self.env.render_fps or 30)
+        try:
+            if self.store_format == 'gif':
+                # write_videofile has no codec for .gif files
+                clip.write_gif(video_path, logger=None)
+            else:
+                clip.write_videofile(video_path, logger=None)
+        finally:
             clip.close()
     
 class EpisodeWandbVideoWrapper(

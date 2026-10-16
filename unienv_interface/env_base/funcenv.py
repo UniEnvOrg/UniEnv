@@ -248,7 +248,11 @@ class FuncEnvBasedEnv(Env[
 
     @property
     def render_fps(self) -> Optional[int]:
-        self._init_render()
+        try:
+            self._init_render()
+        except NotImplementedError:
+            # The functional env has no renderer; fall back to its declared fps.
+            pass
         return self._render_fps
     
     @property

@@ -8,49 +8,89 @@ import multiprocessing as mp
 from multiprocessing.connection import Connection as MPConnection
 from multiprocessing.context import BaseContext as MPContext
 from queue import Empty as QueueEmpty
+import traceback
 
 def data_stack(
     data : Any,
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     device : Optional[BDeviceType] = None,
 ):
-    """Recursively stack Python/array data into a batched backend representation."""
+    """Recursively stack per-environment data into a batched backend representation.
+
+    * A mapping is processed value by value.
+    * A sequence of mappings that share the same keys (e.g. one ``info`` dict
+      per sub-environment) becomes a mapping of stacked values.
+    * A sequence of arrays or Python numbers is stacked into one array.
+    * Strings, bytes and other objects are kept as a list.
+    """
     if isinstance(data, Mapping):
-        data = {
-            key: data_stack(value, backend)
+        return {
+            key: data_stack(value, backend, device)
             for key, value in data.items()
         }
-    if isinstance(data, Sequence):
-        if len(data) == 0:
-            return data
-        if backend.is_backendarray(data[0]):
-            return backend.stack(data, axis=0)
-        elif isinstance(data[0], np.ndarray):
-            return np.stack(data, axis=0)
-        elif isinstance(data[0], (int, float, bool)):
-            dtype = (
-                backend.default_boolean_dtype if isinstance(data[0], bool) else
-                backend.default_floating_dtype if isinstance(data[0], float) else
-                backend.default_integer_dtype
-            )
-            return backend.asarray(data, dtype=dtype, device=device)
-        elif isinstance(data[0], SupportsFloat):
-            return backend.asarray(
-                [float(d) for d in data],
-                dtype=backend.default_floating_dtype,
-                device=device
-            )
-        else:
-            data = [
-                data_stack(value, backend)
-                for value in data
-            ]
-    return data
+    if not isinstance(data, Sequence) or isinstance(data, (str, bytes)):
+        return data
+    if len(data) == 0:
+        return data
+    first = data[0]
+    if isinstance(first, Mapping):
+        keys = first.keys()
+        if all(isinstance(d, Mapping) and d.keys() == keys for d in data):
+            return {
+                key: data_stack([d[key] for d in data], backend, device)
+                for key in keys
+            }
+        return [data_stack(value, backend, device) for value in data]
+    if backend.is_backendarray(first):
+        return backend.stack(data, axis=0)
+    elif isinstance(first, np.ndarray):
+        return np.stack(data, axis=0)
+    elif isinstance(first, (int, float, bool)):
+        dtype = (
+            backend.default_boolean_dtype if isinstance(first, bool) else
+            backend.default_floating_dtype if isinstance(first, float) else
+            backend.default_integer_dtype
+        )
+        return backend.asarray(data, dtype=dtype, device=device)
+    elif isinstance(first, (str, bytes)) or first is None:
+        return list(data)
+    elif isinstance(first, SupportsFloat):
+        return backend.asarray(
+            [float(d) for d in data],
+            dtype=backend.default_floating_dtype,
+            device=device
+        )
+    return [
+        data_stack(value, backend, device)
+        for value in data
+    ]
+
+def _batch_env_spaces(
+    spaces : Sequence[Optional[Space]],
+    device : Optional[BDeviceType] = None,
+) -> Optional[Space]:
+    """Batch the per-environment spaces (``None`` if the envs have no such space)."""
+    first = spaces[0]
+    if first is None:
+        return None
+    if all(space == first for space in spaces[1:]):
+        return sbu.batch_space(first, len(spaces))
+    return sbu.batch_differing_spaces(spaces, device=device)
+
+def _sub_env_seed(seed : Optional[int], index : int) -> Optional[int]:
+    """Seed used for sub-environment ``index`` when the vectorized env is reset with ``seed``."""
+    return None if seed is None else seed + index
 
 class SyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
-    """Run multiple non-batched environments synchronously in one process."""
+    """Run multiple non-batched environments synchronously in one process.
+
+    Seeding: ``reset(seed=s)`` reseeds ``rng`` with ``s`` and resets
+    sub-environment ``i`` with seed ``s + i`` (``i`` is the index in the
+    full batch, also when only a masked subset is reset), so every
+    sub-environment gets a distinct, reproducible seed.
+    """
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -72,15 +112,15 @@ class SyncVecEnv(Env[
             # assert env.observation_space == first_env.observation_space, "All envs must have the same observation_space"
             # assert env.context_space == first_env.context_space, "All envs must have the same context_space"
 
-        self.action_space = sbu.batch_differing_spaces(
+        self.action_space = _batch_env_spaces(
             [env.action_space for env in self.envs],
             device=first_env.device,
         )
-        self.observation_space = sbu.batch_differing_spaces(
+        self.observation_space = _batch_env_spaces(
             [env.observation_space for env in self.envs],
             device=first_env.device,
         )
-        self.context_space = None if first_env.context_space is None else sbu.batch_differing_spaces(
+        self.context_space = _batch_env_spaces(
             [env.context_space for env in self.envs],
             device=first_env.device,
         )
@@ -133,7 +173,7 @@ class SyncVecEnv(Env[
         for i, env in enumerate(self.envs):
             env_reset = True if mask is None else bool(mask[i])
             if env_reset:
-                context, obs, info = env.reset(*args, **kwargs)
+                context, obs, info = env.reset(*args, seed=_sub_env_seed(seed, i), **kwargs)
                 all_contexts.append(context)
                 all_obs.append(obs)
                 all_infos.append(info)
@@ -232,8 +272,9 @@ def _async_worker_fn(
 ) -> None:
     parent_pipe.close()
     del parent_pipe
-    env = env_fn()
+    env = None
     try:
+        env = env_fn()
         while True:
             cmd, args, kwargs = pipe.recv()
             if cmd == "reset":
@@ -248,16 +289,28 @@ def _async_worker_fn(
             elif cmd == "close":
                 break
     except (KeyboardInterrupt, Exception) as e:
-        pipe.send(None, False)
+        # Queue the exception before answering so the parent can pick it up,
+        # and send a textual description in case the exception is not picklable.
         error_queue.put((index, e))
+        try:
+            pipe.send(((type(e).__name__, str(e), traceback.format_exc()), False))
+        except Exception:
+            pass
     finally:
-        env.close()
+        if env is not None:
+            env.close()
         pipe.close()
 
 class AsyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
-    """Run multiple non-batched environments in separate worker processes."""
+    """Run multiple non-batched environments in separate worker processes.
+
+    Seeding follows :class:`SyncVecEnv`: ``reset(seed=s)`` resets worker ``i``
+    with seed ``s + i``. If a worker raises, the exception is re-raised in the
+    parent as a ``RuntimeError`` (chained to the worker's exception) and that
+    worker process exits.
+    """
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -331,10 +384,25 @@ class AsyncVecEnv(Env[
 
     def get_command_result(self, index: int):
         """Receive one worker result and surface worker-side exceptions."""
-        data, success = self.command_pipes[index].recv()
+        data, success = self._recv(index)
         if not success:
-            self._raise_if_error()
+            self._raise_if_error(index, data)
         return data
+
+    def _recv(self, index: int) -> Tuple[Any, bool]:
+        try:
+            return self.command_pipes[index].recv()
+        except EOFError:
+            return ("EOFError", "worker process exited unexpectedly", ""), False
+
+    def _get_command_results(self, indices: Iterable[int]) -> List[Any]:
+        """Receive the results of several workers, raising the first worker error
+        only after every pending result was received (so the pipes stay in sync)."""
+        results = [(i, *self._recv(i)) for i in indices]
+        for i, data, success in results:
+            if not success:
+                self._raise_if_error(i, data)
+        return [data for _, data, _ in results]
 
     def reset(
         self,
@@ -365,7 +433,7 @@ class AsyncVecEnv(Env[
         for i in range(len(self.processes)):
             env_reset = True if mask is None else bool(mask[i])
             if env_reset:
-                self.send_command(i, "reset", *args, **kwargs)
+                self.send_command(i, "reset", *args, seed=_sub_env_seed(seed, i), **kwargs)
     
     def reset_wait(
         self,
@@ -374,13 +442,15 @@ class AsyncVecEnv(Env[
         all_contexts = []
         all_obs = []
         all_infos = []
-        for i in range(len(self.processes)):
-            env_reset = True if self._reset_mask is None else bool(self._reset_mask[i])
-            if env_reset:
-                context, obs, info = self.get_command_result(i)
-                all_contexts.append(context)
-                all_obs.append(obs)
-                all_infos.append(info)
+        indices = [
+            i for i in range(len(self.processes))
+            if self._reset_mask is None or bool(self._reset_mask[i])
+        ]
+        self._reset_mask = None
+        for context, obs, info in self._get_command_results(indices):
+            all_contexts.append(context)
+            all_obs.append(obs)
+            all_infos.append(info)
 
         if self.context_space is not None:
             all_contexts = sbu.concatenate(
@@ -402,7 +472,6 @@ class AsyncVecEnv(Env[
             self.device
         )
 
-        self._reset_mask = None
         return all_contexts, all_obs, all_infos
     
     def step(
@@ -434,8 +503,7 @@ class AsyncVecEnv(Env[
         all_terminated = []
         all_truncated = []
         all_infos = []
-        for i in range(len(self.processes)):
-            obs, reward, terminated, truncated, info = self.get_command_result(i)
+        for obs, reward, terminated, truncated, info in self._get_command_results(range(len(self.processes))):
             all_obs.append(obs)
             all_rewards.append(reward)
             all_terminated.append(terminated)
@@ -468,6 +536,16 @@ class AsyncVecEnv(Env[
         )
         return all_obs, all_rewards, all_terminated, all_truncated, all_infos
 
+    def render(self) -> Sequence[RenderFrame] | None:
+        """Collect render outputs from every worker that returns a frame."""
+        for i in range(len(self.processes)):
+            self.send_command(i, "render")
+        frames = [
+            frame for frame in self._get_command_results(range(len(self.processes)))
+            if frame is not None
+        ]
+        return frames if len(frames) > 0 else None
+
     def close(self):
         """Shut down all worker processes and communication pipes."""
         for i in range(len(self.processes)):
@@ -476,17 +554,32 @@ class AsyncVecEnv(Env[
             except Exception:
                 pass
         for process in self.processes:
-            process.join()
+            process.join(timeout=30)
+            if process.is_alive():
+                process.terminate()
+                process.join()
             process.close()
         for pipe in self.command_pipes:
             pipe.close()
         self.command_pipes = []
         self.processes = []
     
-    def _raise_if_error(self):
-        """Raise the next worker exception captured in the error queue."""
+    def _raise_if_error(self, index: Optional[int] = None, error_data: Any = None):
+        """Raise the worker exception captured in the error queue.
+
+        ``error_data`` is the ``(type name, message, traceback)`` description sent
+        by the worker, used when the exception itself cannot be retrieved.
+        """
+        description = ""
+        if error_data is not None:
+            name, message, tb = error_data
+            description = f": {name}: {message}\n{tb}"
         try:
-            index, e = self.error_queue.get(block=False)
+            # The worker queues the exception before reporting failure, but the
+            # queue's feeder thread may still be flushing it.
+            error_index, e = self.error_queue.get(timeout=5.0)
         except QueueEmpty:
-            raise RuntimeError("Unknown error in AsyncVecEnv worker without any error message.")
-        raise RuntimeError("Error in AsyncVecEnv worker {}".format(index)) from e
+            if index is None and error_data is None:
+                raise RuntimeError("Unknown error in AsyncVecEnv worker without any error message.")
+            raise RuntimeError("Error in AsyncVecEnv worker {}{}".format(index, description))
+        raise RuntimeError("Error in AsyncVecEnv worker {}{}".format(error_index, description)) from e

@@ -19,7 +19,7 @@ class ControlFrequencyLimitWrapper(
     def __init__(
         self,
         env : Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        control_dt : Optional[int] = None
+        control_dt : Optional[float] = None
     ):
         super().__init__(env)
         if control_dt is not None:
@@ -44,7 +44,8 @@ class ControlFrequencyLimitWrapper(
             time.sleep(dt_remaining)
         else:
             print("Action is late by {:.3f}s".format(-dt_remaining))
-        self._last_control_time = ctime
+        # The control period starts when the action is actually sent (after sleeping).
+        self._last_control_time = time.monotonic()
         
         obs, rew, termination, truncation, info = self.env.step(action)
         return obs, rew, termination, truncation, info

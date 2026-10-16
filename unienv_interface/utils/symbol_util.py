@@ -1,4 +1,5 @@
 import base64
+import importlib
 from typing import Type, Callable, Any, Dict, Mapping
 
 __all__ = [
@@ -17,11 +18,32 @@ REMAP = {
 def get_full_class_name(cls : Type) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
+def _resolve_full_name(full_name : str) -> Any:
+    """Resolve ``module.path.Qual.Name`` where the qualified name may be nested (e.g. ``Cls.method``).
+
+    The longest importable module prefix is used and the remaining parts are
+    looked up as attributes.
+    """
+    parts = full_name.split(".")
+    for split in range(len(parts) - 1, 0, -1):
+        module_name = ".".join(parts[:split])
+        try:
+            obj = importlib.import_module(module_name)
+        except ModuleNotFoundError as e:
+            # Only skip this prefix if it is the prefix itself that is not a module;
+            # re-raise import errors coming from inside an existing module.
+            if e.name is not None and (module_name == e.name or module_name.startswith(e.name + ".")):
+                continue
+            raise
+        for attr in parts[split:]:
+            obj = getattr(obj, attr)
+        return obj
+    raise ImportError(f"Cannot resolve {full_name!r}: no importable module prefix")
+
 def get_class_from_full_name(full_name : str) -> Type:
     if full_name in REMAP:
         full_name = REMAP[full_name]
-    module_name, class_name = full_name.rsplit(".", 1)
-    return getattr(__import__(module_name, fromlist=[class_name]), class_name)
+    return _resolve_full_name(full_name)
 
 
 def get_full_function_name(fn: Callable) -> str:
@@ -30,16 +52,8 @@ def get_full_function_name(fn: Callable) -> str:
 
 
 def get_function_from_full_name(full_name: str) -> Callable:
-    """Get a function from its full name."""
-    module_name, function_name = full_name.rsplit(".", 1)
-    module = __import__(module_name, fromlist=[function_name])
-    
-    # Handle nested functions/classes
-    parts = function_name.split(".")
-    obj = module
-    for part in parts:
-        obj = getattr(obj, part)
-    return obj
+    """Get a function from its full name (``module.qualname``, qualname may be nested)."""
+    return _resolve_full_name(full_name)
 
 
 def serialize_function(fn: Callable) -> Dict[str, Any]:
@@ -61,8 +75,10 @@ def serialize_function(fn: Callable) -> Dict[str, Any]:
         try:
             # Verify we can retrieve it
             full_name = get_full_function_name(fn)
-            get_function_from_full_name(full_name)
-            return {"mode": "name", "value": full_name}
+            resolved = get_function_from_full_name(full_name)
+            # Bound methods resolve to the plain function; those must be pickled.
+            if resolved is fn or resolved == fn:
+                return {"mode": "name", "value": full_name}
         except (ImportError, AttributeError):
             pass
     

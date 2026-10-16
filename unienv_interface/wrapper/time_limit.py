@@ -49,7 +49,11 @@ class TimeLimitWrapper(
             if not termination and self._episode_time >= self.time_limit:
                 truncation = True
         else:
-            exceeds_time_mask = self._episode_time >= self.time_limit
+            # Like the unbatched branch, never mark a terminated instance as truncated.
+            exceeds_time_mask = self.backend.logical_and(
+                self._episode_time >= self.time_limit,
+                self.backend.logical_not(termination)
+            )
             truncation = self.backend.logical_or(truncation, exceeds_time_mask)
         return obs, rew, termination, truncation, info
 

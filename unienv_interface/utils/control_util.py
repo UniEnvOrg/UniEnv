@@ -66,3 +66,19 @@ def find_best_timestep(
         return dt_frac, steps_per_sensor
     else:
         return float(dt_frac), steps_per_sensor
+
+def is_integer_multiple(
+    value: Number,
+    base: Number,
+    *,
+    rel_tol: float = 1e-6,
+) -> bool:
+    """
+    Return whether ``value`` is a positive integer multiple (k >= 1) of ``base``.
+
+    Uses a relative tolerance on ``value / base`` instead of float ``%``, which
+    is unreliable for decimal periods (e.g. ``0.1 % 0.02 != 0``).
+    """
+    ratio = value / base
+    k = round(ratio)
+    return k >= 1 and abs(ratio - k) <= rel_tol * k

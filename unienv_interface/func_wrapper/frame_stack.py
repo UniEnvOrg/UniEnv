@@ -7,7 +7,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.funcenv import FuncEnv, ContextType, ObsType, ActType, RenderFrame, StateType, RenderStateType
 from unienv_interface.env_base.funcenv_wrapper import *
-from unienv_interface.space import Space
+from unienv_interface.space import Space, DictSpace
 from unienv_interface.utils.framestack_queue import FuncSpaceDataQueue, SpaceDataQueueState
 from unienv_interface.utils.stateclass import StateClass, field
 
@@ -41,7 +41,7 @@ class FuncFrameStackWrapper(
         assert action_stack_size == 0 or action_default_value is not None, "Action default value must be provided if action stack size is greater than 0"
         assert obs_stack_size > 0 or action_stack_size > 0, "At least one of observation stack size or action stack size must be greater than 0"
         super().__init__(func_env)
-        obs_is_dict = isinstance(func_env.observation_space, DictT)
+        obs_is_dict = isinstance(func_env.observation_space, DictSpace)
         assert obs_is_dict or action_stack_size == 0, "Action stack size must be 0 if observation space is not a DictSpace"
         
         self.action_stack_size = action_stack_size
@@ -80,12 +80,19 @@ class FuncFrameStackWrapper(
     def map_observation(
         self, 
         state : FuncFrameStackWrapperState[StateType],
-        observation : ObsType
+        observation : ObsType,
+        mask : Optional[BArrayType] = None,
     ) -> ObsType:
+        """Build the stacked observation; with ``mask`` only the selected rows are returned
+        (``observation`` is then the masked observation returned by the inner reset)."""
         if self.obs_deque is not None:
             observation = self.obs_deque.get_output_data(state.obs_queue_state)
+            if mask is not None:
+                observation = sbu.get_at(self.obs_deque.output_space, observation, mask)
         if self.action_deque is not None:
             stacked_action = self.action_deque.get_output_data(state.action_queue_state)
+            if mask is not None:
+                stacked_action = sbu.get_at(self.action_deque.output_space, stacked_action, mask)
             observation = copy.copy(observation)
             observation['past_actions'] = stacked_action
         return observation
@@ -132,7 +139,7 @@ class FuncFrameStackWrapper(
             obs_queue_state=obs_queue_state,
             action_queue_state=action_queue_state,
         )
-        return new_state, context, self.map_observation(new_state, observation), info
+        return new_state, context, self.map_observation(new_state, observation, mask), info
 
     def step(self, state, action):
         env_state, observation, reward, terminated, truncated, info = self.func_env.step(state.env_state, action)
@@ -148,3 +155,21 @@ class FuncFrameStackWrapper(
             action_queue_state=action_queue_state,
         )
         return new_state, self.map_observation(new_state, observation), reward, terminated, truncated, info
+
+    def close(self, state : Optional[FuncFrameStackWrapperState[StateType]]) -> None:
+        # FuncEnvBasedEnv closes with state None when the env was never reset.
+        self.func_env.close(None if state is None else state.env_state)
+
+    def render_init(self, state, *, seed = None, render_mode = None, **kwargs):
+        env_state, render_state, render_info = self.func_env.render_init(
+            state.env_state, seed=seed, render_mode=render_mode, **kwargs
+        )
+        return state.replace(env_state=env_state), render_state, render_info
+
+    def render_image(self, state, render_state):
+        image, env_state, render_state = self.func_env.render_image(state.env_state, render_state)
+        return image, state.replace(env_state=env_state), render_state
+
+    def render_close(self, state, render_state):
+        env_state = self.func_env.render_close(state.env_state, render_state)
+        return state.replace(env_state=env_state)

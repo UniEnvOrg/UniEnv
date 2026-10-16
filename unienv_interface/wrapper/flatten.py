@@ -86,12 +86,12 @@ class FlattenContextObservationWrapper(
     def map_context(self, context: Any) -> ContextType:
         if self.flatten_context:
             if self.env.batch_size is None:
-                return space_flatten_utils.unflatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.context_space,
                     context
                 )
             else:
-                return space_flatten_utils.unflatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.context_space,
                     context,
                     start_dim=1
@@ -101,12 +101,12 @@ class FlattenContextObservationWrapper(
     def reverse_map_context(self, context: ContextType) -> Union[Any, BArrayType]:
         if self.flatten_context:
             if self.env.batch_size is None:
-                return space_flatten_utils.flatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.context_space,
                     context
                 )
             else:
-                return space_flatten_utils.flatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.context_space,
                     context,
                     start_dim=1
@@ -116,12 +116,12 @@ class FlattenContextObservationWrapper(
     def map_observation(self, observation: Any) -> ObsType:
         if self.flatten_observation:
             if self.env.batch_size is None:
-                return space_flatten_utils.unflatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.observation_space,
                     observation
                 )
             else:
-                return space_flatten_utils.unflatten_data(
+                return space_flatten_utils.flatten_data(
                     self.env.observation_space,
                     observation,
                     start_dim=1
@@ -131,12 +131,12 @@ class FlattenContextObservationWrapper(
     def reverse_map_observation(self, observation: ObsType) -> Union[Any, BArrayType]:
         if self.flatten_observation:
             if self.env.batch_size is None:
-                return space_flatten_utils.flatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.observation_space,
                     observation
                 )
             else:
-                return space_flatten_utils.flatten_data(
+                return space_flatten_utils.unflatten_data(
                     self.env.observation_space,
                     observation,
                     start_dim=1

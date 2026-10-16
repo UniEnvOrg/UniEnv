@@ -38,15 +38,11 @@ class FuncTransformWrapper(
     def context_transformation(self) -> Optional[DataTransformation]:
         return self._context_transformation
     
-    @property
-    def context_transformation(self) -> Optional[DataTransformation]:
-        return self._context_transformation
-    
     @context_transformation.setter
     def context_transformation(self, value: Optional[DataTransformation]):
         if value is not None:
-            assert self.env.context_space is not None, "env.context_space must be defined if context_transformation is provided"
-        self._context_space = None if value is None else value.get_target_space_from_source(self.env.context_space)
+            assert self.func_env.context_space is not None, "func_env.context_space must be defined if context_transformation is provided"
+        self._context_space = self.func_env.context_space if value is None else value.get_target_space_from_source(self.func_env.context_space)
         self._context_transformation = value
     
     @property
@@ -55,7 +51,7 @@ class FuncTransformWrapper(
 
     @observation_transformation.setter
     def observation_transformation(self, value: Optional[DataTransformation]):
-        self._observation_space = None if value is None else value.get_target_space_from_source(self.env.observation_space)
+        self._observation_space = None if value is None else value.get_target_space_from_source(self.func_env.observation_space)
         self._observation_transformation = value
     
     def set_action_transformation(

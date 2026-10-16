@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from unienv_interface.env_base.funcenv import FuncEnv, FuncEnvCommonRenderInfo
 from unienv_interface.env_base.env import ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space.space_utils import batch_utils as sbu
 
 from .funcworld import FuncWorld, WorldStateT
 from .funcnode import FuncWorldNode, NodeStateT
@@ -222,7 +223,8 @@ class FuncWorldEnv(FuncEnv[
 	) -> Tuple[WorldFuncEnvState, ContextType, ObsType, Dict[str, Any]]:
 		"""Reset the composed functional environment, optionally forcing reload."""
 		if reload:
-			return self.reload(state, seed=seed, **kwargs)
+			state, context, obs, info = self.reload(state, seed=seed, **kwargs)
+			return (state, *self._select_reset_rows(context, obs, mask), info)
 		# 1. World reset
 		world_state = self.world.reset(state.world_state, seed=seed, mask=mask, **kwargs)
 		node_state = state.node_state
@@ -248,7 +250,23 @@ class FuncWorldEnv(FuncEnv[
 		context = self.node.get_context(world_state, node_state) if self.node.context_space is not None else None
 		obs = self.node.get_observation(world_state, node_state) if self.node.observation_space is not None else None
 		info = self.node.get_info(world_state, node_state) or {}
+		context, obs = self._select_reset_rows(context, obs, mask)
 		return WorldFuncEnvState(world_state, node_state), context, obs, info
+
+	def _select_reset_rows(
+		self,
+		context: Optional[ContextType],
+		obs: Optional[ObsType],
+		mask: Optional[BArrayType],
+	) -> Tuple[Optional[ContextType], Optional[ObsType]]:
+		"""With ``mask``, keep only the selected rows (``FuncEnv.reset`` contract)."""
+		if mask is None:
+			return context, obs
+		if context is not None:
+			context = sbu.get_at(self.node.context_space, context, mask)
+		if obs is not None:
+			obs = sbu.get_at(self.node.observation_space, obs, mask)
+		return context, obs
 
 	def step(
 		self, state: WorldFuncEnvState, action: ActType
@@ -326,6 +344,9 @@ class FuncWorldEnv(FuncEnv[
 
 	def close(self, state: WorldFuncEnvState) -> None:
 		"""Close the node tree first, then the underlying world."""
+		if state is None:
+			# Never initialized (e.g. FuncEnvBasedEnv closed before its first reset).
+			return
 		world_state = self.node.close(state.world_state, state.node_state)
 		self.world.close(world_state)
 
