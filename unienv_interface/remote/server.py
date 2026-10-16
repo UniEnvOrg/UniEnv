@@ -1,960 +1,476 @@
-"""Explicit resource registry and serialized execution domains."""
+"""Host environments, worlds and nodes for remote clients."""
 
 from __future__ import annotations
 
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 import logging
-import math
-from threading import Condition, Event, Lock, Thread, current_thread
-import time
+import traceback
+from queue import SimpleQueue
+from threading import Condition, Event, Lock, Thread
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 from urllib.parse import quote
-from uuid import uuid4
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Set, Tuple, TYPE_CHECKING, TypedDict, Union
 
 from unienv_interface.env_base.env import Env
-from unienv_interface.world.world import World
-from unienv_interface.world.node import WorldNode
-from unienv_interface.world.env_composer import WorldEnv
 from unienv_interface.space.space_utils.serialization_utils import space_to_json
+from unienv_interface.world.env_composer import WorldEnv
+from unienv_interface.world.node import WorldNode
+from unienv_interface.world.world import World
 
-from .codec import Codec, CodecError, PROTOCOL_VERSION, DEFAULT_MAX_MESSAGE_SIZE, map_arrays
-from .errors import RemoteError
-from .protocol import FIELDS, METHODS, PRIORITIES
-from .transport import MemoryTransport, WebSocketTransport
+from . import wire
+from .protocol import (ATTRIBUTES, ERROR, EVENT, METHODS, OK, OPTIONAL_METHODS, PRIORITIES, PROTOCOL_VERSION,
+                       PUBLISHED_METHODS, RESET_METHODS, SPACES)
+from .transport import Listener, MemoryTransport, Transport, listen
 
 if TYPE_CHECKING:
-    from concurrent.futures import Future
-    from unienv_interface.backends import ComputeBackend
-    from websockets.sync.server import Server, ServerConnection
     from .client import RemoteClient
-    from .protocol import Descriptor, ExecutionMode, OperationKind, ResourceKind, WireMessage
-    from .transport import MessageTransport
 
-    class _Operation(TypedDict):
-        id: str
-        kind: OperationKind
-        recovered: bool
+__all__ = ["RemoteServer"]
 
-HostedResource = Union[Env, World, WorldNode]
-ResourceFactory = Callable[[], HostedResource]
-DomainKey = Union[int, str, Tuple[str, int]]
-SnapshotCaptures = Dict[Tuple[str, str], Tuple[Dict[str, Any], Optional[Exception]]]
-
-try:
-    SERVER_VERSION = version("unienv")
-except PackageNotFoundError:
-    SERVER_VERSION = "unknown"
+Hosted = Union[Env, World, WorldNode]
+_log = logging.getLogger(__name__)
 
 
-class _FrozenResult(dict):
-    """A call result already detached by ``RemoteServer._freeze``.
+class _Group:
+    """One worker thread per registered root object: all its calls run there, serially."""
 
-    It (and the snapshots captured from ``resource.latest``) only references
-    server-owned decoded memory, so it need not be frozen again.
-    """
+    def __init__(self, label: str) -> None:
+        self.queue: SimpleQueue = SimpleQueue()
+        self.resources: List[_Resource] = []
+        self.owned: List[Hosted] = []  # registered objects closed with the server
+        self.version = 0  # bumped whenever a space of one of the resources changes
+        self.thread = Thread(target=self._run, name=f"unienv-remote:{label}", daemon=True)
+        self.thread.start()
 
-
-@dataclass
-class _Domain:
-    executor: Optional[ThreadPoolExecutor] = None
-    resources: List[_Resource] = field(default_factory=list)
-    owner: Optional[_Session] = None
-    mode: Optional[ExecutionMode] = None
-    operation: Optional[_Operation] = None
-    faulted: bool = False
-    revision: int = 0
-    sequence: int = 0
-    subscriptions: Dict[Tuple[str, str], Tuple[_Session, _Resource, List[str]]] = field(default_factory=dict)
-    factory: Optional[ResourceFactory] = None
-    root_id: Optional[str] = None
-    instantiated: bool = True
-    last_activity: float = field(default_factory=time.monotonic)
-
-
-@dataclass
-class _Resource:
-    id: str
-    obj: Optional[HostedResource]
-    kind: Optional[ResourceKind]
-    domain: _Domain
-    world_id: Optional[str] = None
-    children: Dict[str, str] = field(default_factory=dict)
-    node_id: Optional[str] = None
-    latest: Dict[str, Any] = field(default_factory=dict)
-
-
-class _Session:
-    """Separate writer: slow observers cannot block the world's worker."""
-
-    def __init__(self, server: RemoteServer, transport: MessageTransport) -> None:
-        self.server, self.transport = server, transport
-        self.codec = server.codec
-        self.id = uuid4().hex
-        self.condition = Condition()
-        self.responses: Deque[bytes] = deque()
-        self.snapshots: Dict[str, bytes] = {}
-        # request_id -> (message, payload): the latest encoding of a response (or of its
-        # result) for the request being handled, so it is not encoded again unchanged.
-        self.encoded: Dict[str, Tuple[Any, bytes]] = {}
-        self.closed = False
-        self.ready = False
-        self.writer = Thread(target=self._write, name="unienv-send", daemon=True)
-        self.reader = Thread(target=self.run, name="unienv-recv", daemon=True)
-
-    def enqueue(self, payload: bytes, subscription: Optional[str] = None) -> None:
-        with self.condition:
-            if self.closed:
+    def _run(self) -> None:
+        while True:
+            item = self.queue.get()
+            if item is None:
                 return
-            if subscription is None:
-                if len(self.responses) >= 64:
-                    self.close()
-                    return
-                self.responses.append(payload)
-            else:
-                self.snapshots[subscription] = payload
-            self.condition.notify_all()
+            item[0](*item[1])
 
-    def remember_encoded(self, request_id: Any, message: Any, payload: bytes) -> None:
-        self.encoded[request_id] = (message, payload)
 
-    def take_encoded(self, request_id: Any, message: Any) -> Optional[bytes]:
-        """Payload remembered for ``request_id`` if it was encoded from ``message`` itself."""
-        cached = self.encoded.pop(request_id, None)
-        return cached[1] if cached is not None and cached[0] is message else None
-
-    def _write(self) -> None:
+class _Resource:
+    def __init__(self, name: str, obj: Hosted, kind: str, group: _Group) -> None:
+        self.name, self.obj, self.kind, self.group = name, obj, kind, group
+        self.methods = frozenset(m for m in METHODS[kind]
+                                 if m not in OPTIONAL_METHODS or callable(getattr(obj, m, None)))
         try:
-            while True:
-                with self.condition:
-                    self.condition.wait_for(lambda: self.closed or self.responses or self.snapshots)
-                    if self.closed:
-                        return
-                    payload = self.responses.popleft() if self.responses else self.snapshots.pop(next(iter(self.snapshots)))
-                self.transport.send(payload)
+            self.backend, self.device = obj.backend, obj.device
+        except AttributeError:  # a node without a world
+            self.backend, self.device = None, None
+        self.links: Dict[str, Any] = {}
+        self.spaces: Tuple[Any, ...] = ()
+        self.documents: Tuple[Any, ...] = ()
+        self.version = 0
+        self.sequence = 0
+        self.subscribers: Tuple[_Connection, ...] = ()
+        self.static: Dict[str, Any] = {}
+        if kind != "world":
+            self.spaces = tuple(getattr(obj, attr, None) for attr in SPACES)
+            self.documents = tuple(_document(space) for space in self.spaces)
+
+    def descriptor(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"kind": self.kind, "methods": sorted(self.methods), **self.links}
+        attributes = {}
+        for attr in ATTRIBUTES:
+            try:
+                value = getattr(self.obj, attr)
+            except Exception:
+                continue
+            if attr == "metadata" and isinstance(value, dict):
+                value = {key: item for key, item in value.items() if _portable(item)}
+            if _portable(value):
+                attributes[attr] = value
+        result["attributes"] = attributes
+        if self.kind == "node":
+            result["priorities"] = {attr: sorted(getattr(self.obj, attr, ())) for attr in PRIORITIES}
+        return result
+
+    def space_update(self) -> List[Any]:
+        return [self.version, {attr: None if doc is None else wire.SpaceJSON(doc)
+                               for attr, doc in zip(SPACES, self.documents)}]
+
+
+def _portable(value: Any) -> bool:
+    try:
+        wire.encode(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _document(space: Any) -> Optional[Dict[str, Any]]:
+    if space is None:
+        return None
+    try:
+        return space_to_json(space)
+    except NotImplementedError as exc:
+        raise TypeError(f"Cannot serve a space of type {type(space).__name__}: {exc}") from None
+
+
+def _error(request_id: Any, exc: BaseException) -> Tuple[List[Any], int]:
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return wire.encode([request_id, ERROR, [type(exc).__name__, str(exc), text]])
+
+
+class _Connection:
+    """Per-client state. Events go out through a lazily started writer (latest wins)."""
+
+    def __init__(self, server: RemoteServer, transport: Transport) -> None:
+        self.server, self.transport = server, transport
+        self.compress: Dict[str, Any] = {}
+        self.compress_key: Any = None
+        self.seen: Dict[_Group, int] = {}
+        self.subscriptions: Dict[str, _Resource] = {}
+        self.closed = False
+        self._events: Dict[str, Tuple[List[Any], int]] = {}
+        self._condition = Condition()
+        self._writer: Optional[Thread] = None
+
+    def send(self, frame: Tuple[List[Any], int]) -> None:
+        try:
+            self.transport.send(*frame)
         except (ConnectionError, OSError):
             self.close()
 
+    def post(self, name: str, frame: Tuple[List[Any], int]) -> None:
+        with self._condition:
+            if self.closed:
+                return
+            self._events[name] = frame  # replaces an unsent older event
+            if self._writer is None:
+                self._writer = Thread(target=self._write_events, name="unienv-remote-events", daemon=True)
+                self._writer.start()
+            self._condition.notify()
+
+    def _write_events(self) -> None:
+        while True:
+            with self._condition:
+                self._condition.wait_for(lambda: self.closed or self._events)
+                if self.closed:
+                    return
+                frame = self._events.pop(next(iter(self._events)))
+            self.send(frame)
+
+    def unsubscribe(self, name: str) -> None:
+        resource = self.subscriptions.pop(name, None)
+        if resource is not None:
+            with self.server._lock:
+                resource.subscribers = tuple(c for c in resource.subscribers if c is not self)
+        with self._condition:
+            self._events.pop(name, None)
+
     def close(self) -> None:
-        with self.condition:
+        with self._condition:
             if self.closed:
                 return
             self.closed = True
-            self.responses.clear()
-            self.snapshots.clear()
-            self.condition.notify_all()
+            self._events.clear()
+            self._condition.notify_all()
         self.transport.close()
-
-    def run(self) -> None:
-        self.writer.start()
-        try:
-            while not self.closed:
-                request = self.codec.decode(self.transport.recv())
-                response = self.server._request(self, request)
-                payload = (self.take_encoded(response.get("request_id"), response)
-                           if isinstance(response, dict) else None)
-                self.encoded.clear()
-                self.enqueue(self.codec.encode(response) if payload is None else payload)
-        except (ConnectionError, OSError, CodecError):
-            pass
-        finally:
-            self.close()
-            self.writer.join()
-            for domain in self.server._domains.values():
-                domain.executor.submit(self.server._detach, domain, self)
-            with self.server._lock:
-                self.server._sessions.discard(self)
+        for name in list(self.subscriptions):
+            self.unsubscribe(name)
 
 
 class RemoteServer:
-    """Host objects or lazy root factories. Register resources before connecting.
+    """Serve registered objects to :class:`RemoteClient` connections.
 
-    Registration doesn't call lifecycle methods. All discovery, lifecycle,
-    snapshots, and cleanup execute on the resource's dedicated world worker.
-    Only factory registrations are evicted after idle_timeout seconds.
+    Example::
+
+        with RemoteServer() as server:
+            server.register("sim", env)
+            server.serve("tcp://0.0.0.0:7000")  # blocks; or listen() in the background
+
+    Each registered root runs on its own worker thread; calls on it, its world
+    and its nodes are executed there one at a time, in arrival order, whichever
+    client sent them. Only the methods in ``protocol.METHODS`` can be called.
     """
 
-    def __init__(self, *, max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE,
-                 idle_timeout: Optional[float] = 60.0) -> None:
-        if idle_timeout is not None and (not math.isfinite(idle_timeout) or idle_timeout <= 0):
-            raise ValueError("idle_timeout must be positive and finite, or None")
-        self.codec = Codec(max_message_size)
-        self.idle_timeout = idle_timeout
+    def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> None:
+        self.max_frame_size = max_frame_size
         self._resources: Dict[str, _Resource] = {}
-        self._objects: Dict[int, str] = {}
-        self._domains: Dict[DomainKey, _Domain] = {}
-        self._world_owners: Dict[int, _Domain] = {}
-        self._disposal_reservations: Set[int] = set()
-        self._sessions: Set[_Session] = set()
+        self._names: Dict[int, str] = {}  # id(object) -> resource name
+        self._groups: Dict[int, _Group] = {}  # id(world or base env) -> group
+        self._listeners: List[Listener] = []
+        self._connections: List[_Connection] = []
+        self._threads: List[Thread] = []
         self._lock = Lock()
-        self._started = False
-        self._closed = False
-        self._websocket: Optional[Server] = None
-        self._websocket_thread: Optional[Thread] = None
-        self._reaper_stop = Event()
-        self._reaper: Optional[Thread] = None
-        if idle_timeout is not None:
-            self._reaper = Thread(target=self._reap, name="unienv-reaper", daemon=True)
-            self._reaper.start()
+        self._closed = Event()
 
-    def register(self, resource_id: str, obj_or_factory: Union[HostedResource, ResourceFactory]) -> str:
-        """Register an Env, World, WorldNode, or zero-arg root factory.
+    # ------------------------------------------------------------------ registration
 
-        WorldEnv exports its world and complete node tree automatically.
-        Re-registering the same object returns its existing ID, without aliases.
-        World/node relationships and child names must stay fixed after registration.
-        Factories run on the world worker on first access (including discovery).
-        Their topology must remain identical across idle eviction and revival.
-        A root WorldNode with world=None owns a separate domain, including its
-        detached children. Each node must declare a backend; device defaults to
-        None for RPC coercion. Devices secretly shared by detached nodes have no
-        ownership protection, so their construction must be trusted.
+    def register(self, name: str, obj: Hosted, *, close: bool = True) -> str:
+        """Host ``obj`` (an ``Env``, ``World`` or ``WorldNode``) under ``name``.
+
+        An env built on a ``WorldEnv`` also exposes ``name/world`` and ``name/node``
+        (the root node), and every node its children as ``<node name>/<child>``,
+        so clients can compose them in components mode. Objects already exposed
+        keep their first name and share their worker. With ``close=True`` the
+        server closes ``obj`` (on its worker) when it shuts down.
         """
+        if not isinstance(name, str) or not name:
+            raise ValueError("Resource names must be non-empty strings")
+        if not isinstance(obj, (Env, World, WorldNode)):
+            raise TypeError(f"Expected an Env, World or WorldNode, got {type(obj).__name__}")
+        base = obj.unwrapped if isinstance(obj, Env) else obj
+        world = base.world if isinstance(base, (WorldEnv, WorldNode)) else (base if isinstance(base, World) else None)
         with self._lock:
-            if self._started or self._closed:
-                raise RuntimeError("Register resources before starting the server")
-            if callable(obj_or_factory):
-                if not isinstance(resource_id, str) or not resource_id:
-                    raise ValueError("resource_id must be a nonempty string")
-                if resource_id in self._resources:
-                    raise ValueError(f"Resource ID already registered: {resource_id}")
-                domain = _Domain(factory=obj_or_factory, root_id=resource_id, instantiated=False,
-                                 executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix="unienv-world"))
-                resource = _Resource(resource_id, None, None, domain)
-                domain.resources = [resource]
-                self._resources[resource_id] = resource
-                self._domains[resource_id] = domain
-                return resource_id
-            return self._register(resource_id, obj_or_factory)
-
-    def _register(self, resource_id: str, obj: HostedResource, target: Optional[_Domain] = None) -> str:
-        resources, objects, domains = self._resources.copy(), self._objects.copy(), self._domains.copy()
-        world_owners = self._world_owners.copy()
-        members = {key: list(domain.resources) for key, domain in domains.items()}
-        if target is not None:
-            resources = {key: value for key, value in resources.items() if value.domain is not target}
-            members[target.root_id] = []
-        root_world: Optional[Union[Env, World]] = None
-        detached_root = obj if isinstance(obj, WorldNode) and obj.world is None else None
-        detached_key: Optional[DomainKey] = ("node", id(detached_root)) if detached_root is not None else None
-
-        def visit(resource_id: str, obj: HostedResource) -> str:
-            nonlocal root_world
-            if not isinstance(resource_id, str) or not resource_id:
-                raise ValueError("resource_id must be a nonempty string")
-            if id(obj) in self._disposal_reservations:
-                raise ValueError("Resource is reserved for disposal")
-            if resource_id in resources and resources[resource_id].obj is not obj:
-                raise ValueError(f"Resource ID already registered: {resource_id}")
-            if id(obj) in objects:
-                existing = resources[objects[id(obj)]]
-                if target is not None and existing.domain is not target:
-                    raise ValueError("Factory trees must not share registered objects")
-                expected_key = target.root_id if target is not None else detached_key
-                if detached_root is not None and obj is not detached_root and existing.domain is not domains.get(expected_key):
-                    raise ValueError("Detached node trees must not share registered nodes across domains")
-                return objects[id(obj)]
-            if not isinstance(obj, (Env, World, WorldNode)):
-                raise TypeError("Expected Env, World, or WorldNode")
-            kind: ResourceKind = "env" if isinstance(obj, Env) else ("world" if isinstance(obj, World) else "node")
-            base = obj.unwrapped if isinstance(obj, Env) else obj
-            world = base.world if isinstance(base, (WorldEnv, WorldNode)) else base
-            if world is None:
-                if detached_root is None:
-                    raise ValueError("Only detached node roots and their children may omit a world")
-                self._backend_device(obj)
-            if id(base) in self._disposal_reservations or id(world) in self._disposal_reservations:
-                raise ValueError("Underlying world or environment is reserved for disposal")
-            key: DomainKey = detached_key if world is None else id(world)
-            if target is not None:
-                if world is not None:
-                    root_world = world if root_world is None else root_world
-                    if world is not root_world:
-                        raise ValueError("Factory trees must have their own single world")
-                key = target.root_id
-            if key not in domains:
-                domains[key] = _Domain()
-                members[key] = []
-            domain = domains[key]
-            if world is not None:
-                owner = world_owners.get(id(world))
-                if owner is not None and owner is not domain:
-                    raise ValueError("Underlying world or environment already belongs to another domain")
-                world_owners[id(world)] = domain
-            resource = _Resource(resource_id, obj, kind, domain)
-            resources[resource_id] = resource
-            objects[id(obj)] = resource_id
-            members[key].append(resource)
-            if isinstance(base, (WorldEnv, WorldNode)) and world is not None:
-                resource.world_id = visit(resource_id + "/world", world)
-            if isinstance(base, WorldEnv):
-                resource.node_id = visit(resource_id + "/node", base.node)
-            if isinstance(obj, WorldNode):
-                for child in getattr(obj, "nodes", ()):
-                    if child.world is not world:
-                        raise ValueError("All children must retain their server-side world")
-                    if child.name in resource.children:
-                        raise ValueError("Duplicate child node name")
-                    resource.children[child.name] = visit(resource_id + "/" + quote(child.name, safe=""), child)
-            return resource_id
-
-        canonical_id = visit(resource_id, obj)
-        if target is not None and target.resources[0].kind is not None:
-            def topology(items: Iterable[_Resource]) -> Dict[
-                str, Tuple[Optional[ResourceKind], Optional[str], Optional[str], Dict[str, str]]
-            ]:
-                return {r.id: (r.kind, r.world_id, r.node_id, r.children) for r in items}
-
-            if topology(target.resources) != topology(members[target.root_id]):
-                raise ValueError("Factory resource topology must remain unchanged on revival")
-        # Validation is complete before workers or existing domain state change.
-        for domain in domains.values():
-            if domain.executor is None:
-                domain.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="unienv-world")
-        for key, domain in domains.items():
-            domain.resources = members[key]
-        self._resources, self._objects, self._domains = resources, objects, domains
-        self._world_owners = world_owners
-        return canonical_id
-
-    def _backend_device(self, obj: HostedResource) -> Tuple[ComputeBackend, Optional[object]]:
-        if isinstance(obj, WorldNode) and obj.world is None:
-            backend = getattr(obj, "backend", None)
-            if backend is None:
-                raise ValueError("Detached nodes must declare a backend; the RPC device defaults to None")
-            return backend, getattr(obj, "device", None)
-        return obj.backend, obj.device
-
-    def _instantiate(self, domain: _Domain) -> None:
-        if domain.instantiated:
-            return
-        obj = domain.factory()
-        cleanup: List[HostedResource] = []
-        reserved: Set[int] = set()
-        try:
-            with self._lock:
-                revived = domain.resources[0].kind is not None
-                try:
-                    self._register(domain.root_id, obj, target=domain)
-                except Exception:
-                    # No registration can interleave between validation and reservation.
-                    try:
-                        cleanup, reserved = self._reserve_rejected(obj)
-                    except Exception:
-                        logging.getLogger(__name__).exception("Rejected factory cleanup planning failed for %s", domain.root_id)
-                    raise
-        except Exception:
-            try:
-                self._dispose_rejected(cleanup)
-            except Exception:
-                logging.getLogger(__name__).exception("Rejected factory cleanup failed for %s", domain.root_id)
-            finally:
-                with self._lock:
-                    self._disposal_reservations.difference_update(reserved)
-            raise
-        domain.instantiated = True
-        domain.faulted = False
-        if revived:
-            domain.revision += 1
-
-    def _reserve_rejected(self, obj: HostedResource) -> Tuple[List[HostedResource], Set[int]]:
-        """Plan cleanup and reserve its identities while holding the registry lock."""
-        protected = set(self._objects) | set(self._world_owners) | self._disposal_reservations
-        objects: Dict[int, HostedResource] = {}
-        children: Dict[int, List[int]] = {}
-        worlds: List[int] = []
-
-        def visit(current: HostedResource) -> None:
-            key = id(current)
-            if not isinstance(current, (Env, World, WorldNode)) or key in objects:
-                return
-            objects[key], children[key] = current, []
-            if key in protected:
-                return
-            dependencies: List[HostedResource] = []
-            if isinstance(current, WorldEnv):
-                dependencies = [current.node, current.world]
-            elif isinstance(current, Env):
-                wrapped = getattr(current, "env", None)
-                base = wrapped if isinstance(wrapped, Env) else current.unwrapped
-                if base is not current:
-                    dependencies = [base]
-            elif isinstance(current, WorldNode):
-                dependencies = list(getattr(current, "nodes", ()))
-            for child in dependencies:
-                visit(child)
-                if id(child) in objects:
-                    children[key].append(id(child))
-            if isinstance(current, WorldNode) and current.world is not None:
-                visit(current.world)
-                worlds.append(id(current.world))
-
-        def descendants(key: int, seen: Set[int]) -> None:
-            if key in seen:
-                return
-            seen.add(key)
-            for child in children[key]:
-                descendants(child, seen)
-
-        visited: Set[int] = set()
-        reserved: Set[int] = set()
-        cleanup: List[HostedResource] = []
-
-        def select(key: int) -> None:
-            if key in protected or key in visited:
-                return
-            covered: Set[int] = set()
-            descendants(key, covered)
-            if covered & (protected | visited):
-                # Composite close hooks cascade; only close independent branches.
-                visited.add(key)
-                for child in children[key]:
-                    select(child)
-                return
-            visited.update(covered)
-            reserved.update(covered)
-            cleanup.append(objects[key])
-
-        visit(obj)
-        if id(obj) in objects:
-            select(id(obj))
-        for key in worlds:
-            select(key)
-        self._disposal_reservations.update(reserved)
-        return cleanup, reserved
-
-    def _dispose_rejected(self, objects: Iterable[HostedResource]) -> None:
-        for obj in objects:
-            try:
-                obj.close()
-            except Exception:
-                logging.getLogger(__name__).exception("Rejected factory object cleanup failed")
-
-    def _discover(self, domain: _Domain) -> List[Descriptor]:
-        domain.last_activity = time.monotonic()
-        try:
-            self._instantiate(domain)
-            return self._freeze(self._descriptors(domain))
-        finally:
-            domain.last_activity = time.monotonic()
-
-    def _reap(self) -> None:
-        pending: Dict[DomainKey, Future[None]] = {}
-        while not self._reaper_stop.wait(min(self.idle_timeout / 2, 5.0)):
-            with self._lock:
-                domains = list(self._domains.items())
-            for key, domain in domains:
-                if domain.factory is not None and (key not in pending or pending[key].done()):
-                    pending[key] = domain.executor.submit(self._evict, domain)
-
-    def _evict(self, domain: _Domain) -> None:
-        if (not domain.instantiated or domain.owner is not None or domain.subscriptions
-                or time.monotonic() - domain.last_activity < self.idle_timeout):
-            return
-        try:
-            self._dispose(domain)
-        except Exception:
-            logging.getLogger(__name__).exception("Idle disposal failed for %s", domain.root_id)
-        finally:
-            with self._lock:
-                for resource in domain.resources:
-                    self._objects.pop(id(resource.obj), None)
-                    resource.obj = None
-                    resource.latest = {}
-            domain.instantiated = False
-
-    def attach(self, transport: MessageTransport) -> _Session:
-        """Accept a connected MessageTransport, starting a session in background."""
-        with self._lock:
-            if self._closed:
+            if self._closed.is_set():
                 raise RuntimeError("Server is closed")
-            self._started = True
-            session = _Session(self, transport)
-            self._sessions.add(session)
-            session.reader.start()
-        return session
-
-    def connect(self, **client_options: object) -> RemoteClient:
-        """Create an in-memory RemoteClient using the full wire protocol."""
-        from .client import RemoteClient
-        client_transport, server_transport = MemoryTransport.pair()
-        self.attach(server_transport)
-        client_options.setdefault("max_message_size", self.codec.max_message_size)
-        return RemoteClient(client_transport, **client_options)
-
-    def listen(self, host: str = "127.0.0.1", port: int = 0) -> str:
-        """Start the optional WebSocket listener; return its ws:// endpoint."""
-        from websockets.sync.server import serve
-        if self._closed or self._websocket is not None:
-            raise RuntimeError("Server is closed or already listening")
-
-        def handler(connection: ServerConnection) -> None:
-            session = self.attach(WebSocketTransport(connection))
-            session.reader.join()
-
-        self._started = True
-        self._websocket = serve(handler, host, port, max_size=self.codec.max_message_size,
-                                max_queue=16, compression=None, close_timeout=1)
-        self._websocket_thread = Thread(target=self._websocket.serve_forever, name="unienv-listen", daemon=True)
-        self._websocket_thread.start()
-        port = self._websocket.socket.getsockname()[1]
-        return f"ws://{'[' + host + ']' if ':' in host else host}:{port}"
-
-    def _descriptor(self, resource: _Resource) -> Descriptor:
-        obj = resource.obj
-        root = resource.domain.resources[0]
-        result: Descriptor = {"id": resource.id, "kind": resource.kind, "world_id": resource.world_id,
-                   "node_id": resource.node_id, "children": resource.children,
-                   "revision": resource.domain.revision, "sequence": resource.domain.sequence,
-                   "domain_id": root.world_id or root.id}
-        for attr in ("name", "batch_size", "world_timestep", "world_subtimestep", "control_timestep",
-                     "update_timestep", "render_mode", "render_fps", "supported_render_modes",
-                     "has_reward", "has_termination_signal", "has_truncation_signal", "metadata"):
-            if hasattr(obj, attr):
-                result[attr] = getattr(obj, attr)
-        for attr in ("action_space", "observation_space", "context_space"):
-            if resource.kind != "world":
-                space = getattr(obj, attr, None)
-                result[attr] = space_to_json(space) if space is not None else None
-        for attr in PRIORITIES:
-            if resource.kind == "node":
-                result[attr] = sorted(getattr(obj, attr), reverse=True)
-        result["operations"] = sorted(self._methods(resource))
-        return result
-
-    def _methods(self, resource: _Resource) -> Set[str]:
-        return {method for method, options in METHODS[resource.kind].items()
-                if not options.get("optional") or callable(getattr(resource.obj, method, None))}
-
-    def _descriptors(self, domain: _Domain) -> List[Descriptor]:
-        return [self._descriptor(resource) for resource in domain.resources]
-
-    def _request(self, session: _Session, request: Any) -> WireMessage:
-        response: WireMessage = {"version": PROTOCOL_VERSION, "type": "response", "session_id": session.id,
-                    "request_id": request.get("request_id") if isinstance(request, dict) else None,
-                    "resource_id": request.get("resource_id") if isinstance(request, dict) else None,
-                    "operation_id": request.get("operation_id") if isinstance(request, dict) else None}
-        try:
-            if not isinstance(request, dict) or request.get("type") != "request" or not isinstance(request.get("request_id"), str):
-                raise RemoteError("invalid_request", "Expected a request with a string request_id")
-            if request.get("version") != PROTOCOL_VERSION:
-                raise RemoteError("version_mismatch", "Only protocol version 1 is supported")
-            operation = request.get("op")
-            if not isinstance(operation, str):
-                raise RemoteError("invalid_request", "op must be a string")
-            if operation == "hello":
-                if session.ready:
-                    raise RemoteError("invalid_session", "hello has already completed")
-                limit = request.get("max_message_size", self.codec.max_message_size)
-                if type(limit) is not int or limit < 8:
-                    raise RemoteError("invalid_request", "Invalid max_message_size")
-                session.codec = Codec(min(limit, self.codec.max_message_size))
-                session.ready = True
-                result: Any = {"session_id": session.id, "max_message_size": session.codec.max_message_size,
-                          "server": "unienv", "server_version": SERVER_VERSION,
-                          "protocol_versions": [PROTOCOL_VERSION]}
-            else:
-                if not session.ready or request.get("session_id") != session.id:
-                    raise RemoteError("invalid_session", "Complete hello before making requests")
-                if operation == "discover":
-                    futures = [domain.executor.submit(self._discover, domain)
-                               for domain in self._domains.values()]
-                    result = []
-                    for future in futures:
-                        result.extend(future.result())
-                else:
-                    if not isinstance(request.get("resource_id"), str):
-                        raise RemoteError("invalid_request", "resource_id must be a string")
-                    resource = self._resources.get(request.get("resource_id"))
-                    if resource is None:
-                        roots = [d.root_id for d in self._domains.values() if d.factory is not None
-                                 and request["resource_id"].startswith(d.root_id + "/")]
-                        if roots:
-                            resource = self._resources[max(roots, key=len)]
-                    if resource is None:
-                        raise RemoteError("not_found", "Unknown resource ID")
-                    result = resource.domain.executor.submit(self._execute, session, resource, request).result()
-            response["result"] = result
-            # Freeze mutable array references while still serialized by _execute.
-            # _freeze_result usually encoded this exact envelope already.
-            payload = session.take_encoded(response["request_id"], result)
-            if payload is None:
-                payload = session.codec.encode(response)
-            session.remember_encoded(response["request_id"], response, payload)
-        except Exception as exc:
-            response.update(type="error", error={"code": exc.code if isinstance(exc, RemoteError) else
-                            ("serialization_error" if isinstance(exc, CodecError) else "execution_error"),
-                            "message": str(exc), "uncertain": getattr(exc, "uncertain", False)})
-            response.pop("result", None)
-        return response
-
-    def _claim(self, session: _Session, domain: _Domain, mode: Optional[ExecutionMode]) -> None:
-        if mode not in ("env", "components"):
-            raise RemoteError("invalid_request", "Unknown execution mode")
-        if domain.owner is not None and (domain.owner is not session or domain.mode != mode):
-            raise RemoteError("ownership_conflict", "This world already has a controller or a different execution mode")
-        domain.owner, domain.mode = session, mode
-
-    def _execute(self, session: _Session, resource: _Resource, request: WireMessage) -> Any:
-        domain = resource.domain
-        domain.last_activity = time.monotonic()
-        try:
-            if session.closed:
-                raise RemoteError("invalid_session", "Session has closed")
-            if request["op"] not in {"release", "unsubscribe"}:
-                self._instantiate(domain)
-            # A queued request may still hold a resource from before revival.
-            resource = self._resources.get(request["resource_id"])
-            if resource is None or resource.domain is not domain:
-                raise RemoteError("not_found", "Unknown resource ID")
-            return self._execute_active(session, resource, request)
-        finally:
-            domain.last_activity = time.monotonic()
-
-    def _execute_active(self, session: _Session, resource: _Resource, request: WireMessage) -> Any:
-        domain, op = resource.domain, request["op"]
-        if session.closed:
-            raise RemoteError("invalid_session", "Session has closed")
-        if op == "describe":
-            return self._freeze(self._descriptors(domain))
-        if op == "subscribe":
-            fields = request.get("fields", sorted(FIELDS[resource.kind] - {"render"}))
-            if not isinstance(fields, list) or any(not isinstance(f, str) or f not in FIELDS[resource.kind] for f in fields):
-                raise RemoteError("invalid_request", "Unsupported snapshot fields")
-            subscription_id = request.get("subscription_id")
-            if not isinstance(subscription_id, str) or not subscription_id:
-                raise RemoteError("invalid_request", "subscription_id must be a nonempty string")
-            key = (session.id, subscription_id)
-            if key in domain.subscriptions:
-                raise RemoteError("invalid_request", "Subscription ID already exists")
-            domain.subscriptions[key] = (session, resource, fields)
-            return subscription_id
-        if op == "unsubscribe":
-            subscription_id = request.get("subscription_id")
-            domain.subscriptions.pop((session.id, subscription_id), None)
-            with session.condition:
-                session.snapshots.pop(subscription_id, None)
-            return None
-        if op == "release":
-            if domain.owner is session:
-                self._release(domain)
-            return None
-        if op == "acquire":
-            if resource.kind == "node" and resource.world_id is None and request.get("mode") == "env":
-                raise RemoteError("invalid_request", "Detached nodes support only components mode")
-            self._claim(session, domain, request.get("mode"))
-            return None
-        if op not in {"begin", "complete", "abort", "call"}:
-            raise RemoteError("unsupported_operation", "Unknown protocol operation")
-        mode = "env" if resource.kind == "env" and op == "call" else "components"
-        self._claim(session, domain, mode)
-        if op == "begin":
-            kind, operation_id = request.get("kind"), request.get("operation_id")
-            if kind not in {"reset", "reload", "step"} or not isinstance(operation_id, str) or not operation_id:
-                raise RemoteError("invalid_request", "begin requires a kind and operation_id")
-            if domain.operation is not None:
-                raise RemoteError("operation_in_progress", "A component operation is already active")
-            if domain.faulted and kind not in {"reset", "reload"}:
-                raise RemoteError("faulted", "Reset or reload the world after an interrupted operation")
-            for member in domain.resources:
-                member.latest = {}
-            domain.operation = {"id": operation_id, "kind": kind, "recovered": False}
-            return None
-        if op in {"complete", "abort"}:
-            self._check_operation(domain, request)
-            if op == "abort":
-                domain.faulted, domain.operation = True, None
-                return None
-            operation = domain.operation
-            if operation["kind"] in {"reset", "reload"} and not operation["recovered"]:
-                root = domain.resources[0]
-                scope = "detached-root node" if root.kind == "node" and root.world_id is None else "world"
-                raise RemoteError("invalid_operation", f"Recovery requires a successful {scope} reset or reload")
-            domain.operation = None
-            domain.faulted = False
-            descriptors = self._freeze(self._descriptors(domain))
-            captured: SnapshotCaptures = {}
-            self._publish(domain, operation["id"], operation["kind"], captured=captured)
-            self._boundary_descriptors(domain, domain.sequence, descriptors, captured)
-            return self._freeze_result(session, request, descriptors)
-        method = request.get("method")
-        if not isinstance(method, str):
-            raise RemoteError("invalid_request", "method must be a string")
-        if method not in self._methods(resource):
-            raise RemoteError("unsupported_operation", "Method is not exported")
-        mutation = METHODS[resource.kind][method]["mutation"]
-        if domain.faulted and method not in {"reset", "reload"} and not (domain.operation and domain.operation["kind"] in {"reset", "reload"}):
-            raise RemoteError("faulted", "Reset or reload the world after an interrupted operation")
-        if resource.kind != "env" and (mutation or domain.operation):
-            self._check_operation(domain, request)
-            if domain.operation["kind"] == "step" and method in {"reset", "reload", "after_reset", "after_reload"}:
-                raise RemoteError("invalid_operation", "Reset lifecycle requires a reset/reload operation")
-            if domain.operation["kind"] in {"reset", "reload"} and method in {"step", "set_next_action", "pre_environment_step", "post_environment_step"}:
-                raise RemoteError("invalid_operation", "Step lifecycle requires a step operation")
-        invoked = False
-        try:
-            args = request.get("args", ())
-            kwargs = request.get("kwargs", {})
-            if not isinstance(args, (list, tuple)) or not isinstance(kwargs, dict):
-                raise RemoteError("invalid_request", "Expected args sequence and kwargs dictionary")
-            backend, device = self._backend_device(resource.obj)
-            args, kwargs = map_arrays(args, backend, device), map_arrays(kwargs, backend, device)
-            if resource.kind == "env" and mutation:
-                for member in domain.resources:
-                    member.latest = {}
-            invoked = True
-            value = getattr(resource.obj, method)(*args, **kwargs)
-            if method in {"reset", "reload", "after_reset", "after_reload"}:
-                domain.revision += 1
-            recovery_root = (resource.kind == "world" or
-                             (resource.kind == "node" and resource.world_id is None and resource is domain.resources[0]))
-            if recovery_root and method in {"reset", "reload"}:
-                domain.operation["recovered"] = True
-            if resource.kind == "world" and method == "step":
-                resource.latest = {"dt": value}
-            if resource.kind == "env" and mutation:
-                domain.faulted = False
-            result = {"value": value, "descriptors": self._descriptors(domain)}
-            captured = {}
-            if resource.kind == "env" and mutation:
-                # Detach mandatory values before optional getters can refresh
-                # buffers still referenced by the method's return tuple.
-                result = _FrozenResult(self._freeze(result))
-                fields = (("observation", "reward", "terminated", "truncated", "info") if method == "step"
-                          else ("context", "observation", "info"))
-                resource.latest = dict(zip(fields, result["value"]))
-                self._boundary_descriptors(domain, domain.sequence + 1, result["descriptors"], captured, resource)
-            result = self._freeze_result(session, request, result)
-            if resource.kind == "env" and mutation:
-                self._publish(domain, request["operation_id"], method, env_resource=resource,
-                              captured=captured)
-            return result
-        except Exception as exc:
-            if mutation and invoked:
-                domain.faulted = True
-                domain.operation = None
-                raise RemoteError("serialization_error" if isinstance(exc, CodecError) else "execution_error",
-                                  str(exc), uncertain=True) from exc
-            raise
-
-    def _check_operation(self, domain: _Domain, request: WireMessage) -> None:
-        if domain.operation is None or domain.operation["id"] != request.get("operation_id"):
-            raise RemoteError("invalid_operation", "An explicit matching component operation is required")
-
-    def _freeze(self, value: Any) -> Any:
-        return self.codec.decode(self.codec.encode(value))
-
-    def _boundary_descriptors(self, domain: _Domain, sequence: int, descriptors: List[Descriptor],
-                              captured: SnapshotCaptures, env_resource: Optional[_Resource] = None) -> None:
-        for resource, descriptor in zip(domain.resources, descriptors):
-            descriptor["sequence"] = sequence
-            if resource.kind == "env" and resource is not env_resource:
-                continue
+            group = self._groups.get(id(world)) if world is not None else None
+            group = group or self._groups.get(id(base))
+            created = group is None
+            if created:
+                group = _Group(name)
+            added: Dict[str, _Resource] = {}
+            names: Dict[int, str] = {}
             try:
-                selections = [fields for session, member, fields in domain.subscriptions.values()
-                              if session is domain.owner and member is resource]
-                allowed = (set(getattr(resource.obj, "remote_snapshot_fields", FIELDS["node"]))
-                           if resource.kind == "node" else FIELDS[resource.kind])
-                fields = sorted(((set().union(*selections) if selections else FIELDS[resource.kind]) & allowed) - {"render"})
-                data = self._capture_snapshot(resource, fields, captured)
-                descriptor["snapshot"] = {"sequence": sequence, "revision": domain.revision,
-                                          "fields": fields, "data": data}
+                self._expose(name, obj, group, added, names)
             except Exception:
-                # Optional read caching must not turn a successful mutation into a failure.
-                pass
-
-    def _capture_snapshot(self, resource: _Resource, fields: Iterable[str], captured: SnapshotCaptures) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-        for field in sorted(fields):
-            key = (resource.id, field)
-            if key not in captured:
-                try:
-                    data = self._snapshot(resource, [field])
-                    # Env fields other than render come from ``resource.latest``, the
-                    # already frozen step / reset result; everything else is live.
-                    if resource.kind != "env" or field == "render":
-                        data = self._freeze(data)
-                    captured[key] = (data, None)
-                except Exception as exc:
-                    captured[key] = ({}, exc)
-            data, error = captured[key]
-            if error is not None:
-                raise error
-            result.update(data)
-        return result
-
-    def _freeze_result(self, session: _Session, request: WireMessage, result: Any) -> Any:
-        def encode() -> Any:
-            frozen = result if isinstance(result, _FrozenResult) else self._freeze(result)
-            payload = session.codec.encode({"version": PROTOCOL_VERSION, "type": "response", "session_id": session.id,
-                                            "request_id": request["request_id"], "resource_id": request.get("resource_id"),
-                                            "operation_id": request.get("operation_id"), "result": frozen})
-            # _request encodes the same envelope around ``frozen``; let it reuse this.
-            session.remember_encoded(request["request_id"], frozen, payload)
-            return frozen
-
-        try:
-            return encode()
-        except CodecError:
-            # Keep the original result and its uncertainty semantics when optional
-            # snapshots would exceed either peer's negotiated message limit.
-            descriptors = result if isinstance(result, list) else result["descriptors"]
-            if not any("snapshot" in descriptor for descriptor in descriptors):
+                if created:
+                    group.queue.put(None)
                 raise
-            for descriptor in descriptors:
-                descriptor.pop("snapshot", None)
-            return encode()
+            for resource in added.values():
+                resource.static = resource.descriptor()
+            self._resources.update(added)
+            self._names.update(names)
+            group.resources.extend(added.values())
+            for key in {id(base), id(world)} - {id(None)}:
+                self._groups.setdefault(key, group)
+            if close and all(owned is not obj for owned in group.owned):
+                group.owned.append(obj)
+        return self._names[id(obj)]
 
-    def _snapshot(self, resource: _Resource, fields: Iterable[str]) -> Dict[str, Any]:
-        if resource.kind != "node":
-            result: Dict[str, Any] = {key: value for key, value in resource.latest.items() if key in fields}
-            if "render" in fields and resource.kind == "env":
-                result["render"] = resource.obj.render()
-            return result
-        obj, result = resource.obj, {}
-        getters = {"context": ("context_space", "get_context"), "observation": ("observation_space", "get_observation"),
-                   "reward": ("has_reward", "get_reward"), "terminated": ("has_termination_signal", "get_termination"),
-                   "truncated": ("has_truncation_signal", "get_truncation"), "info": (None, "get_info"),
-                   "render": ("can_render", "render")}
-        for name in fields:
-            flag, getter = getters[name]
-            enabled = flag is None or (getattr(obj, flag, None) is not None if flag.endswith("_space") else bool(getattr(obj, flag, False)))
-            if enabled:
-                result[name] = getattr(obj, getter)()
-        return result
+    def _expose(self, name: str, obj: Hosted, group: _Group, added: Dict[str, _Resource],
+                names: Dict[int, str]) -> str:
+        existing = self._names.get(id(obj)) or names.get(id(obj))
+        if existing is not None:
+            return existing
+        if name in self._resources or name in added:
+            raise ValueError(f"Resource name {name!r} is already registered")
+        kind = "env" if isinstance(obj, Env) else "world" if isinstance(obj, World) else "node"
+        resource = _Resource(name, obj, kind, group)
+        added[name], names[id(obj)] = resource, name
+        base = obj.unwrapped if isinstance(obj, Env) else obj
+        if isinstance(base, WorldEnv):
+            resource.links["world"] = self._expose(name + "/world", base.world, group, added, names)
+            resource.links["node"] = self._expose(name + "/node", base.node, group, added, names)
+        elif kind == "node":
+            world = obj.world
+            resource.links["world"] = None if world is None else self._expose(name + "/world", world, group, added, names)
+            resource.links["children"] = {
+                child.name: self._expose(f"{name}/{quote(child.name, safe='')}", child, group, added, names)
+                for child in getattr(obj, "nodes", ())
+            }
+        return name
 
-    def _publish(self, domain: _Domain, operation_id: str, kind: str,
-                 env_resource: Optional[_Resource] = None, captured: Optional[SnapshotCaptures] = None) -> None:
-        domain.sequence += 1
-        timestamp = time.time_ns()
-        if captured is None:
-            captured = {}
-        for (_, subscription_id), (session, resource, fields) in list(domain.subscriptions.items()):
-            # A client-composed env need not match any registered server Env.
-            if resource.kind == "env" and resource is not env_resource:
-                continue
-            event: WireMessage = {"version": PROTOCOL_VERSION, "type": "snapshot", "session_id": session.id,
-                     "subscription_id": subscription_id, "resource_id": resource.id,
-                     "operation_id": operation_id, "kind": kind, "sequence": domain.sequence,
-                     "timestamp_ns": timestamp, "descriptor_revision": domain.revision}
-            try:
-                event["data"] = self._capture_snapshot(resource, fields, captured)
-                event["descriptor"] = self._descriptor(resource)
-                session.enqueue(session.codec.encode(event), subscription_id)
-            except Exception as exc:
-                # Errors use the reliable response queue, not the lossy snapshots.
-                event.pop("data", None)
-                event.pop("descriptor", None)
-                event.update(type="subscription_error", error={"code": "snapshot_error", "message": str(exc)[:512]})
-                try:
-                    session.enqueue(session.codec.encode(event))
-                except CodecError:
-                    session.close()
-                domain.subscriptions.pop((session.id, subscription_id), None)
+    @property
+    def resources(self) -> List[str]:
+        """Names of every hosted resource."""
+        return list(self._resources)
 
-    def _release(self, domain: _Domain) -> None:
-        if domain.operation is not None:
-            domain.faulted = True
-        domain.operation = None
-        domain.owner = domain.mode = None
+    # ------------------------------------------------------------------ connections
 
-    def _detach(self, domain: _Domain, session: _Session) -> None:
-        if domain.owner is session:
-            self._release(domain)
-            domain.last_activity = time.monotonic()
-        for key in list(domain.subscriptions):
-            if key[0] == session.id:
-                domain.subscriptions.pop(key)
-                domain.last_activity = time.monotonic()
+    def listen(self, address: str = "tcp://127.0.0.1:0") -> str:
+        """Accept connections on ``address`` in the background; return the bound address.
 
-    def _dispose(self, domain: _Domain) -> None:
-        if not domain.instantiated:
-            return
+        ``address`` is ``tcp://host:port``, ``unix:///path`` or ``ws://host:port``
+        (the latter requires ``websockets``, from the ``network`` extra).
+        """
+        if self._closed.is_set():
+            raise RuntimeError("Server is closed")
+        listener = listen(address, on_connect=self._accept, serve_connection=self._serve,
+                          max_frame_size=self.max_frame_size)
+        with self._lock:
+            self._listeners.append(listener)
+        return listener.address
+
+    def serve(self, address: str = "tcp://127.0.0.1:0") -> None:
+        """Listen on ``address`` and block until :meth:`close` (or Ctrl-C)."""
+        _log.info("Serving %s on %s", ", ".join(self._resources), self.listen(address))
         try:
-            self._dispose_resources(domain)
+            self._closed.wait()
+        except KeyboardInterrupt:
+            pass
         finally:
-            with self._lock:
-                self._world_owners = {key: owner for key, owner in self._world_owners.items()
-                                      if owner is not domain}
+            self.close()
 
-    def _dispose_resources(self, domain: _Domain) -> None:
-        nodes = [r.obj for r in domain.resources if r.kind == "node"]
-        child_ids = {id(child) for node in nodes for child in getattr(node, "nodes", ())}
-        errors: List[Exception] = []
-        environments = [r.obj for r in domain.resources if r.kind == "env"]
-        covered_nodes: Set[int] = set()
+    def connect(self, **client_options: Any) -> RemoteClient:
+        """An in-process client over a :class:`MemoryTransport` (mainly for tests)."""
+        from .client import RemoteClient
+        client_side, server_side = MemoryTransport.pair(self.max_frame_size)
+        self._accept(server_side)
+        return RemoteClient(client_side, **client_options)
 
-        def cover(node: WorldNode) -> None:
-            if id(node) in covered_nodes:
+    def _accept(self, transport: Transport) -> None:
+        thread = Thread(target=self._serve, args=(transport,), name="unienv-remote-reader", daemon=True)
+        with self._lock:
+            self._threads = [t for t in self._threads if t.is_alive()] + [thread]
+        thread.start()
+
+    def _serve(self, transport: Transport) -> None:
+        """Read requests from one connection until it closes."""
+        connection = _Connection(self, transport)
+        with self._lock:
+            if self._closed.is_set():
+                transport.close()
                 return
-            covered_nodes.add(id(node))
-            for child in getattr(node, "nodes", ()):
-                cover(child)
+            self._connections.append(connection)
+        try:
+            while not connection.closed:
+                document, buffers = transport.recv()
+                self._dispatch(connection, wire.parse(document), buffers)
+        except wire.WireError as exc:
+            _log.warning("Closing a connection that sent a malformed frame: %s", exc)
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            connection.close()
+            with self._lock:
+                if connection in self._connections:
+                    self._connections.remove(connection)
 
-        # Prefer the outermost registered wrapper chain, allowing its close hook
-        # to release wrapper-owned resources before the underlying env/world.
-        wrapped_ids: Set[int] = set()
-        for env in environments:
-            current = getattr(env, "env", None)
-            while isinstance(current, Env) and id(current) not in wrapped_ids:
-                wrapped_ids.add(id(current))
-                current = getattr(current, "env", None)
-        roots = [env for env in environments if id(env) not in wrapped_ids]
-        objects = roots[:1]
-        world_covered = False
-        if roots:
-            base = roots[0].unwrapped
-            if isinstance(base, WorldEnv):
-                cover(base.node)
-                world_covered = True
-        objects += [node for node in nodes if id(node) not in child_ids and id(node) not in covered_nodes]
-        if not world_covered:
-            objects += [r.obj for r in domain.resources if r.kind == "world"]
-        for obj in objects:
+    def _dispatch(self, connection: _Connection, message: Any, buffers: List[Any]) -> None:
+        if (type(message) is not list or len(message) != 5 or type(message[0]) is not int
+                or type(message[1]) is not str or type(message[2]) is not str):
+            raise wire.WireError("Requests must be [id, target, method, args, kwargs]")
+        request_id, target, method = message[:3]
+        if target == "":
             try:
-                obj.close()
+                value = self._protocol_call(connection, method, *wire.restore(message[3:], buffers))
+                connection.send(wire.encode([request_id, OK, value]))
+            except wire.WireError:
+                raise
             except Exception as exc:
-                errors.append(exc)
-        if errors:
-            raise errors[0]
+                connection.send(_error(request_id, exc))
+            return
+        resource = self._resources.get(target)
+        if resource is None or method not in resource.methods:
+            exc: Exception = (KeyError(f"No resource named {target!r}") if resource is None else
+                              AttributeError(f"{resource.kind} {target!r} does not expose {method!r}"))
+            wire.restore(message[3:], buffers)  # still validate the frame
+            connection.send(_error(request_id, exc))
+            return
+        args, kwargs = wire.restore(message[3:], buffers, resource.backend, resource.device)
+        if type(args) is not list or type(kwargs) is not dict:
+            raise wire.WireError("Request args must be a list and kwargs a dict")
+        resource.group.queue.put((self._execute, (connection, resource, request_id, method, args, kwargs)))
+
+    def _protocol_call(self, connection: _Connection, method: str, args: Any, kwargs: Any) -> Any:
+        if method == "hello":
+            version = kwargs.get("version")
+            if version != PROTOCOL_VERSION:
+                raise ValueError(f"Protocol version {version!r} is not supported (server: {PROTOCOL_VERSION})")
+            if kwargs.get("compress"):
+                from .compression import parse_spec
+                connection.compress = parse_spec(kwargs["compress"])
+                connection.compress_key = repr(sorted(connection.compress.items()))
+            resources = {}
+            for name, resource in list(self._resources.items()):
+                group = resource.group
+                connection.seen.setdefault(group, group.version)  # read before the spaces
+                resources[name] = dict(resource.static, spaces=resource.space_update())
+            return {"version": PROTOCOL_VERSION, "resources": resources}
+        if method in ("subscribe", "unsubscribe"):
+            name = args[0]
+            resource = self._resources.get(name)
+            if resource is None or resource.kind != "env":
+                raise KeyError(f"No environment named {name!r}")
+            if method == "subscribe" and name not in connection.subscriptions:
+                connection.subscriptions[name] = resource
+                with self._lock:
+                    resource.subscribers += (connection,)
+            elif method == "unsubscribe":
+                connection.unsubscribe(name)
+            return None
+        raise AttributeError(f"Unknown protocol method {method!r}")
+
+    # ------------------------------------------------------------------ worker side
+
+    def _execute(self, connection: _Connection, resource: _Resource, request_id: int, method: str,
+                 args: List[Any], kwargs: Dict[str, Any]) -> None:
+        try:
+            value = getattr(resource.obj, method)(*args, **kwargs)
+            group = resource.group
+            if method in RESET_METHODS:
+                self._check_spaces(group)
+            if resource.subscribers and method in PUBLISHED_METHODS:
+                self._publish(resource, method, value)
+            message = [request_id, OK, self._compress(connection, resource, method, value)]
+            seen = connection.seen.get(group, 0)
+            if group.version > seen:
+                message.append({r.name: r.space_update() for r in group.resources if r.version > seen})
+            frame = wire.encode(message, max_size=connection.transport.max_frame_size)
+            connection.seen[group] = group.version
+        except Exception as exc:
+            frame = _error(request_id, exc)
+        connection.send(frame)
+
+    def _check_spaces(self, group: _Group) -> None:
+        """Bump the version of resources whose spaces changed (cheap identity check first)."""
+        for resource in group.resources:
+            if resource.kind == "world":
+                continue
+            spaces = tuple(getattr(resource.obj, attr, None) for attr in SPACES)
+            if all(new is old for new, old in zip(spaces, resource.spaces)):
+                continue
+            documents = tuple(_document(space) for space in spaces)
+            resource.spaces = spaces
+            if documents != resource.documents:
+                resource.documents = documents
+                group.version += 1
+                resource.version = group.version
+
+    def _compress(self, connection: _Connection, resource: _Resource, method: str, value: Any) -> Any:
+        if not connection.compress:
+            return value
+        from .compression import compress_result
+        return compress_result(value, resource, method, connection.compress)
+
+    def _publish(self, resource: _Resource, method: str, value: Any) -> None:
+        resource.sequence += 1
+        frames: Dict[Any, Tuple[List[Any], int]] = {}
+        for connection in resource.subscribers:
+            frame = frames.get(connection.compress_key)
+            if frame is None:
+                try:
+                    payload = self._compress(connection, resource, method, value)
+                    frame = wire.encode([resource.name, EVENT, [method, resource.sequence, payload]], copy=True,
+                                        max_size=connection.transport.max_frame_size)
+                except (TypeError, ValueError) as exc:
+                    _log.warning("Cannot publish %s of %r: %s", method, resource.name, exc)
+                    return
+                frames[connection.compress_key] = frame
+            connection.post(resource.name, frame)
+
+    # ------------------------------------------------------------------ shutdown
 
     def close(self) -> None:
+        """Stop listening, drop every connection, close owned objects on their workers."""
         with self._lock:
-            if self._closed:
+            if self._closed.is_set():
                 return
-            self._closed = True
-            sessions = list(self._sessions)
-        self._reaper_stop.set()
-        if self._reaper is not None:
-            self._reaper.join()
-        if self._websocket is not None:
-            self._websocket.shutdown()
-        for session in sessions:
-            session.close()
-        for session in sessions:
-            if current_thread() is not session.reader:
-                session.reader.join()
-            if current_thread() is not session.writer:
-                session.writer.join()
-        errors: List[Exception] = []
-        for domain in self._domains.values():
+            self._closed.set()
+            listeners, connections, threads = list(self._listeners), list(self._connections), list(self._threads)
+        for connection in connections:
+            connection.close()
+        for listener in listeners:
+            listener.close()
+        for thread in threads:
+            thread.join()
+        groups = {id(group): group for group in self._groups.values()}.values()
+        for group in groups:
+            group.queue.put((self._close_owned, (group,)))
+            group.queue.put(None)
+        for group in groups:
+            group.thread.join()
+
+    @staticmethod
+    def _close_owned(group: _Group) -> None:
+        for obj in reversed(group.owned):
             try:
-                domain.executor.submit(self._dispose, domain).result()
-            except Exception as exc:
-                errors.append(exc)
-            finally:
-                domain.executor.shutdown(wait=True)
-                domain.factory = None
-        if self._websocket_thread is not None:
-            self._websocket_thread.join()
-        self._resources.clear()
-        self._objects.clear()
-        self._domains.clear()
-        self._world_owners.clear()
-        if errors:
-            raise errors[0]
+                obj.close()
+            except Exception:
+                _log.exception("Closing a hosted object failed")
 
     def __enter__(self) -> RemoteServer:
         return self

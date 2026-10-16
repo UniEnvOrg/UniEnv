@@ -1,87 +1,98 @@
-"""Synchronous requests with an independent response/event receiver."""
+"""Connect to a :class:`RemoteServer` and call hosted objects."""
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from copy import deepcopy
-from threading import Condition, Event, Lock, RLock, Thread, current_thread
-from queue import Queue, Full
-from uuid import uuid4
-import weakref
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, TYPE_CHECKING, TypedDict, Union
+from itertools import count
+from threading import Condition, Lock, RLock, Thread, current_thread
+from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Tuple, TYPE_CHECKING, Union
 
 from unienv_interface.backends.numpy import NumpyComputeBackend
 
-from .codec import Codec, PROTOCOL_VERSION, DEFAULT_MAX_MESSAGE_SIZE, map_arrays
-from .errors import RemoteError, UncertainOutcomeError
-from .protocol import METHODS
-from .transport import WebSocketTransport
+from . import wire
+from .errors import RemoteError
+from .protocol import ERROR, EVENT, PROTOCOL_VERSION
+from .transport import Transport, connect
 
 if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
-    from .protocol import BoundarySnapshot, Descriptor, ExecutionMode, OperationKind, WireMessage
-    from .proxies import _Proxy, RemoteEnv, RemoteWorld, RemoteWorldNode
-    from .transport import MessageTransport
+    from .proxies import RemoteEnv, RemoteWorld, RemoteWorldNode
 
-    class _Pending(TypedDict, total=False):
-        event: Event
-        response: WireMessage
-        failure: BaseException
+__all__ = ["RemoteClient", "Subscription", "SubscriptionEvent"]
+
+_LOST = ("Connection to the server was lost; a call in flight may or may not have run on the server")
+
+
+class _Pending:
+    __slots__ = ("lock", "message", "buffers", "error")
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.lock.acquire()
+        self.message: Any = None
+        self.buffers: List[Any] = []
+        self.error: Optional[BaseException] = None
+
+
+class SubscriptionEvent(NamedTuple):
+    """The result of a ``reset`` / ``reload`` / ``step`` of a subscribed env."""
+
+    kind: str
+    """Name of the method that produced ``value``."""
+    sequence: int
+    """Per-env call counter; gaps mean intermediate results were skipped."""
+    value: Any
+    """The method's return value, converted to the client's backend and device."""
 
 
 class Subscription:
-    """Closeable latest-snapshot iterator. next(timeout=...) is also supported."""
+    """Iterator over the latest results of a hosted env (latest wins, never queued).
 
-    def __init__(self, client: RemoteClient, resource_id: str, subscription_id: str) -> None:
-        self.client, self.resource_id, self.id = client, resource_id, subscription_id
+    Use it as a context manager or call :meth:`close`; ``next(timeout=...)``
+    raises ``TimeoutError`` if no new result arrives in time.
+    """
+
+    def __init__(self, client: RemoteClient, name: str) -> None:
+        self.client, self.name = client, name
         self._condition = Condition()
-        self._latest: Optional[WireMessage] = None
+        self._latest: Optional[Tuple[Any, List[Any]]] = None
         self._error: Optional[BaseException] = None
-        self._closed = False
+        self.closed = False
 
-    def _push(self, event: WireMessage) -> None:
+    def _push(self, message: Any, buffers: List[Any]) -> None:
         with self._condition:
-            if self._closed:
-                return
-            if event["type"] == "subscription_error":
-                self._error = RemoteError(**event["error"])
-            else:
-                self._latest = event
+            self._latest = (message, buffers)
             self._condition.notify_all()
 
-    def _finish(self, error: Optional[BaseException] = None) -> None:
+    def _fail(self, error: BaseException) -> None:
         with self._condition:
-            self._closed = True
             self._error = error
-            self._latest = None
             self._condition.notify_all()
 
-    def next(self, timeout: Optional[float] = None) -> WireMessage:
+    def next(self, timeout: Optional[float] = None) -> SubscriptionEvent:
         with self._condition:
-            if not self._condition.wait_for(lambda: self._closed or self._error or self._latest is not None, timeout):
-                raise TimeoutError("No snapshot arrived before the deadline")
-            if self._error is not None:
-                raise self._error
-            if self._closed:
+            if not self._condition.wait_for(lambda: self.closed or self._error or self._latest, timeout):
+                raise TimeoutError(f"No new result from {self.name!r} within {timeout} s")
+            if self.closed:
                 raise StopIteration
-            result, self._latest = self._latest, None
-        self.client._update([result["descriptor"]])
-        result["data"] = map_arrays(result["data"], self.client.backend, self.client.device)
-        return result
+            if self._latest is None:
+                raise self._error
+            (message, buffers), self._latest = self._latest, None
+        kind, sequence, value = wire.restore(message, buffers, self.client.backend, self.client.device)
+        return SubscriptionEvent(kind, sequence, value)
 
-    def __iter__(self) -> Subscription:
+    def __iter__(self) -> Iterator[SubscriptionEvent]:
         return self
 
-    def __next__(self) -> WireMessage:
+    def __next__(self) -> SubscriptionEvent:
         return self.next()
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._finish()
-        self.client._subscriptions.pop(self.id, None)
-        if not self.client.closed:
-            self.client._request("unsubscribe", self.resource_id, subscription_id=self.id)
+        with self._condition:
+            if self.closed:
+                return
+            self.closed = True
+            self._condition.notify_all()
+        self.client._unsubscribe(self)
 
     def __enter__(self) -> Subscription:
         return self
@@ -91,324 +102,212 @@ class Subscription:
 
 
 class RemoteClient:
-    """A connection, descriptor cache, and shared control session.
+    """A connection to a :class:`RemoteServer`. Thread-safe: calls may be concurrent.
 
-    Requests are serialized, including entire component operation contexts.
-    A timeout closes the connection: late replies can never be confused with a
-    later request. Mutations aren't retried and may have executed remotely.
+    Results are converted to ``backend`` arrays on ``device``. A remote exception
+    is re-raised as :class:`RemoteError`; a lost connection raises
+    ``ConnectionError``, in which case a call that was in flight may or may not
+    have run on the server. ``timeout`` (seconds, ``None`` = wait forever) bounds
+    each call; a timed-out call keeps running on the server.
     """
 
-    def __init__(self, transport: MessageTransport, *, backend: ComputeBackend = NumpyComputeBackend,
-                 device: Optional[object] = None, timeout: Optional[float] = 30.0,
-                 max_message_size: int = DEFAULT_MAX_MESSAGE_SIZE) -> None:
-        self.transport, self.backend, self.device = transport, backend, device
-        self.timeout = timeout
-        self.codec = Codec(max_message_size)
-        self.session_id: Optional[str] = None
+    def __init__(self, transport: Transport, *, backend: ComputeBackend = NumpyComputeBackend,
+                 device: Optional[Any] = None, timeout: Optional[float] = None,
+                 compress: Optional[Dict[str, str]] = None) -> None:
+        self.transport, self.backend, self.device, self.timeout = transport, backend, device, timeout
         self.closed = False
-        self.descriptors: Dict[str, Descriptor] = {}
-        self._proxies: weakref.WeakValueDictionary[str, _Proxy] = weakref.WeakValueDictionary()
-        self._subscriptions: Dict[str, Subscription] = {}
-        self._operations: Dict[str, str] = {}
-        self._snapshots: Dict[str, BoundarySnapshot] = {}
-        self._boundary_versions: Dict[str, Tuple[int, int]] = {}
-        self._request_lock = RLock()
-        self._state_lock = Lock()
-        self._pending: Dict[str, _Pending] = {}
-        self._outgoing: Queue[Optional[bytes]] = Queue(maxsize=1)
-        self._receiver = Thread(target=self._receive, name="unienv-client", daemon=True)
-        self._sender = Thread(target=self._send, name="unienv-client-send", daemon=True)
-        self._sender.start()
-        self._receiver.start()
+        self._ids = count(1)
+        self._pending: Dict[int, _Pending] = {}
+        self._subscriptions: Dict[str, List[Subscription]] = {}
+        self._proxies: Dict[str, Any] = {}
+        self._lock = Lock()
+        self._subscribe_lock = RLock()
+        self._error: BaseException = ConnectionError("Client is closed")
+        self._reader = Thread(target=self._read, name="unienv-remote-client", daemon=True)
+        self._reader.start()
         try:
-            hello = self._request("hello", max_message_size=self.codec.max_message_size)
-            self.session_id = hello["session_id"]
-            self.codec.max_message_size = min(self.codec.max_message_size, hello["max_message_size"])
-            self.discover()
-        except Exception:
+            hello = self._request("", "hello", [], {"version": PROTOCOL_VERSION, "compress": compress},
+                                  timeout=30.0 if timeout is None else timeout)
+        except BaseException:
             self.close()
             raise
+        self.resources: Dict[str, Dict[str, Any]] = hello["resources"]
+        """Descriptor of every hosted resource, by name."""
+        for descriptor in self.resources.values():
+            version, spaces = descriptor.pop("spaces")
+            descriptor.update(version=version, spaces=spaces)
 
     @classmethod
-    def connect(cls, uri: str, **options: object) -> RemoteClient:
-        transport = WebSocketTransport.connect(uri, max_message_size=options.get("max_message_size", DEFAULT_MAX_MESSAGE_SIZE), close_timeout=1)
-        return cls(transport, **options)
+    def connect(cls, address: str, *, timeout: Optional[float] = None, connect_timeout: float = 10.0,
+                backend: ComputeBackend = NumpyComputeBackend, device: Optional[Any] = None,
+                compress: Optional[Dict[str, str]] = None,
+                max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> RemoteClient:
+        """Connect to ``tcp://host:port``, ``unix:///path`` or ``ws://host:port``.
 
-    def _receive(self) -> None:
-        failure: Optional[Exception] = None
-        try:
-            while not self.closed:
-                message = self.codec.decode(self.transport.recv())
-                if not isinstance(message, dict) or message.get("version") != PROTOCOL_VERSION:
-                    raise RemoteError("protocol_error", "Invalid response version or envelope")
-                if self.session_id is not None and message.get("session_id") != self.session_id:
-                    raise RemoteError("protocol_error", "Response has the wrong session ID")
-                if message.get("type") in {"snapshot", "subscription_error"}:
-                    with self._state_lock:
-                        resource_id = message["resource_id"]
-                        if message["type"] == "subscription_error":
-                            self._drop_snapshots(resource_id)
-                        elif resource_id in self.descriptors:
-                            self._observe_boundary(self._domain_id(resource_id),
-                                                   (message["descriptor_revision"], message["sequence"]))
-                    subscription = self._subscriptions.get(message.get("subscription_id"))
-                    if subscription is not None:
-                        subscription._push(message)
-                elif message.get("type") in {"response", "error"}:
-                    with self._state_lock:
-                        pending = self._pending.get(message.get("request_id"))
-                        if pending is not None:
-                            pending["response"] = message
-                            pending["event"].set()
-                else:
-                    raise RemoteError("protocol_error", "Unknown server message type")
-        except Exception as exc:
-            failure = exc
-        finally:
-            self._disconnect(failure or ConnectionError("Client closed"))
+        ``compress`` opts into lossy compression of server-to-client data, e.g.
+        ``{"image": "jpeg:90"}`` JPEG-encodes uint8 image leaves (spaces whose
+        ``metadata["kind"] == "image"``) at quality 90.
+        """
+        transport = connect(address, timeout=connect_timeout, max_frame_size=max_frame_size)
+        return cls(transport, backend=backend, device=device, timeout=timeout, compress=compress)
 
-    def _send(self) -> None:
-        try:
-            while not self.closed:
-                payload = self._outgoing.get()
-                if payload is None or self.closed:
-                    return
-                self.transport.send(payload)
-        except Exception as exc:
-            self._disconnect(exc)
+    # ------------------------------------------------------------------ requests
 
-    def _disconnect(self, failure: BaseException) -> None:
-        with self._state_lock:
-            self.closed = True
-            self._snapshots.clear()
-            self._boundary_versions.clear()
-            for pending in self._pending.values():
-                pending.setdefault("failure", failure)
-                pending["event"].set()
-        for subscription in list(self._subscriptions.values()):
-            subscription._finish(failure)
+    def _read(self) -> None:
         try:
-            self._outgoing.put_nowait(None)
-        except Full:
-            pass
+            while True:
+                document, buffers = self.transport.recv()
+                message = wire.parse(document)
+                if type(message) is not list or len(message) < 3:
+                    raise wire.WireError("Invalid message")
+                if message[1] == EVENT:
+                    for subscription in self._subscriptions.get(message[0], ()):
+                        subscription._push(message[2], buffers)
+                    continue
+                pending = self._pending.pop(message[0], None)
+                if pending is not None:
+                    pending.message, pending.buffers = message, buffers
+                    pending.lock.release()
+        except wire.WireError as exc:
+            self._shutdown(ConnectionError(f"Closed the connection after a malformed frame: {exc}"))
+        except BaseException:
+            self._shutdown(ConnectionError(_LOST))
+
+    def _shutdown(self, error: BaseException) -> None:
+        with self._lock:
+            if self.closed:
+                return
+            self.closed, self._error = True, error
+            pending, self._pending = self._pending, {}
+            subscriptions = [s for group in self._subscriptions.values() for s in group]
+        for item in pending.values():
+            item.error = error
+            item.lock.release()
+        for subscription in subscriptions:
+            subscription._fail(error)
         self.transport.close()
 
-    def _request(self, op: str, resource_id: Optional[str] = None, *, mutation: bool = False,
-                 **parameters: Any) -> Any:
-        with self._request_lock:
+    def _request(self, target: str, method: str, args: List[Any], kwargs: Dict[str, Any],
+                 timeout: Union[float, None, str] = "default") -> Any:
+        request_id = next(self._ids)
+        parts, size = wire.encode([request_id, target, method, args, kwargs], max_size=self.transport.max_frame_size)
+        pending = _Pending()
+        with self._lock:
             if self.closed:
-                raise ConnectionError("Client is closed")
-            request_id = uuid4().hex
-            message: WireMessage = {"version": PROTOCOL_VERSION, "type": "request", "request_id": request_id,
-                       "session_id": self.session_id, "op": op, "resource_id": resource_id, **parameters}
-            payload = self.codec.encode(message)
-            pending: _Pending = {"event": Event()}
-            with self._state_lock:
-                if self.closed:
-                    raise ConnectionError("Client is closed")
-                descriptor = self.descriptors.get(resource_id, {})
-                changes_state = (op == "call" and METHODS.get(descriptor.get("kind"), {}).get(
-                    parameters.get("method"), {}).get("mutation", False))
-                if resource_id is not None and (mutation or changes_state or op in {"begin", "abort", "release", "acquire"}):
-                    self._drop_snapshots(resource_id)
-                self._pending[request_id] = pending
-            try:
-                try:
-                    self._outgoing.put_nowait(payload)
-                    if not pending["event"].wait(self.timeout):
-                        raise TimeoutError("Remote request timed out")
-                    # A successfully received reply remains authoritative if a
-                    # disconnect follows it immediately.
-                    if "response" not in pending:
-                        raise pending.get("failure", ConnectionError("Connection lost"))
-                except Exception as exc:
-                    self._disconnect(exc)
-                    if mutation:
-                        raise UncertainOutcomeError() from exc
-                    raise
-                response = pending["response"]
-                if response["type"] == "error":
-                    with self._state_lock:
-                        self._drop_snapshots(resource_id)
-                    # Only the server knows whether invocation actually started.
-                    raise RemoteError(**response["error"])
-                return response["result"]
-            finally:
-                with self._state_lock:
-                    self._pending.pop(request_id, None)
-
-    def _update(self, descriptors: Iterable[Descriptor]) -> None:
-        with self._state_lock:
-            accepted: List[Descriptor] = []
-            for descriptor in descriptors:
-                resource_id = descriptor["id"]
-                domain_id = descriptor.get("domain_id") or descriptor["world_id"] or resource_id
-                version = (descriptor["revision"], descriptor.get("sequence", 0))
-                if not self._observe_boundary(domain_id, version):
-                    continue
-                schema = {key: value for key, value in descriptor.items() if key != "snapshot"}
-                self.descriptors[resource_id] = schema
-                proxy = self._proxies.get(resource_id)
-                if proxy is not None:
-                    proxy._refresh(schema)
-                accepted.append(descriptor)
-            if not self.closed:
-                for descriptor in accepted:
-                    snapshot = descriptor.get("snapshot")
-                    if snapshot is not None:
-                        self._snapshots[descriptor["id"]] = snapshot
-
-    def _drop_snapshots(self, resource_id: Optional[str] = None) -> None:
-        """Invalidate a domain while holding _state_lock."""
-        if resource_id is None:
-            self._snapshots.clear()
-            return
-        domain_id = self._domain_id(resource_id) if resource_id in self.descriptors else resource_id
-        self._snapshots = {key: value for key, value in self._snapshots.items()
-                           if self._domain_id(key) != domain_id}
-
-    def _observe_boundary(self, domain_id: str, version: Tuple[int, int]) -> bool:
-        """Track response/event ordering while holding _state_lock."""
-        previous = self._boundary_versions.get(domain_id)
-        if previous is not None and previous > version:
-            return False
-        if previous != version:
-            self._drop_snapshots(domain_id)
-            self._boundary_versions[domain_id] = version
-        return True
-
-    def _read_snapshot(self, resource_id: str, field: str, method: str) -> Any:
-        with self._request_lock:
-            with self._state_lock:
-                if self.closed:
-                    raise ConnectionError("Client is closed")
-                snapshot = self._snapshots.get(resource_id)
-                if (self._domain_id(resource_id) not in self._operations and snapshot is not None
-                        and field in snapshot["data"]):
-                    return map_arrays(deepcopy(snapshot["data"][field]), self.backend, self.device)
-            return self.call(resource_id, method)
-
-    def discover(self) -> List[Descriptor]:
-        descriptors = self._request("discover")
-        self._update(descriptors)
-        return descriptors
-
-    def describe(self, resource_id: str) -> Descriptor:
-        self._update(self._request("describe", resource_id))
-        return self.descriptors[resource_id]
-
-    def resource(self, resource_id: str) -> Union[RemoteEnv, RemoteWorld, RemoteWorldNode]:
-        from .proxies import RemoteEnv, RemoteWorld, RemoteWorldNode
-        if resource_id in self._proxies:
-            proxy = self._proxies[resource_id]
-            if not proxy._closed:
-                return proxy
-        if resource_id not in self.descriptors:
-            self.describe(resource_id)
-        cls = {"env": RemoteEnv, "world": RemoteWorld, "node": RemoteWorldNode}[self.descriptors[resource_id]["kind"]]
-        proxy = cls(self, resource_id)
-        self._proxies[resource_id] = proxy
-        return proxy
-
-    def env(self, resource_id: str) -> RemoteEnv:
-        proxy = self.resource(resource_id)
-        if self.descriptors[resource_id]["kind"] != "env":
-            raise TypeError("Resource is not an environment")
-        return proxy
-
-    def world(self, resource_id: str) -> RemoteWorld:
-        proxy = self.resource(resource_id)
-        if self.descriptors[resource_id]["kind"] != "world":
-            raise TypeError("Resource is not a world")
-        return proxy
-
-    def node(self, resource_id: str) -> RemoteWorldNode:
-        proxy = self.resource(resource_id)
-        if self.descriptors[resource_id]["kind"] != "node":
-            raise TypeError("Resource is not a node")
-        return proxy
-
-    def _domain_id(self, resource_id: str) -> str:
-        descriptor = self.descriptors[resource_id]
-        return descriptor.get("domain_id") or descriptor["world_id"] or resource_id
-
-    def acquire(self, resource_id: str, mode: Optional[ExecutionMode] = None) -> None:
-        mode = mode or ("env" if self.descriptors[resource_id]["kind"] == "env" else "components")
-        self._request("acquire", resource_id, mode=mode, mutation=True)
-
-    def release(self, resource_id: str, *, close_subscriptions: bool = False) -> None:
-        """Release shared world control, retaining subscriptions by default.
-
-        Set close_subscriptions=True to also close this client's domain streams.
-        """
-        if close_subscriptions:
-            domain_id = self._domain_id(resource_id)
-            for subscription in list(self._subscriptions.values()):
-                if self._domain_id(subscription.resource_id) == domain_id:
-                    subscription.close()
-        if not self.closed:
-            self._request("release", resource_id, mutation=True)
-
-    @contextmanager
-    def operation(self, resource_id: str, kind: OperationKind = "step") -> Iterator[str]:
-        """Mark one client-coordinated reset/reload/step, without rollback.
-
-        Use a world or node ID. Every mutating component call must belong to an
-        operation. The context publishes snapshots only after successful exit.
-        """
-        with self._request_lock:
-            domain_id = self._domain_id(resource_id)
-            if domain_id in self._operations:
-                raise RuntimeError("Nested component operations are not supported")
-            operation_id = uuid4().hex
-            self._request("begin", domain_id, kind=kind, operation_id=operation_id, mutation=True)
-            self._operations[domain_id] = operation_id
-            try:
-                yield operation_id
-                descriptors = self._request("complete", domain_id, operation_id=operation_id, mutation=True)
-                self._update(descriptors)
-            except BaseException:
-                if not self.closed:
-                    try:
-                        self._request("abort", domain_id, operation_id=operation_id, mutation=True)
-                    except Exception:
-                        pass
-                raise
-            finally:
-                self._operations.pop(domain_id, None)
-
-    def call(self, resource_id: str, method: str, *args: Any, **kwargs: Any) -> Any:
-        with self._request_lock:
-            descriptor = self.descriptors[resource_id]
-            mutation = METHODS[descriptor["kind"]].get(method, {}).get("mutation", False)
-            operation_id = self._operations.get(self._domain_id(resource_id))
-            if descriptor["kind"] == "env":
-                operation_id = uuid4().hex
-            result = self._request("call", resource_id, method=method, args=args, kwargs=kwargs,
-                                   operation_id=operation_id, mutation=mutation)
-            self._update(result["descriptors"])
-            return map_arrays(result["value"], self.backend, self.device)
-
-    def subscribe(self, resource_id: str, fields: Optional[Iterable[str]] = None) -> Subscription:
-        if resource_id not in self.descriptors:
-            self.describe(resource_id)
-        subscription = Subscription(self, resource_id, uuid4().hex)
-        self._subscriptions[subscription.id] = subscription
+                raise ConnectionError(str(self._error))
+            self._pending[request_id] = pending
         try:
-            options = {} if fields is None else {"fields": list(fields)}
-            self._request("subscribe", resource_id, subscription_id=subscription.id, **options)
-        except Exception:
-            self._subscriptions.pop(subscription.id, None)
-            subscription._finish()
-            raise
+            self.transport.send(parts, size)
+        except (ConnectionError, OSError):
+            self._shutdown(ConnectionError(_LOST))
+        timeout = self.timeout if timeout == "default" else timeout
+        if not pending.lock.acquire(timeout=-1 if timeout is None else timeout):
+            self._pending.pop(request_id, None)
+            raise TimeoutError(f"{target or 'server'}.{method} did not answer within {timeout} s "
+                               "(the call may still run on the server)")
+        if pending.error is not None:
+            raise ConnectionError(str(pending.error))
+        message = pending.message
+        if message[1] == ERROR:
+            error = message[2]
+            if type(error) is not list or len(error) != 3 or not all(type(e) is str for e in error):
+                raise ConnectionError("Malformed error response")
+            raise RemoteError(*error)
+        result = wire.restore(message[2:], pending.buffers, self.backend, self.device)
+        if len(result) > 1:
+            self._apply_updates(result[1])
+        return result[0]
+
+    def _apply_updates(self, updates: Dict[str, Any]) -> None:
+        with self._lock:
+            for name, (version, spaces) in updates.items():
+                descriptor = self.resources.get(name)
+                if descriptor is None or version <= descriptor["version"]:
+                    continue  # unknown, or an older update than one applied already
+                descriptor.update(version=version, spaces=spaces)
+                proxy = self._proxies.get(name)
+                if proxy is not None:
+                    proxy._set_spaces(spaces)
+
+    def call(self, name: str, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Call an allowed ``method`` of the hosted resource ``name``."""
+        return self._request(name, method, list(args), kwargs)
+
+    # ------------------------------------------------------------------ proxies
+
+    def resource(self, name: str) -> Union[RemoteEnv, RemoteWorld, RemoteWorldNode]:
+        """The proxy of hosted resource ``name`` (one shared proxy per name)."""
+        proxy = self._proxies.get(name)
+        if proxy is None:
+            from .proxies import RemoteEnv, RemoteWorld, RemoteWorldNode
+            if name not in self.resources:
+                raise KeyError(f"The server hosts no resource named {name!r}; it has {sorted(self.resources)}")
+            kind = self.resources[name]["kind"]
+            proxy = {"env": RemoteEnv, "world": RemoteWorld, "node": RemoteWorldNode}[kind](self, name)
+            proxy = self._proxies.setdefault(name, proxy)
+        return proxy
+
+    def _typed(self, name: str, kind: str) -> Any:
+        proxy = self.resource(name)
+        if self.resources[name]["kind"] != kind:
+            raise TypeError(f"{name!r} is a {self.resources[name]['kind']}, not a {kind}")
+        return proxy
+
+    def env(self, name: str) -> RemoteEnv:
+        """Proxy of a hosted ``Env``."""
+        return self._typed(name, "env")
+
+    def world(self, name: str) -> RemoteWorld:
+        """Proxy of a hosted ``World`` (e.g. ``"sim/world"`` for a ``WorldEnv`` named ``"sim"``)."""
+        return self._typed(name, "world")
+
+    def node(self, name: str) -> RemoteWorldNode:
+        """Proxy of a hosted ``WorldNode`` (e.g. ``"sim/node"``, ``"sim/node/camera"``)."""
+        return self._typed(name, "node")
+
+    # ------------------------------------------------------------------ observers
+
+    def subscribe(self, name: str) -> Subscription:
+        """Follow the ``reset`` / ``reload`` / ``step`` results of hosted env ``name``.
+
+        Results of calls by any client are delivered, latest wins: a slow
+        subscriber skips results rather than slowing the server down.
+        """
+        subscription = Subscription(self, name)
+        with self._subscribe_lock:
+            with self._lock:
+                group = self._subscriptions.get(name, [])
+                self._subscriptions[name] = group + [subscription]
+            if not group:
+                try:
+                    self._request("", "subscribe", [name], {})
+                except BaseException:
+                    with self._lock:
+                        self._subscriptions.pop(name, None)
+                    raise
         return subscription
 
+    def _unsubscribe(self, subscription: Subscription) -> None:
+        with self._subscribe_lock:
+            with self._lock:
+                group = [s for s in self._subscriptions.get(subscription.name, ()) if s is not subscription]
+                if group:
+                    self._subscriptions[subscription.name] = group
+                else:
+                    self._subscriptions.pop(subscription.name, None)
+            if not group and not self.closed:
+                try:
+                    self._request("", "unsubscribe", [subscription.name], {})
+                except ConnectionError:
+                    pass
+
+    # ------------------------------------------------------------------ lifetime
+
     def close(self) -> None:
-        self._disconnect(ConnectionError("Client closed"))
-        if current_thread() is not self._receiver:
-            self._receiver.join()
-        if current_thread() is not self._sender:
-            self._sender.join()
+        """Close the connection (hosted objects stay open on the server)."""
+        self._shutdown(ConnectionError("Client is closed"))
+        if current_thread() is not self._reader:
+            self._reader.join()
 
     def __enter__(self) -> RemoteClient:
         return self
