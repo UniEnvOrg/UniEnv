@@ -57,6 +57,7 @@ class TransformedStorage(SpaceStorage[
             data_transformation,
             inner_storage,
             inner_storage_path,
+            cache_filename=cache_path,
         )
 
     @classmethod
@@ -110,6 +111,7 @@ class TransformedStorage(SpaceStorage[
             data_transform,
             inner_storage,
             inner_storage_path,
+            cache_filename=path,
         )
 
     # ========== Instance Implementations ==========
@@ -127,6 +129,7 @@ class TransformedStorage(SpaceStorage[
             BRNGType,
         ],
         inner_storage_path : Union[str, os.PathLike],
+        cache_filename : Optional[Union[str, os.PathLike]] = None,
     ):
         super().__init__(single_instance_space)
         transformed_space = data_transformation.get_target_space_from_source(single_instance_space)
@@ -144,6 +147,11 @@ class TransformedStorage(SpaceStorage[
         self.inner_storage_path = inner_storage_path
         self.data_transformation = data_transformation
         self.inv_data_transformation = data_transformation.direction_inverse(single_instance_space)
+        self._cache_filename = cache_filename
+
+    @property
+    def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
+        return self._cache_filename if self.inner_storage.cache_filename is not None else None
         
     @property
     def capacity(self) -> Optional[int]:

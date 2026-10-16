@@ -84,3 +84,11 @@ def test_to_backend_storage_close_closes_inner_storage(tmp_path):
     inner = storage.inner_storage
     storage.close()
     assert inner.root is None
+
+
+def test_cache_filename_reports_the_storage_directory(tmp_path, dict_storage):
+    assert dict_storage.cache_filename == str(tmp_path / "transformed")
+    dict_storage.dumps(dict_storage.cache_filename)
+    loaded = TransformedStorage.load_from(dict_storage.cache_filename, _dict_space(), capacity=4)
+    assert loaded.cache_filename == str(tmp_path / "transformed")
+    loaded.close()
