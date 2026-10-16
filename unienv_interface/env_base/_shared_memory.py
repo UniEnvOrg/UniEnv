@@ -1,8 +1,9 @@
-"""Shared-memory observation transfer for :class:`~unienv_interface.env_base.vec_env.AsyncVecEnv`.
+"""Shared-memory transfer for :class:`~unienv_interface.env_base.vec_env.AsyncVecEnv`.
 
 The parent process allocates one buffer of shape ``(num_envs, *leaf_shape)`` per
-leaf of the single-environment observation (and context) space. Worker ``i``
-writes its observation into row ``i`` and only the small step results (reward,
+leaf of the single-environment observation, context and action spaces (the
+"groups"). Worker ``i`` writes its observation / context into row ``i`` and
+reads its action from row ``i``; only the small step results (reward,
 termination flags, info) travel through the pipe.
 
 Where the buffers live depends on the backend and device of the worker
@@ -19,7 +20,9 @@ environment (see :func:`select_mode`):
   Workers copy device -> device and synchronise before acknowledging. JAX GPU
   arrays are moved in and out of these torch buffers with DLPack (zero-copy).
 
-This module is private; the public switch is ``AsyncVecEnv(shared_memory=True)``.
+This module is private; the public switch is ``AsyncVecEnv(shared_memory=...)``.
+Anything that prevents sharing a group raises :class:`SharedMemoryUnavailable`,
+upon which the caller transfers that group through the pipe instead.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ import warnings
 import weakref
 from collections.abc import Mapping, Sequence
 from multiprocessing import shared_memory
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
@@ -39,6 +42,7 @@ from unienv_interface.backends import ComputeBackend
 from unienv_interface.space import BinarySpace, BoxSpace, DictSpace, Space, TupleSpace
 
 __all__ = [
+    "SharedMemoryUnavailable",
     "HOST",
     "HOST_STAGED",
     "CUDA_IPC",
@@ -62,8 +66,17 @@ _warned_no_cuda_ipc = False
 PathType = Tuple[Any, ...]
 
 
+class SharedMemoryUnavailable(Exception):
+    """A group (or the whole env) cannot use shared buffers; use the pipe instead."""
+
+
 def _format_path(path : PathType) -> str:
     return "".join(f"[{key!r}]" for key in path) or "<root>"
+
+
+def _leaf_name(group : str, path : PathType) -> str:
+    """E.g. ``observation['image']`` (or just ``action`` for a single-leaf space)."""
+    return group + "".join(f"[{key!r}]" for key in path)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +88,7 @@ def space_leaves(space : Space, what : str = "observation", path : PathType = ()
 
     Only :class:`BoxSpace` and :class:`BinarySpace` leaves nested in
     :class:`DictSpace` / :class:`TupleSpace` are supported; anything else raises
-    a ``ValueError``.
+    :class:`SharedMemoryUnavailable`.
     """
     if type(space) in (BoxSpace, BinarySpace):
         return [(path, space)]
@@ -89,12 +102,32 @@ def space_leaves(space : Space, what : str = "observation", path : PathType = ()
         for index, sub_space in enumerate(space.spaces):
             leaves.extend(space_leaves(sub_space, what, path + (index,)))
         return leaves
-    raise ValueError(
-        f"AsyncVecEnv(shared_memory=True) only supports fixed-size {what} spaces "
-        f"(BoxSpace / BinarySpace leaves nested in DictSpace / TupleSpace), but the "
-        f"{what} space has a {type(space).__name__} at {_format_path(path)}. "
-        f"Use shared_memory=False for this environment."
+    raise SharedMemoryUnavailable(
+        f"the {what} space has a {type(space).__name__} at {_format_path(path)}; only "
+        f"fixed-size spaces (BoxSpace / BinarySpace leaves nested in DictSpace / "
+        f"TupleSpace) can be shared"
     )
+
+
+def space_structure(space : Space) -> Any:
+    """Picklable skeleton of a (supported) space, used to rebuild nested data
+    from its leaves: ``("dict", [(key, sub), ...])``, ``("tuple", [sub, ...])``
+    or ``"leaf"``."""
+    if isinstance(space, DictSpace):
+        return ("dict", [(key, space_structure(sub_space)) for key, sub_space in space.spaces.items()])
+    if isinstance(space, TupleSpace):
+        return ("tuple", [space_structure(sub_space) for sub_space in space.spaces])
+    return "leaf"
+
+
+def build_tree(structure : Any, leaves : Iterator[Any]) -> Any:
+    """Inverse of flattening data along :func:`space_leaves` (see :func:`space_structure`)."""
+    if structure == "leaf":
+        return next(leaves)
+    kind, children = structure
+    if kind == "dict":
+        return {key: build_tree(child, leaves) for key, child in children}
+    return tuple(build_tree(child, leaves) for child in children)
 
 
 def _canonical_dtype(backend : ComputeBackend, dtype : Any) -> Any:
@@ -134,10 +167,9 @@ def check_leaf_layouts_match(backend : ComputeBackend, spaces : Sequence[Optiona
     for index, space in enumerate(spaces[1:], start=1):
         layout = _leaf_layout(backend, space, what)
         if layout != first:
-            raise ValueError(
-                f"AsyncVecEnv(shared_memory=True) requires every worker to have the same "
-                f"{what} leaves (paths, shapes and dtypes); worker 0 has {first} but worker "
-                f"{index} has {layout}"
+            raise SharedMemoryUnavailable(
+                f"the workers' {what} spaces differ in their leaves (paths, shapes or "
+                f"dtypes): worker 0 has {first} but worker {index} has {layout}"
             )
 
 
@@ -145,21 +177,21 @@ def check_leaf_layouts_match(backend : ComputeBackend, spaces : Sequence[Optiona
 # Mode selection
 # ---------------------------------------------------------------------------
 
-def _cuda_mode(start_method : str) -> str:
+def _cuda_mode() -> str:
+    """CUDA IPC on Linux, host staging elsewhere.
+
+    CUDA IPC also works with the ``fork`` start method as long as the parent
+    had not initialised CUDA before forking (it allocates the buffers only
+    after the workers started); if it had, the workers cannot initialise CUDA
+    at all, which torch reports when they build their env.
+    """
     global _warned_no_cuda_ipc
-    if start_method == "fork":
-        raise ValueError(
-            "AsyncVecEnv(shared_memory=True) shares CUDA observations through CUDA IPC, "
-            "which needs the 'spawn' or 'forkserver' start method (CUDA cannot be used "
-            "in forked children); pass ctx=multiprocessing.get_context('spawn') or "
-            "leave ctx unset."
-        )
     if not sys.platform.startswith("linux"):
         if not _warned_no_cuda_ipc:
             warnings.warn(
-                "AsyncVecEnv(shared_memory=True): CUDA IPC is only supported on Linux; "
-                "observations are staged through host shared memory instead (one "
-                "device-to-host copy per worker and one host-to-device copy in the parent).",
+                "AsyncVecEnv shared memory: CUDA IPC is only supported on Linux; CUDA "
+                "observations and actions are staged through host shared memory instead "
+                "(one device <-> host copy on each side).",
                 RuntimeWarning,
             )
             _warned_no_cuda_ipc = True
@@ -167,12 +199,13 @@ def _cuda_mode(start_method : str) -> str:
     return CUDA_IPC
 
 
-def select_mode(backend : ComputeBackend, device_description : Optional[Tuple[str, Any]], start_method : str) -> str:
+def select_mode(backend : ComputeBackend, device_description : Optional[Tuple[str, Any]]) -> str:
     """Pick the buffer placement for a worker env on ``backend`` / ``device``.
 
     ``device_description`` is the worker-reported device (see
     ``vec_env._serialize_device``): ``("object", torch.device)`` or
-    ``("str", "<platform>:<id>")`` for JAX.
+    ``("str", "<platform>:<id>")`` for JAX. Raises
+    :class:`SharedMemoryUnavailable` if the env cannot be shared at all.
     """
     name = backend.simplified_name
     if name == "numpy":
@@ -183,7 +216,7 @@ def select_mode(backend : ComputeBackend, device_description : Optional[Tuple[st
         if device.type == "cpu":
             return HOST
         if device.type == "cuda":
-            return _cuda_mode(start_method)
+            return _cuda_mode()
         return HOST_STAGED
     if name == "jax":
         if device_description is None:
@@ -195,13 +228,12 @@ def select_mode(backend : ComputeBackend, device_description : Optional[Tuple[st
         if platform in ("gpu", "cuda"):
             try:
                 import torch  # noqa: F401
-            except ImportError as e:
-                raise ImportError(
-                    "AsyncVecEnv(shared_memory=True) with a JAX environment on a GPU needs "
-                    "PyTorch, which carries the CUDA IPC buffers (JAX has no cross-process "
-                    "buffer API). Install torch or use shared_memory=False."
-                ) from e
-            return _cuda_mode(start_method)
+            except ImportError:
+                raise SharedMemoryUnavailable(
+                    "sharing the buffers of a JAX env on a GPU needs PyTorch, which carries "
+                    "the CUDA IPC buffers (JAX has no cross-process buffer API)"
+                ) from None
+            return _cuda_mode()
         # TPUs (and other accelerators) cannot be shared between processes.
         return HOST_STAGED
     return HOST_STAGED
@@ -315,27 +347,22 @@ def _attach_segment(name : str) -> shared_memory.SharedMemory:
 def _get_leaf(data : Any, path : PathType, what : str) -> Any:
     value = data
     for depth, key in enumerate(path):
-        if isinstance(key, int):
-            if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or key >= len(value):
-                raise ValueError(
-                    f"AsyncVecEnv(shared_memory=True): expected a sequence with index {key} at "
-                    f"{what}{_format_path(path[:depth])}, got {type(value).__name__}"
-                )
-        elif not isinstance(value, Mapping) or key not in value:
-            raise ValueError(
-                f"AsyncVecEnv(shared_memory=True): expected a mapping with key {key!r} at "
-                f"{what}{_format_path(path[:depth])}, got {type(value).__name__}"
-            )
-        value = value[key]
+        if isinstance(value, Mapping) and key in value:
+            value = value[key]
+            continue
+        if (
+            isinstance(key, int) and isinstance(value, Sequence)
+            and not isinstance(value, (str, bytes)) and key < len(value)
+        ):
+            value = value[key]
+            continue
+        raise ValueError(
+            f"AsyncVecEnv shared memory: {_leaf_name(what, path[:depth])} should contain "
+            f"{'index' if isinstance(key, int) else 'key'} {key!r} as declared by the {what} "
+            f"space, got {type(value).__name__}. Fix the env's {what} space or its output, or "
+            f"pass shared_memory=False to AsyncVecEnv."
+        )
     return value
-
-
-def _build_tree(space : Space, leaves : "iter") -> Any:
-    if isinstance(space, DictSpace):
-        return {key: _build_tree(sub_space, leaves) for key, sub_space in space.spaces.items()}
-    if isinstance(space, TupleSpace):
-        return tuple(_build_tree(sub_space, leaves) for sub_space in space.spaces)
-    return next(leaves)
 
 
 # ---------------------------------------------------------------------------
@@ -345,8 +372,10 @@ def _build_tree(space : Space, leaves : "iter") -> Any:
 class ParentSharedBuffers:
     """Buffers owned by the parent process (see module docstring).
 
-    ``groups`` maps a group name (``"obs"``, ``"context"``) to the
-    single-environment space of that group.
+    ``groups`` maps a group name (``"observation"``, ``"context"``,
+    ``"action"``) to the single-environment space of that group. Observations
+    and contexts are written by the workers and read by the parent; actions
+    are written by the parent and read by the workers.
     """
 
     def __init__(
@@ -365,6 +394,7 @@ class ParentSharedBuffers:
         self.mode = mode
         self.copy = copy
         self.spaces = dict(groups)
+        self.structures = {group: space_structure(space) for group, space in self.spaces.items()}
         self.segment : Optional[shared_memory.SharedMemory] = None
         self._finalizer = None
         self._ipc_aliases : Dict[str, List[Any]] = {}
@@ -378,7 +408,7 @@ class ParentSharedBuffers:
         for group, space in self.spaces.items():
             self.layout[group] = []
             dtypes[group] = []
-            for path, leaf in space_leaves(space, "context" if group == "context" else "observation"):
+            for path, leaf in space_leaves(space, group):
                 dtype = _canonical_dtype(backend, leaf.dtype)
                 shape = tuple(leaf.shape)
                 self.layout[group].append((path, shape, _dtype_to_str(backend, dtype), offset))
@@ -393,17 +423,16 @@ class ParentSharedBuffers:
                 self.torch_device = torch.device(device)
             else:
                 if device is None or getattr(device, "platform", None) not in ("gpu", "cuda"):
-                    raise RuntimeError(
-                        "AsyncVecEnv(shared_memory=True): the workers' JAX env runs on a GPU, "
-                        "but the parent process cannot see that GPU through JAX (is a "
-                        "CUDA-enabled jaxlib installed in the parent environment?)."
+                    raise SharedMemoryUnavailable(
+                        "the workers' JAX env runs on a GPU, but the parent process cannot "
+                        "see that GPU through JAX (no CUDA-enabled jaxlib in the parent?)"
                     )
                 ordinal = getattr(device, "local_hardware_id", None)
                 self.torch_device = torch.device("cuda", device.id if ordinal is None else ordinal)
             if not torch.cuda.is_available():
-                raise RuntimeError(
-                    "AsyncVecEnv(shared_memory=True): the workers' env runs on a CUDA device, "
-                    "but torch cannot use CUDA in the parent process."
+                raise SharedMemoryUnavailable(
+                    "the workers' env runs on a CUDA device, but torch cannot use CUDA in "
+                    "the parent process"
                 )
             for group, leaves in self.layout.items():
                 self.buffers[group] = [
@@ -443,6 +472,7 @@ class ParentSharedBuffers:
             "num_envs": self.num_envs,
             "segment": self.segment_name,
             "layout": self.layout,
+            "structures": self.structures,
             "cuda_buffers": self._ipc_aliases if self.mode == CUDA_IPC else None,
         }
 
@@ -460,7 +490,7 @@ class ParentSharedBuffers:
             self._read_leaf(buffer, numpy_buffer, indices)
             for buffer, numpy_buffer in zip(self.buffers[group], numpy_buffers)
         ])
-        return _build_tree(self.spaces[group], leaves)
+        return build_tree(self.structures[group], leaves)
 
     def _read_leaf(self, buffer : Any, numpy_buffer : Optional[np.ndarray], indices : Optional[Sequence[int]]) -> Any:
         mode, name = self.mode, self.backend_name
@@ -508,6 +538,56 @@ class ParentSharedBuffers:
             return buffer.copy() if self.copy else buffer
         return buffer[np.asarray(indices, dtype=np.intp)]
 
+    def write(self, group : str, data : Any) -> None:
+        """Write batched ``data`` (e.g. the actions) into the buffers of ``group``.
+
+        Each leaf must have shape ``(num_envs, *leaf_shape)``; dtypes are cast
+        with "same kind" rules (e.g. float64 -> float32 is fine, float -> int is
+        not). CUDA writes are synchronised by :meth:`before_dispatch`.
+        """
+        numpy_buffers = self._numpy_buffers.get(group) or [None] * len(self.buffers[group])
+        for (path, shape, _, _), buffer, numpy_buffer in zip(self.layout[group], self.buffers[group], numpy_buffers):
+            value = _get_leaf(data, path, group)
+            expected_shape = (self.num_envs, *shape)
+            value_shape = tuple(getattr(value, "shape", None) or np.shape(value))
+            if value_shape != expected_shape:
+                raise ValueError(
+                    f"AsyncVecEnv: {_leaf_name(group, path)} must have shape {expected_shape} "
+                    f"(num_envs, *{group} space shape), got {value_shape}"
+                )
+            self._write_leaf(buffer, numpy_buffer, value, group, path)
+
+    def _write_leaf(self, buffer : Any, numpy_buffer : Optional[np.ndarray], value : Any,
+                    group : str, path : PathType) -> None:
+        def cast_error(source_dtype):
+            return TypeError(
+                f"AsyncVecEnv: cannot cast {_leaf_name(group, path)} from {source_dtype} to the "
+                f"{group} space dtype {buffer.dtype} (only same-kind casts are allowed)"
+            )
+
+        if self.backend_name == "pytorch" or self.mode == CUDA_IPC:
+            import torch
+            if isinstance(value, torch.Tensor):
+                tensor = value.detach()
+            elif self.mode == CUDA_IPC and hasattr(value, "__dlpack__") and not isinstance(value, np.ndarray):
+                import jax
+                tensor = torch.from_dlpack(jax.block_until_ready(value))
+            else:
+                tensor = torch.as_tensor(np.asarray(value))
+            if not torch.can_cast(tensor.dtype, buffer.dtype):
+                raise cast_error(tensor.dtype)
+            if numpy_buffer is not None and tensor.device.type == "cpu":
+                numpy_value = _numpy_alias(tensor)
+                if numpy_value is not None:
+                    np.copyto(numpy_buffer, numpy_value, casting="unsafe")
+                    return
+            buffer.copy_(tensor)
+        else:  # numpy buffers (numpy / jax on the host); jax arrays are copied to the host
+            array = np.asarray(value)
+            if not np.can_cast(array.dtype, buffer.dtype, casting="same_kind"):
+                raise cast_error(array.dtype)
+            np.copyto(buffer, array, casting="same_kind")
+
     def close(self) -> None:
         """Release the buffers. Call only once the workers have exited (CUDA IPC
         buffers must outlive every consumer)."""
@@ -527,9 +607,11 @@ class ParentSharedBuffers:
 class WorkerSharedBuffers:
     """Worker ``index``'s rows of the parent's buffers."""
 
-    def __init__(self, spec : Dict[str, Any], index : int, backend : ComputeBackend):
+    def __init__(self, spec : Dict[str, Any], index : int, backend : ComputeBackend, device : Any = None):
         self.backend = backend
         self.backend_name = backend.simplified_name
+        self.device = device
+        self.structures = spec["structures"]
         self.mode = spec["mode"]
         self.index = index
         self.segment : Optional[shared_memory.SharedMemory] = None
@@ -564,23 +646,22 @@ class WorkerSharedBuffers:
 
     def write(self, group : str, data : Any) -> None:
         """Validate ``data`` against the declared space and write it into this worker's row."""
-        what = "context" if group == "context" else "observation"
         values = []
         for path, shape, dtype in self.leaves[group]:
-            value = _get_leaf(data, path, what)
+            value = _get_leaf(data, path, group)
             value_shape = getattr(value, "shape", None)
             value_dtype = getattr(value, "dtype", None)
-            if value_shape is None or value_dtype is None:
-                raise TypeError(
-                    f"AsyncVecEnv(shared_memory=True): {what}{_format_path(path)} must be an array "
-                    f"of shape {shape} and dtype {dtype}, got {type(value).__name__}"
+            if value_shape is None or value_dtype is None or tuple(value_shape) != shape or value_dtype != dtype:
+                got = (
+                    f"a {type(value).__name__}" if value_shape is None or value_dtype is None
+                    else f"shape {tuple(value_shape)} and dtype {value_dtype}"
                 )
-            if tuple(value_shape) != shape or value_dtype != dtype:
                 raise ValueError(
-                    f"AsyncVecEnv(shared_memory=True): {what}{_format_path(path)} does not match "
-                    f"the declared space: expected shape {shape} and dtype {dtype}, got shape "
-                    f"{tuple(value_shape)} and dtype {value_dtype} (shared buffers are never cast "
-                    f"or reshaped silently)"
+                    f"AsyncVecEnv shared memory: {_leaf_name(group, path)} does not match the "
+                    f"declared {group} space: expected an array of shape {shape} and dtype "
+                    f"{dtype}, got {got}. Shared buffers are never reshaped or cast silently: "
+                    f"fix the env's {group}_space or its {group}s, or pass shared_memory=False "
+                    f"to AsyncVecEnv."
                 )
             values.append(value)
         if self.backend_name == "jax" and self.mode == CUDA_IPC:
@@ -589,6 +670,33 @@ class WorkerSharedBuffers:
         numpy_rows = self._numpy_rows.get(group) or [None] * len(values)
         for row, numpy_row, value in zip(self.rows[group], numpy_rows, values):
             self._write_leaf(row, numpy_row, value)
+
+    def read(self, group : str) -> Any:
+        """A private copy of this worker's row of ``group`` (e.g. its action), on the
+        env's backend and device. The env may keep it: the parent overwrites the
+        buffer on the next step."""
+        numpy_rows = self._numpy_rows.get(group) or [None] * len(self.rows[group])
+        leaves = [self._read_leaf(row, numpy_row) for row, numpy_row in zip(self.rows[group], numpy_rows)]
+        if self.mode == CUDA_IPC and self.backend_name == "jax" and self.cuda_device is not None:
+            import jax
+            import torch
+            torch.cuda.current_stream(self.cuda_device).synchronize()
+            leaves = [jax.dlpack.from_dlpack(leaf) for leaf in leaves]
+        return build_tree(self.structures[group], iter(leaves))
+
+    def _read_leaf(self, row : Any, numpy_row : Optional[np.ndarray]) -> Any:
+        if self.mode == CUDA_IPC:
+            return row.clone()  # torch tensor; jax converts it after a stream sync
+        if self.backend_name == "pytorch":
+            import torch
+            if self.mode == HOST_STAGED and self.device is not None:
+                source = torch.from_numpy(numpy_row) if numpy_row is not None else row
+                return source.to(self.device, copy=True)
+            return torch.from_numpy(numpy_row.copy()) if numpy_row is not None else row.clone()
+        if self.backend_name == "jax":
+            import jax.numpy as jnp
+            return jnp.array(row, copy=True, device=self.device).block_until_ready()
+        return row.copy()
 
     def _write_leaf(self, row : Any, numpy_row : Optional[np.ndarray], value : Any) -> None:
         if self.backend_name == "pytorch":

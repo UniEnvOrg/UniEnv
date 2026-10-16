@@ -11,7 +11,9 @@ Observation (``obs_kind="dict"``)::
      "nested": Tuple(Box(int32, (3,)), Box(float32, ())),
      ["image": Box(uint8, image_shape)]}
 
-``obs_kind="box"`` uses just the ``vec`` leaf. The context is ``Box(float32, (2,))``
+``obs_kind="box"`` uses just the ``vec`` leaf. ``step`` reports the action it
+received and the first action of the episode (kept by reference, so aliasing a
+shared buffer would show) in ``info`` as numpy arrays. The context is ``Box(float32, (2,))``
 equal to ``[seed, seed]``; the action is ``Box(float32, (2,))``.
 """
 
@@ -39,6 +41,12 @@ def _resolve_backend(backend: str, device: Optional[str]):
         from unienv_interface.backends.jax import JaxComputeBackend
         return JaxComputeBackend, jax.devices(device or "cpu")[0]
     raise ValueError(backend)
+
+
+def _to_numpy(value: Any) -> np.ndarray:
+    if hasattr(value, "detach"):  # torch
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
 
 
 def expected_obs(seed: int, t: int, *, obs_kind: str = "dict",
@@ -104,6 +112,7 @@ class ArrayEnv(Env):
         self.rng = B.random.random_number_generator(0, device=dev)
         self.seed = 0
         self.t = 0
+        self.first_action = None
         self.closed = False
 
     def _to_backend(self, value: Any) -> Any:
@@ -141,13 +150,22 @@ class ArrayEnv(Env):
         assert mask is None
         self.seed = 0 if seed is None else int(seed)
         self.t = 0
+        self.first_action = None
         context = self._to_backend(np.full(2, self.seed, np.float32))
         return context, self._obs(), {"t": self.t, "seed": self.seed}
 
     def step(self, action):
         self.t += 1
         obs = self._obs()
-        return obs, float(self.t), self.t >= 1000, False, {"t": self.t}
+        if self.first_action is None:
+            self.first_action = action  # kept by reference on purpose
+        info = {
+            "t": self.t,
+            "action": _to_numpy(action).copy(),
+            "first_action": _to_numpy(self.first_action).copy(),
+            "action_type": type(action).__name__,
+        }
+        return obs, float(self.t), self.t >= 1000, False, info
 
     def render(self):
         return None
@@ -157,7 +175,7 @@ class ArrayEnv(Env):
 
 
 class UnsupportedSpaceEnv(ArrayEnv):
-    """numpy :class:`ArrayEnv` whose observation (or context) space contains a
+    """numpy :class:`ArrayEnv` whose observation (context / action) space contains a
     space that shared-memory transfer cannot handle."""
 
     def __init__(self, kind: str, where: str = "observation") -> None:
@@ -174,8 +192,25 @@ class UnsupportedSpaceEnv(ArrayEnv):
         }[kind]()
         if where == "observation":
             self.observation_space = DictSpace(B, {"ok": box, "bad": bad})
+        elif where == "action":
+            self.action_space = DictSpace(B, {"ok": box, "bad": bad})
         else:
             self.context_space = bad
+
+
+class TextObservationEnv(ArrayEnv):
+    """numpy :class:`ArrayEnv` whose observation also carries a ``TextSpace`` leaf
+    (unshareable), so observations fall back to the pipe while contexts and
+    actions can still be shared."""
+
+    def __init__(self) -> None:
+        super().__init__("numpy", obs_kind="box")
+        from unienv_interface.backends.numpy import NumpyComputeBackend as B
+        from unienv_interface.space import TextSpace
+        self.observation_space = DictSpace(B, {"vec": self.observation_space, "name": TextSpace(B, max_length=8)})
+
+    def _obs(self):
+        return {"vec": super()._obs(), "name": f"t{self.t}"}
 
 
 class EnvVarProbeEnv(ArrayEnv):

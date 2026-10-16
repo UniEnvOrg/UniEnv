@@ -166,11 +166,13 @@ def mp_context(request):
 
 @pytest.mark.slow
 @pytest.mark.timeout(120)
-def test_async_matches_sync(mp_context):
+@pytest.mark.parametrize("shared_memory", [False, True], ids=["pipe", "shared"])
+def test_async_matches_sync(mp_context, shared_memory):
     sync = SyncVecEnv([_StringInfoEnv for _ in range(3)])
-    async_env = AsyncVecEnv([_StringInfoEnv for _ in range(3)], ctx=mp_context)
+    async_env = AsyncVecEnv([_StringInfoEnv for _ in range(3)], ctx=mp_context, shared_memory=shared_memory)
     try:
         assert async_env.batch_size == 3
+        assert async_env.shared_groups == (("observation", "context", "action") if shared_memory else ())
         assert async_env.action_space == sync.action_space
         assert async_env.observation_space == sync.observation_space
         assert async_env.context_space == sync.context_space
@@ -191,8 +193,10 @@ def test_async_matches_sync(mp_context):
 
 @pytest.mark.slow
 @pytest.mark.timeout(120)
-def test_async_surfaces_worker_errors():
-    async_env = AsyncVecEnv([_FailingStepEnv for _ in range(2)], ctx=mp.get_context("spawn"))
+@pytest.mark.parametrize("shared_memory", [False, True], ids=["pipe", "shared"])
+def test_async_surfaces_worker_errors(shared_memory):
+    async_env = AsyncVecEnv([_FailingStepEnv for _ in range(2)], ctx=mp.get_context("spawn"),
+                            shared_memory=shared_memory)
     try:
         async_env.reset(seed=0)
         with pytest.raises(RuntimeError, match="worker") as excinfo:
