@@ -29,9 +29,12 @@ Environments and wrappers:
 - `FuncFrameStackWrapper` supports action stacking; `FuncTransformWrapper` works with transformations; transform wrappers keep the context space when only other transformations are given.
 - `BatchifyWrapper`/`UnBatchifyWrapper` batch the reward too; `ControlFrequencyLimitWrapper` no longer runs at twice the requested rate.
 - Episode video wrappers forward reset masks, don't re-post finished episodes on close, and support `format="gif"`.
-- `ToGymnasiumEnv`/`FromGymnasiumEnv` work end to end and pass gymnasium's `check_env`.
+- `ToGymnasiumEnv`/`FromGymnasiumEnv` work end to end and pass gymnasium's `check_env`; `ToGymnasiumEnv` observations no longer share the episode context object between calls (required by gymnasium 1.4's `check_env`).
 - World timestep compatibility uses a tolerance-based ratio, so periods such as 0.1/0.02 are accepted.
 - `Wrapper.rng` works with JAX keys; `FuncEnvBasedEnv.render_fps` works without a renderer; `ToBackendOrDeviceWrapper.device` defaults to the inner env's device; `next_seed_rng` returns valid non-negative seeds; `symbol_util`, `array_serialization`, `serialize_dtype` and `dict_util` edge cases fixed.
+
+Calibration:
+- The `calibration` extra now requires `opencv-contrib-python>=4.7,<5`: OpenCV 5.0's Python bindings no longer provide `cv2.calibrateHandEye`, so `solve_hand_to_base` raises a clear `ImportError` there instead of an `AttributeError`.
 
 Storages, replay buffer and batches:
 - Fixed `ReplayBuffer.get_flattened_at*` ignoring the ring-buffer offset after wrap-around.

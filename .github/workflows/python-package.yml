@@ -32,7 +32,7 @@ jobs:
         pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip3 install jax
         python -m pip install pytest
-        python -m pip install tensordict h5py opencv-python pyarrow
+        python -m pip install tensordict h5py pyarrow
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install -e .[video,dev,gymnasium,network,calibration]
     - name: Test with pytest
@@ -55,7 +55,7 @@ jobs:
         pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip3 install jax
         python -m pip install pytest
-        python -m pip install tensordict h5py opencv-python pyarrow
+        python -m pip install tensordict h5py pyarrow
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install -e .[video,dev,gymnasium,network,calibration]
     - name: Test with coverage floor

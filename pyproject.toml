@@ -18,14 +18,14 @@ network = [
     "websockets>=15,<16",
 ]
 calibration = [
-    "opencv-contrib-python>=4.7",
+    "opencv-contrib-python>=4.7,<5",
 ]
 dev = [
     "pytest",
     "pytest-timeout",
     "pytest-cov",
     "hypothesis",
-    "opencv-contrib-python>=4.7",
+    "opencv-contrib-python>=4.7,<5",
     "websockets>=15,<16",
     "gymnasium>=0.29.0",
     "moviepy>=2.1",
