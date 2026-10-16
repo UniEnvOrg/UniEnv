@@ -133,6 +133,81 @@ def io_reduced_indexing(
     flush_pending()
     return result
 
+def _consecutive_runs(sorted_unique : np.ndarray) -> List[Tuple[int, int]]:
+    """Split a sorted, duplicate-free index array into `[start_pos, end_pos)` runs of consecutive values."""
+    n = int(sorted_unique.shape[0])
+    if n == 0:
+        return []
+    breaks = np.flatnonzero(np.diff(sorted_unique) != 1) + 1
+    starts = [0, *breaks.tolist()]
+    ends = [*breaks.tolist(), n]
+    return list(zip(starts, ends))
+
+#: A sparse read fetches the whole `[min, max]` row range instead of one slice per run of consecutive rows when the
+#: extra bytes it reads are at most this many per saved read call (~20us of h5py overhead per call ~ 64 KiB of memcpy) ...
+_BBOX_EXTRA_BYTES_PER_SAVED_CALL = 64 * 1024
+#: ... or at most this many extra bytes in total.
+_BBOX_READ_MIN_BYTES = 1 << 20
+
+def read_sorted_unique_rows(dataset : h5py.Dataset, index : np.ndarray) -> np.ndarray:
+    """
+    `dataset[index]` for a sorted, duplicate-free integer array, without h5py point / fancy selections
+    (which build one hyperslab per element and are 10-100x slower than plain slices).
+    Dense or small spans are read as one bounding slice; otherwise every run of consecutive rows is one slice read.
+    """
+    n = int(index.shape[0])
+    row_shape = dataset.shape[1:]
+    if n == 0:
+        return dataset[0:0]
+    lo, hi = int(index[0]), int(index[-1]) + 1
+    if hi - lo == n:
+        return dataset[lo:hi]
+    runs = _consecutive_runs(index)
+    row_bytes = max(1, int(np.prod(row_shape, dtype=np.int64)) * dataset.dtype.itemsize)
+    extra_bytes = (hi - lo - n) * row_bytes
+    if extra_bytes <= max(_BBOX_READ_MIN_BYTES, (len(runs) - 1) * _BBOX_EXTRA_BYTES_PER_SAVED_CALL):
+        return dataset[lo:hi][index - lo]
+    out = np.empty((n, *row_shape), dtype=dataset.dtype)
+    for start, end in runs:
+        first = int(index[start])
+        if end - start == 1:
+            out[start] = dataset[first]
+        else:
+            out[start:end] = dataset[first:first + (end - start)]
+    return out
+
+def write_rows(dataset : h5py.Dataset, start : int, value : Any, num_rows : Optional[int] = None) -> bool:
+    """
+    `dataset[start:start + num_rows] = value` through the low-level h5py API when `value` is a plain array of exactly
+    `num_rows` whole rows: skips h5py's selection / broadcasting machinery (~30us of Python per call, 3-4x the cost of
+    the write itself). Returns False (writing nothing) when the fast path does not apply.
+    """
+    row_shape = dataset.shape[1:]
+    if dataset.dtype.kind in ('O', 'S', 'U', 'V'):
+        return False
+    arr = np.asarray(value)
+    if arr.ndim != len(row_shape) + 1 or arr.shape[1:] != row_shape or arr.shape[0] == 0 \
+            or (num_rows is not None and arr.shape[0] != num_rows) \
+            or start < 0 or start + arr.shape[0] > dataset.shape[0]:
+        return False
+    if arr.dtype != dataset.dtype:
+        # Only lossless casts: anything else goes through h5py so overflow / rounding follow HDF5 conversion rules
+        if not np.can_cast(arr.dtype, dataset.dtype, casting="safe"):
+            return False
+        arr = arr.astype(dataset.dtype)
+    arr = np.ascontiguousarray(arr)
+    file_space = dataset.id.get_space()
+    file_space.select_hyperslab((int(start),) + (0,) * len(row_shape), arr.shape)
+    dataset.id.write(h5py.h5s.create_simple(arr.shape), file_space, arr)
+    return True
+
+def write_sorted_unique_rows(dataset : h5py.Dataset, index : np.ndarray, value : np.ndarray) -> None:
+    """`dataset[index] = value` for a sorted, duplicate-free integer array, as one slice write per consecutive run."""
+    for start, end in _consecutive_runs(index):
+        first = int(index[start])
+        if not write_rows(dataset, first, value[start:end], end - start):
+            dataset[first:first + (end - start)] = value[start:end]
+
 HDF5BatchType = Union[Dict[str, Any], NumpyArrayType, str]
 HDF5SpaceType = Union[DictSpace, BoxSpace, TextSpace]
 class HDF5Storage(SpaceStorage[
@@ -142,6 +217,25 @@ class HDF5Storage(SpaceStorage[
     NumpyDtypeType,
     NumpyRNGType,
 ]):
+    """
+    Stores samples of a (nested) `DictSpace` / `BoxSpace` / `BinarySpace` / `TextSpace` in one HDF5 file,
+    one dataset per leaf, numpy backend only.
+
+    Dataset layout, chosen by `create()` from `chunks` / `compression` (a mapping sets them per key, `"*"` for
+    the remaining keys):
+
+    - Fixed capacity, no compression, `chunks=None` (the default): contiguous datasets, the fastest layout for
+      per-step appends and random reads.
+    - `chunks=None` or `chunks=True` with compression, or an unbounded storage: chunks of whole rows of about
+      `CHUNK_TARGET_BYTES` (64 KiB), e.g. one 128x128x3 uint8 image or ~2300 7-float rows per chunk, so a row
+      access touches (and decompresses) a single chunk. Compressed files come out somewhat larger than with
+      h5py's sub-row chunk guess, which made every image read decompress dozens of chunks.
+    - An explicit tuple is used as given, padded with the row shape: `chunks=(1,)` stores every step in its own
+      chunk (the per-step layout: cheapest single-row writes and reads with compression, worst ratio).
+
+    Compression (`"gzip"`, `"lzf"`) trades write and random-read speed for size. For camera images prefer
+    `VideoStorage` (or `ImageStorage` with JPEG / PNG) over gzip-compressed HDF5; keep low-dim keys uncompressed.
+    """
     # ========== Class Attributes ==========
     single_file_ext : Optional[str] = ".hdf5"
     DEFAULT_KEY : str = "data"
@@ -349,13 +443,23 @@ class HDF5Storage(SpaceStorage[
                     for i, c_size in enumerate(current_chunks):
                         next_chunks[i] = c_size
                     current_chunks = tuple(next_chunks)
-                    
+                current_compression = compression if not isinstance(compression, Mapping) else compression.get(key, None)
+                if current_chunks is None and capacity is not None and initial_capacity == capacity \
+                        and current_compression is None:
+                    # Fixed capacity, no filters: a contiguous dataset (no `maxshape`, which would make h5py
+                    # auto-chunk it) gives the cheapest per-row reads / writes. `maxshape[0]` still equals the capacity.
+                    maxshape = None
+                elif current_chunks is None or current_chunks is True:
+                    # h5py's chunk guess splits rows over many chunks (e.g. (250, 16, 16, 1) for 128x128x3
+                    # images), so every row access touches dozens of chunks; use whole-row chunks instead.
+                    current_chunks = __class__._row_aligned_chunks(shape, dtype, capacity)
+
                 root.create_dataset(
                     key,
                     shape=shape,
                     maxshape=maxshape,
                     dtype=dtype,
-                    compression=compression if not isinstance(compression, Mapping) else compression.get(key, None),
+                    compression=current_compression,
                     compression_opts=compression_level if not isinstance(compression_level, Mapping) else compression_level.get(
                         key, None
                     ),
@@ -376,6 +480,29 @@ class HDF5Storage(SpaceStorage[
                     ),
                     chunks=chunks if not isinstance(chunks, Mapping) else chunks.get(key, chunks.get("*", None)),
                 )
+
+    #: Target size of one chunk when HDF5Storage picks the chunk shape itself.
+    CHUNK_TARGET_BYTES : int = 64 * 1024
+
+    @staticmethod
+    def _row_aligned_chunks(
+        shape : Tuple[int, ...],
+        dtype : Any,
+        capacity : Optional[int],
+    ) -> Union[bool, Tuple[int, ...]]:
+        """Chunks that hold whole rows (k samples), with k chosen so a chunk is about `CHUNK_TARGET_BYTES`."""
+        row_shape = tuple(int(s) for s in shape[1:])
+        if any(s == 0 for s in row_shape):
+            return True
+        try:
+            itemsize = np.dtype(dtype).itemsize
+        except TypeError:
+            itemsize = 8
+        row_bytes = max(1, int(np.prod(row_shape, dtype=np.int64)) * max(1, itemsize))
+        rows = max(1, __class__.CHUNK_TARGET_BYTES // row_bytes)
+        if capacity is not None:
+            rows = min(rows, max(1, int(capacity)))
+        return (int(rows), *row_shape)
 
     @staticmethod
     def call_function_on_first_dataset(
@@ -429,25 +556,29 @@ class HDF5Storage(SpaceStorage[
                 sub_root = root[key]
                 result[key] = __class__.get_from(sub_root, space, index, reduce_io=reduce_io)
         else:
-            if reduce_io and is_fancy_index(index):
-                indexes = io_reduced_indexing(index)
-                result_parts = []
-                for idx in indexes:
-                    if isinstance(idx, int):
-                        result_parts.append(root[idx][None])
-                    else:
-                        result_parts.append(root[idx])
-                result = np.concatenate(result_parts, axis=0)
-            else:
-                result = root[index]
-            # Convert to numpy array if it's a scalar
-            if isinstance(result, (int, float)):
-                result = np.array(result)
-            if isinstance(single_instance_space, TextSpace):
-                if isinstance(result, bytes):
-                    result = result.decode('utf-8')
-                elif isinstance(result, np.ndarray):
-                    result = np.array([r.decode('utf-8') if isinstance(r, bytes) else r for r in result], dtype=object)
+            result = __class__._read_leaf(root, single_instance_space, index, reduce_io)
+        return result
+
+    @staticmethod
+    def _read_leaf(
+        dataset : h5py.Dataset,
+        space : HDF5SpaceType,
+        index : Any,
+        reduce_io : bool = True,
+    ) -> Any:
+        if reduce_io and is_fancy_index(index):
+            # `index` is sorted and duplicate-free here (see `get`)
+            result = read_sorted_unique_rows(dataset, index)
+        else:
+            result = dataset[index]
+        # Convert to numpy array if it's a scalar
+        if isinstance(result, (int, float)):
+            result = np.array(result)
+        if isinstance(space, TextSpace):
+            if isinstance(result, bytes):
+                result = result.decode('utf-8')
+            elif isinstance(result, np.ndarray):
+                result = np.array([r.decode('utf-8') if isinstance(r, bytes) else r for r in result], dtype=object)
         return result
 
     @staticmethod
@@ -594,6 +725,7 @@ class HDF5Storage(SpaceStorage[
             1
         )
         self.root = root
+        self._leaves = None
         # Column views share their parent's open file and must not close it;
         # a handle this instance opens itself (see `_ensure_root`) is always owned.
         self._owns_root = owns_root
@@ -651,6 +783,7 @@ class HDF5Storage(SpaceStorage[
             if self._full_name is not None:
                 root = root[self._full_name]
             self.root = root
+            self._leaves = None
             self._owns_root = True
         return self.root
 
@@ -690,54 +823,107 @@ class HDF5Storage(SpaceStorage[
             index = np.where(index < 0, index + self._len, index)
         return index
 
+    def _get_leaves(self) -> List[Tuple[Tuple[str, ...], HDF5SpaceType, h5py.Dataset]]:
+        """(key path, space, dataset) of every leaf, resolved once per open file (h5py group lookups cost ~20-50us each)."""
+        leaves = getattr(self, "_leaves", None)
+        if leaves is None:
+            leaves = []
+
+            def walk(node, space, path):
+                if not isinstance(space, DictSpace) and isinstance(node, h5py.Group):
+                    node = node[__class__.DEFAULT_KEY]
+                if isinstance(space, DictSpace):
+                    for key, sub_space in space.spaces.items():
+                        walk(node[key], sub_space, path + (key,))
+                else:
+                    leaves.append((path, space, node))
+
+            walk(self._ensure_root(), self.single_instance_space, ())
+            self._leaves = leaves
+        return leaves
+
+    @staticmethod
+    def _assemble(leaf_values : List[Tuple[Tuple[str, ...], Any]]) -> Any:
+        if len(leaf_values) == 1 and leaf_values[0][0] == ():
+            return leaf_values[0][1]
+        result : Dict[str, Any] = {}
+        for path, value in leaf_values:
+            node = result
+            for key in path[:-1]:
+                node = node.setdefault(key, {})
+            node[path[-1]] = value
+        return result
+
     def get(self, index):
-        root = self._ensure_root()
         index = self._normalize_array_index(index)
         if isinstance(index, np.ndarray) and index.dtype.kind in {'i', 'u'} and index.size == 0:
             index = slice(0, 0)
+        leaves = self._get_leaves()
         if not is_fancy_index(index):
-            return __class__.get_from(
-                root,
-                self.single_instance_space,
-                index
-            )
+            return self._assemble([
+                (path, __class__._read_leaf(dataset, space, index, self.reduce_io))
+                for path, space, dataset in leaves
+            ])
+        unique_indices, reverse_mapping = fancy_indexing_to_supported_indexing(index)
+        identity = unique_indices.shape[0] == index.shape[0] and np.array_equal(unique_indices, index)
+        values = []
+        for path, space, dataset in leaves:
+            value = __class__._read_leaf(dataset, space, unique_indices, self.reduce_io)
+            values.append((path, value if identity else value[reverse_mapping]))
+        return self._assemble(values)
+
+    def _contiguous_start(self, index) -> Optional[int]:
+        """First row of an int / step-1 slice index (the low-level write fast path), else None."""
+        if isinstance(index, (int, np.integer)) and not isinstance(index, (bool, np.bool_)):
+            index = int(index)
+            return index + self._len if index < 0 else index
+        if isinstance(index, slice) and index.step in (None, 1):
+            return index.indices(self._len)[0]
+        return None
+
+    def append(self, value) -> None:
+        # Write the sample straight into its row (the generic `SpaceStorage.append` stacks it into a batch first)
+        if not self.has_open_segment or self._active_segment_index is None:
+            raise RuntimeError(f"Cannot append to {type(self).__name__} without an open segment")
+        current_index = self._active_segment_index
+        self.set(current_index, value)
+        if self.capacity is None:
+            self._active_segment_index = current_index + 1
         else:
-            unique_indices, reverse_mapping = fancy_indexing_to_supported_indexing(index)
-            get_result_unique = __class__.get_from(
-                root,
-                self.single_instance_space,
-                unique_indices
-            )
-            return sbu.get_at(
-                self._batched_instance_space,
-                get_result_unique,
-                reverse_mapping
-            )
+            self._active_segment_index = (current_index + 1) % self.capacity
 
     def set(self, index, value):
         if self._multiprocessing:
             raise RuntimeError("HDF5Storage does not support set in multiprocessing mode")
-        root = self._ensure_root()
         index = self._normalize_array_index(index)
+        leaves = self._get_leaves()
         if not is_fancy_index(index):
-            return __class__.set_to(
-                root,
-                self.single_instance_space,
-                index,
-                value
-            )
-        else:
-            unique_indices, unique_idx = fancy_indexing_to_supported_set_indexing(index)
-            return __class__.set_to(
-                root,
-                self.single_instance_space,
-                unique_indices,
-                sbu.get_at(
-                    self._batched_instance_space,
-                    value,
-                    unique_idx
-                )
-            )
+            start = self._contiguous_start(index)
+            for path, space, dataset in leaves:
+                leaf_value = nested_get(value, path) if len(path) > 0 else value
+                if start is not None and not isinstance(space, TextSpace):
+                    if isinstance(index, slice):
+                        if write_rows(dataset, start, leaf_value, len(range(*index.indices(self._len)))):
+                            continue
+                    elif 0 <= start < self._len and write_rows(dataset, start, np.asarray(leaf_value)[None], 1):
+                        continue  # a single (unbatched) sample
+                dataset[index] = leaf_value
+            return
+        unique_indices, unique_idx = fancy_indexing_to_supported_set_indexing(index)
+        identity = unique_idx.shape[0] == index.shape[0] and np.array_equal(unique_idx, np.arange(index.shape[0]))
+        for path, space, dataset in leaves:
+            leaf_value = nested_get(value, path) if len(path) > 0 else value
+            if isinstance(space, TextSpace):
+                if not identity:
+                    leaf_value = sbu.get_at(sbu.batch_space(space, 1), leaf_value, unique_idx)
+            else:
+                leaf_value = np.asarray(leaf_value)
+                if not identity:
+                    leaf_value = leaf_value[unique_idx]
+            if self.reduce_io and not isinstance(space, TextSpace):
+                write_sorted_unique_rows(dataset, unique_indices, leaf_value)
+            else:
+                dataset[unique_indices] = leaf_value
 
     def get_column(self, nested_keys : Sequence[str]) -> "HDF5Storage":
         sub_space = nested_get(self.single_instance_space, nested_keys)
@@ -791,6 +977,7 @@ class HDF5Storage(SpaceStorage[
     def close(self):
         root = getattr(self, "root", None)
         self.root = None
+        self._leaves = None
         if root is None or not getattr(self, "_owns_root", True):
             return
         try:
@@ -803,6 +990,7 @@ class HDF5Storage(SpaceStorage[
 
     def __getstate__(self):
         state = self.__dict__.copy()
+        state.pop('_leaves', None)
         root = state.pop('root', None)
         if isinstance(root, h5py.File):
             state['_filename'] = root.filename
@@ -816,4 +1004,5 @@ class HDF5Storage(SpaceStorage[
     
     def __setstate__(self, state):
         state['root'] = None
+        state['_leaves'] = None
         self.__dict__.update(state)
