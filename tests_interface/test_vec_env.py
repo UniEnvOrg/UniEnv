@@ -1,6 +1,8 @@
 """Tests for ``SyncVecEnv`` / ``AsyncVecEnv`` and ``data_stack``."""
 
+import functools
 import multiprocessing as mp
+import os
 
 import numpy as np
 import pytest
@@ -8,6 +10,7 @@ import pytest
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.env_base.vec_env import AsyncVecEnv, SyncVecEnv, data_stack
 from tests_common.envs import StubEnv
+from tests_common.vecenv_envs import ArrayEnv
 from tests_common.trees import assert_tree_equal
 
 
@@ -197,6 +200,68 @@ def test_async_surfaces_worker_errors():
         assert "boom in worker" in repr(excinfo.value.__cause__) + str(excinfo.value)
     finally:
         async_env.close()
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_reads_spaces_from_workers_without_building_an_env_in_the_parent():
+    factory = functools.partial(ArrayEnv, image_shape=(3, 4, 5), forbidden_pid=os.getpid())
+    reference = ArrayEnv(image_shape=(3, 4, 5))
+    async_env = AsyncVecEnv([factory for _ in range(2)], ctx=mp.get_context("spawn"))
+    try:
+        assert async_env.backend is reference.backend and async_env.device is None
+        assert async_env.metadata == reference.metadata
+        assert async_env.render_mode is None and async_env.render_fps is None
+        assert async_env.observation_space == SyncVecEnv([lambda: ArrayEnv(image_shape=(3, 4, 5))] * 2).observation_space
+        assert async_env.observation_space["image"].shape == (2, 3, 4, 5)
+        assert async_env.context_space.shape == (2, 2)
+        context, obs, _ = async_env.reset(seed=1)
+        np.testing.assert_array_equal(context, [[1, 1], [2, 2]])
+    finally:
+        async_env.close()
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_batches_differing_sub_env_spaces_like_sync():
+    fns = [functools.partial(StubEnv, action_high=1.0), functools.partial(StubEnv, action_high=2.0)]
+    async_env = AsyncVecEnv(fns, ctx=mp.get_context("spawn"))
+    try:
+        assert async_env.action_space == SyncVecEnv(fns).action_space
+    finally:
+        async_env.close()
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_torch_spaces_keep_backend_and_device():
+    torch = pytest.importorskip("torch")
+    async_env = AsyncVecEnv([functools.partial(ArrayEnv, "pytorch")] * 2, ctx=mp.get_context("spawn"))
+    try:
+        reference = ArrayEnv("pytorch")
+        assert async_env.backend is reference.backend
+        assert async_env.device == torch.device("cpu")
+        assert async_env.observation_space == SyncVecEnv([lambda: ArrayEnv("pytorch")] * 2).observation_space
+        _, obs, _ = async_env.reset(seed=0)
+        assert isinstance(obs["vec"], torch.Tensor) and obs["vec"].shape == (2, 4)
+    finally:
+        async_env.close()
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_construction_errors_are_raised_by_the_constructor():
+    with pytest.raises(RuntimeError, match="worker") as excinfo:
+        AsyncVecEnv([functools.partial(ArrayEnv, "no-such-backend")] * 2, ctx=mp.get_context("spawn"))
+    assert "no-such-backend" in repr(excinfo.value.__cause__) + str(excinfo.value)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_rejects_workers_with_different_backends():
+    pytest.importorskip("torch")
+    with pytest.raises(ValueError, match="same backend"):
+        AsyncVecEnv([ArrayEnv, functools.partial(ArrayEnv, "pytorch")], ctx=mp.get_context("spawn"))
 
 
 # ---------------------------------------------------------------------------

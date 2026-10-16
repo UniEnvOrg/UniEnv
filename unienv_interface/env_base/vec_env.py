@@ -1,6 +1,7 @@
 from .env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, batch_utils as sbu
+from unienv_interface.space.space_utils.serialization_utils import space_to_json, json_to_space
 from unienv_interface.utils.vec_util import MultiProcessFn
 from typing import Any, Dict, Generic, Literal, Optional, SupportsFloat, Tuple, TypeVar, Callable, Iterable, Mapping, Sequence, List
 import numpy as np
@@ -8,7 +9,10 @@ import multiprocessing as mp
 from multiprocessing.connection import Connection as MPConnection
 from multiprocessing.context import BaseContext as MPContext
 from queue import Empty as QueueEmpty
+import pickle
 import traceback
+import warnings
+import cloudpickle
 
 def data_stack(
     data : Any,
@@ -261,6 +265,87 @@ class SyncVecEnv(Env[
             env.close()
         self.envs = []
 
+def _serialize_device(
+    backend : ComputeBackend,
+    device : Optional[BDeviceType],
+) -> Optional[Tuple[str, Any]]:
+    """Picklable description of ``device`` (``None`` if it cannot be described).
+
+    Picklable devices (e.g. ``torch.device``) are sent as-is so that they compare
+    equal in the parent; others (JAX devices) go through ``backend.serialize_device``.
+    """
+    if device is None:
+        return None
+    if backend.simplified_name != "jax":
+        try:
+            pickle.dumps(device)
+            return ("object", device)
+        except Exception:
+            pass
+    try:
+        return ("str", backend.serialize_device(device))
+    except Exception:
+        return None
+
+def _deserialize_device(
+    backend : ComputeBackend,
+    device : Optional[Tuple[str, Any]],
+) -> Optional[BDeviceType]:
+    """Inverse of :func:`_serialize_device`; falls back to the backend's default device
+    (``None``) if this process cannot see the worker's device."""
+    if device is None:
+        return None
+    kind, value = device
+    if kind == "object":
+        return value
+    try:
+        return backend.deserialize_device(value)
+    except Exception as e:
+        warnings.warn(
+            f"AsyncVecEnv: the worker device {value!r} is not available in the parent process "
+            f"({type(e).__name__}: {e}); using the backend's default device instead."
+        )
+        return None
+
+def _serialize_space(space : Optional[Space]) -> Optional[Tuple[str, Any, Any]]:
+    """Describe a space so that it can be sent to the parent process.
+
+    Spaces are serialized with :func:`space_to_json` (plus their device) rather
+    than pickled, so that no backend array (e.g. a CUDA tensor, which would be
+    shared through CUDA IPC) crosses the pipe. Spaces without a JSON
+    representation fall back to cloudpickle.
+    """
+    if space is None:
+        return None
+    try:
+        return ("json", space_to_json(space), _serialize_device(space.backend, space.device))
+    except Exception:
+        return ("pickle", cloudpickle.dumps(space), None)
+
+def _deserialize_space(
+    payload : Optional[Tuple[str, Any, Any]],
+    backend : ComputeBackend,
+) -> Optional[Space]:
+    if payload is None:
+        return None
+    kind, data, device = payload
+    if kind == "json":
+        return json_to_space(data, backend, _deserialize_device(backend, device))
+    return cloudpickle.loads(data)
+
+def _describe_env(env : Env) -> Dict[str, Any]:
+    """Everything the parent process needs to know about a worker environment."""
+    return {
+        "backend": env.backend,
+        "device": _serialize_device(env.backend, env.device),
+        "action_space": _serialize_space(env.action_space),
+        "observation_space": _serialize_space(env.observation_space),
+        "context_space": _serialize_space(env.context_space),
+        "metadata": env.metadata,
+        "render_mode": env.render_mode,
+        "render_fps": env.render_fps,
+    }
+
 def _async_worker_fn(
     index : int,
     env_fn : Callable[[], Env[
@@ -286,6 +371,8 @@ def _async_worker_fn(
             elif cmd == "render":
                 frame = env.render(*args, **kwargs)
                 pipe.send((frame, True))
+            elif cmd == "_describe":
+                pipe.send((_describe_env(env), True))
             elif cmd == "close":
                 break
     except (KeyboardInterrupt, Exception) as e:
@@ -310,6 +397,13 @@ class AsyncVecEnv(Env[
     with seed ``s + i``. If a worker raises, the exception is re-raised in the
     parent as a ``RuntimeError`` (chained to the worker's exception) and that
     worker process exits.
+
+    No environment is built in the parent process: the spaces, backend, device,
+    metadata and render settings are reported by the workers (spaces travel as
+    :func:`space_to_json` payloads, so this works with every start method), and
+    the constructor raises if a worker fails to build its environment or if the
+    workers disagree on backend or device. Differing sub-environment spaces are
+    batched like in :class:`SyncVecEnv`.
     """
     def __init__(
         self,
@@ -320,16 +414,18 @@ class AsyncVecEnv(Env[
         ctx : Optional[MPContext] = None,
         daemon : bool = True,
     ):
-        """Spawn worker processes and batch their exposed spaces."""
+        """Spawn worker processes and batch the spaces they report.
+
+        No environment is constructed in the parent process: every worker
+        builds its environment and reports its spaces, backend, device and
+        metadata, which are validated to agree across workers.
+        """
         ctx = ctx or mp.get_context()
         self.command_pipes : List[MPConnection] = []
         self.processes : List[mp.Process] = []
         self.error_queue : mp.Queue = ctx.Queue()
 
-        dummy_fn = None
         for i, fn in enumerate(env_fn):
-            if i == 0:
-                dummy_fn = fn
             parent_pipe, child_pipe = ctx.Pipe()
             process = ctx.Process(
                 target=_async_worker_fn,
@@ -343,36 +439,57 @@ class AsyncVecEnv(Env[
             self.command_pipes.append(parent_pipe)
             self.processes.append(process)
 
-        assert len(self.processes) > 1, "env_fns should have more than 1 env function"
-
-        # Use Dummy Environment to get spaces and metadata
-        dummy_env = dummy_fn()
-        self.backend = dummy_env.backend
-        self.device = dummy_env.device
-        self.metadata = dummy_env.metadata
-        self.render_mode = dummy_env.render_mode
-        self.render_fps = dummy_env.render_fps
-        self.action_space = sbu.batch_space(
-            dummy_env.action_space,
-            len(self.processes),
-        )
-        self.observation_space = sbu.batch_space(
-            dummy_env.observation_space,
-            len(self.processes),
-        )
-        self.context_space = None if dummy_env.context_space is None else sbu.batch_space(
-            dummy_env.context_space,
-            len(self.processes),
-        )
-        self.rng = dummy_env.backend.random.random_number_generator(
-            seed,
-            device=dummy_env.device,
-        )
-        dummy_env.close()
-        del dummy_env
+        try:
+            assert len(self.processes) > 1, "env_fns should have more than 1 env function"
+            self._init_from_workers(seed)
+        except BaseException:
+            self.close()
+            raise
 
         # Temporal mask storage
         self._reset_mask : Optional[BArrayType] = None
+
+    def _init_from_workers(self, seed : Optional[int]) -> None:
+        """Query every worker for its environment description and batch the spaces."""
+        for i in range(len(self.processes)):
+            self.send_command(i, "_describe")
+        descriptions = self._get_command_results(range(len(self.processes)))
+        first = descriptions[0]
+        for i, description in enumerate(descriptions[1:], start=1):
+            if description["backend"] != first["backend"]:
+                raise ValueError(
+                    f"All envs must have the same backend, worker 0 uses {first['backend']} "
+                    f"but worker {i} uses {description['backend']}"
+                )
+            if description["device"] != first["device"]:
+                raise ValueError(
+                    f"All envs must have the same device, worker 0 uses {first['device']} "
+                    f"but worker {i} uses {description['device']}"
+                )
+
+        self.backend = first["backend"]
+        self.device = _deserialize_device(self.backend, first["device"])
+        self.metadata = first["metadata"]
+        self.render_mode = first["render_mode"]
+        self.render_fps = first["render_fps"]
+
+        def single_spaces(key : str) -> List[Optional[Space]]:
+            first_space = _deserialize_space(first[key], self.backend)
+            return [
+                first_space if description[key] == first[key]
+                else _deserialize_space(description[key], self.backend)
+                for description in descriptions
+            ]
+
+        self._single_observation_spaces = single_spaces("observation_space")
+        self._single_context_spaces = single_spaces("context_space")
+        self.action_space = _batch_env_spaces(single_spaces("action_space"), device=self.device)
+        self.observation_space = _batch_env_spaces(self._single_observation_spaces, device=self.device)
+        self.context_space = _batch_env_spaces(self._single_context_spaces, device=self.device)
+        self.rng = self.backend.random.random_number_generator(
+            seed,
+            device=self.device,
+        )
 
     @property
     def batch_size(self) -> Optional[int]:
