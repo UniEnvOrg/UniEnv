@@ -165,7 +165,7 @@ class WebSocketTransport(Transport):
         from websockets.exceptions import ConnectionClosed
         with self._send_lock:
             try:
-                self.connection.send(b"".join(parts))
+                self.connection.send([memoryview(p).cast("B") for p in parts] if size > 65536 else b"".join(parts))
             except ConnectionClosed as exc:
                 raise ConnectionError(str(exc)) from None
 

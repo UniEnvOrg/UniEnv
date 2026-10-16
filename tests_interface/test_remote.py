@@ -84,7 +84,7 @@ def test_env_matches_local_env(server, transport, batch_size):
 
 
 def test_live_buffers_are_copied_before_they_change(server, transport):
-    server.register("live", LiveImageEnv(image_shape=(64, 64, 3)))
+    server.register("live", LiveImageEnv(image_shape=(160, 160, 3)))  # > 64 KiB: fragmented on WebSocket
     with connect(server, transport) as client, client.subscribe("live") as stream:
         env = client.env("live")
         _, first, _ = env.reset(seed=1)

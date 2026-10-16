@@ -66,7 +66,7 @@ class LiveImageEnv(Env):
         self.steps += 1
         self.state += np.asarray(action, np.float32)
         self.image += np.uint8(1)
-        return self._obs(), float(self.state.sum()), False, False, {"steps": self.steps}
+        return self._obs(), float(self.state.sum()), False, False, {"steps": self.steps, "empty": np.zeros((0, 2))}
 
     def render(self) -> np.ndarray:
         return np.full((8, 8, 3), self.steps % 256, np.uint8)
