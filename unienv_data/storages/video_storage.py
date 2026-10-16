@@ -388,6 +388,8 @@ class VideoStorage(EpisodeStorageBase[
         - Set `file_pixel_format` to `gray16le`
         - Set `codec` to a lossless codec that supports gray16le, e.g., `ffv1`
         - Set `file_ext` to `mkv`
+    `encoder_options` are passed to the encoder (e.g. `{"crf": "28", "g": "15"}`) and persisted in the metadata,
+    so a loaded storage keeps encoding new segments the same way.
     """
 
     # ========== Class Attributes ==========
@@ -407,6 +409,7 @@ class VideoStorage(EpisodeStorageBase[
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
         fps : int = 15,
+        encoder_options : Optional[Dict[str, str]] = None,
         capacity : Optional[int] = None,
         cache_path : Optional[str] = None,
         multiprocessing : bool = False,
@@ -429,6 +432,7 @@ class VideoStorage(EpisodeStorageBase[
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
             fps=fps,
+            encoder_options=encoder_options,
             capacity=capacity,
         )
 
@@ -478,6 +482,7 @@ class VideoStorage(EpisodeStorageBase[
         fps = int(metadata["fps"])
         file_pixel_format = metadata.get("file_pixel_format", None)
         buffer_pixel_format = metadata.get("buffer_pixel_format", "rgb24")
+        encoder_options = metadata.get("encoder_options", None)
 
         if "capacity" in metadata:
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
@@ -495,6 +500,7 @@ class VideoStorage(EpisodeStorageBase[
             file_pixel_format=file_pixel_format,
             buffer_pixel_format=buffer_pixel_format,
             fps=fps,
+            encoder_options=encoder_options,
             mutable=not read_only,
             capacity=capacity,
             length=length,
@@ -533,7 +539,7 @@ class VideoStorage(EpisodeStorageBase[
         container = None
         try:
             container = av.open(temp_filename, mode='w')
-            output_stream = container.add_stream(self.codec, rate=self.fps)
+            output_stream = container.add_stream(self.codec, rate=self.fps, options=self.encoder_options)
             if len(self.single_instance_space.shape) == 3:
                 output_stream.width = self.single_instance_space.shape[1]
                 output_stream.height = self.single_instance_space.shape[0]
@@ -706,8 +712,13 @@ class VideoStorage(EpisodeStorageBase[
     def get_auto_codec(
         base : Optional[str] = None
     ) -> str:
-        if hasattr(__class__, "_auto_codec"):
-            return __class__._auto_codec
+        # Cached per `base`: a single cached codec would be returned for every later base.
+        auto_codecs = __class__.__dict__.get("_auto_codecs")
+        if auto_codecs is None:
+            auto_codecs = {}
+            __class__._auto_codecs = auto_codecs
+        if base in auto_codecs:
+            return auto_codecs[base]
         
         # --- PyAV Implementation ---
         preferred_codecs = ["av1", "hevc", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
@@ -734,7 +745,7 @@ class VideoStorage(EpisodeStorageBase[
         if target_codec is None:
             raise RuntimeError("No suitable video codec found in available codecs.")
 
-        __class__._auto_codec = target_codec
+        auto_codecs[base] = target_codec
         return target_codec
 
     def __init__(
@@ -750,6 +761,7 @@ class VideoStorage(EpisodeStorageBase[
         file_pixel_format : Optional[str] = None,
         buffer_pixel_format : str = "rgb24",
         fps : int = 15,
+        encoder_options : Optional[Dict[str, str]] = None,
         mutable : bool = True,
         capacity : Optional[int] = None,
         length : int = 0,
@@ -774,10 +786,25 @@ class VideoStorage(EpisodeStorageBase[
         self.decode_backend = decode_backend
 
         self.fps = fps
+        self.encoder_options = None if encoder_options is None else {str(k): str(v) for k, v in encoder_options.items()}
         self.file_pixel_format = file_pixel_format
         self.buffer_pixel_format = buffer_pixel_format
         self.cache_decoders = cache_decoders
         self._decoder_cache = {}
+
+    #: libx265 clips shorter than this are encoded without B-frames. With B-frames, x265 only
+    #: initializes its dts offset (`Encoder::m_bframeDelayTime`) once it receives frame
+    #: `m_bframeDelay` (1, or 2 with b-pyramid), so 1-2 frame clips get dts computed from
+    #: uninitialized memory: the mp4 muxer then often fails with "pts/dts pair unsupported".
+    X265_MIN_BFRAME_CLIP_LENGTH = 16
+
+    def _encoder_options_for_clip(self, num_frames: int) -> Optional[Dict[str, str]]:
+        if self.codec != "libx265" or num_frames >= self.X265_MIN_BFRAME_CLIP_LENGTH:
+            return self.encoder_options
+        options = dict(self.encoder_options or {})
+        x265_params = options.get("x265-params", "")
+        options["x265-params"] = f"{x265_params}:bframes=0" if x265_params else "bframes=0"
+        return options
 
     def get_cached_decoder(self, filename: str):
         if (not self.cache_decoders) or (filename not in self._decoder_cache):
@@ -834,8 +861,11 @@ class VideoStorage(EpisodeStorageBase[
 
         # PyAV Implementation
         logging.getLogger("libav").setLevel(self.PyAV_LOG_LEVEL)
+        value_np = self.backend.to_numpy(value)
         with av.open(filename, mode='w') as container:
-            output_stream = container.add_stream(self.codec, rate=self.fps)
+            output_stream = container.add_stream(
+                self.codec, rate=self.fps, options=self._encoder_options_for_clip(len(value_np))
+            )
             if len(self.single_instance_space.shape) == 3: # (H, W, C)
                 output_stream.width = self.single_instance_space.shape[1]
                 output_stream.height = self.single_instance_space.shape[0]
@@ -845,7 +875,6 @@ class VideoStorage(EpisodeStorageBase[
             if self.file_pixel_format is not None:
                 output_stream.pix_fmt = self.file_pixel_format
             # output_stream.time_base = Fraction(1, self.fps).limit_denominator(int(2**16 - 1))
-            value_np = self.backend.to_numpy(value)
             for i, frame_np in enumerate(value_np):
                 frame = av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format, channel_last=True)
                 packets = output_stream.encode(frame)
@@ -901,6 +930,7 @@ class VideoStorage(EpisodeStorageBase[
             "fps": self.fps,
             "file_pixel_format": self.file_pixel_format,
             "buffer_pixel_format": self.buffer_pixel_format,
+            "encoder_options": self.encoder_options,
             "capacity": self.capacity,
             "length": self.length,
         }

@@ -417,3 +417,104 @@ def test_replay_buffer_export_no_trajectory_buffer():
 
     assert hasattr(replay_buffer_module, "ReplayBuffer")
     assert not hasattr(replay_buffer_module, "TrajectoryReplayBuffer")
+
+
+def _keyframe_flags(av_module, filename):
+    with av_module.open(filename) as container:
+        return [bool(packet.is_keyframe) for packet in container.demux(video=0) if packet.size > 0]
+
+
+def test_video_storage_encoder_options_apply_and_persist(tmp_path):
+    av = pytest.importorskip("av")
+    if _pick_available_encoder(av, ("libx264",)) is None:
+        pytest.skip("No x264 encoder is available")
+
+    import glob
+    import os
+    from unienv_data.storages.video_storage import VideoStorage
+
+    space = BoxSpace(NumpyComputeBackend, 0, 255, np.uint8, shape=(16, 16, 3))
+    path = tmp_path / "video"
+    options = {"g": "4", "keyint_min": "4", "sc_threshold": "0", "crf": "18"}
+    rb = ReplayBuffer.create(
+        VideoStorage,
+        space,
+        cache_path=str(path),
+        capacity=None,
+        codec="libx264",
+        file_ext="mp4",
+        buffer_pixel_format="rgb24",
+        decode_backend="pyav",
+        hardware_acceleration=None,
+        encoder_options=options,
+    )
+    frames = np.stack([np.full((16, 16, 3), 8 * i, dtype=np.uint8) for i in range(12)])
+    rb.extend(frames)  # whole-episode write (set_to_file)
+    rb.dumps(str(path))
+
+    metadata = json.loads((path / "storage" / "video_metadata.json").read_text())
+    assert metadata["encoder_options"] == options
+    (video_file,) = glob.glob(str(path / "storage" / "*.mp4"))
+    assert _keyframe_flags(av, video_file) == [i % 4 == 0 for i in range(12)]
+
+    loaded = ReplayBuffer.load_from(
+        str(path),
+        backend=NumpyComputeBackend,
+        read_only=False,
+        hardware_acceleration=None,
+        decode_backend="pyav",
+    )
+    assert loaded.storage.encoder_options == options
+    for frame in frames[:8]:  # segment write path (mark_segment_start/append)
+        loaded.append(frame)
+    loaded.mark_segment_end()
+    (appended,) = [f for f in glob.glob(str(path / "storage" / "*.mp4")) if os.path.basename(f) != os.path.basename(video_file)]
+    assert _keyframe_flags(av, appended) == [i % 4 == 0 for i in range(8)]
+    assert np.abs(loaded.get_at(13).astype(int) - frames[1].astype(int)).max() <= 2
+
+
+def test_video_storage_ffv1_depth_with_encoder_options_is_lossless(tmp_path):
+    av = pytest.importorskip("av")
+    from unienv_data.storages.video_storage import VideoStorage
+
+    space = BoxSpace(NumpyComputeBackend, 0, 65535, np.uint16, shape=(24, 32))
+    rb = ReplayBuffer.create(
+        VideoStorage,
+        space,
+        cache_path=str(tmp_path / "depth"),
+        capacity=None,
+        codec="ffv1",
+        file_ext="mkv",
+        file_pixel_format="gray16le",
+        buffer_pixel_format="gray16le",
+        decode_backend="pyav",
+        hardware_acceleration=None,
+        encoder_options={"level": "3", "coder": "1", "context": "1", "slices": "4", "g": "1"},
+    )
+    rng = np.random.default_rng(0)
+    frames = rng.integers(0, 65535, size=(6, 24, 32), dtype=np.uint16)
+    rb.extend(frames)
+    np.testing.assert_array_equal(rb.get_at(slice(0, 6)), frames)
+
+
+def test_video_storage_disables_x265_bframes_for_short_clips(tmp_path):
+    pytest.importorskip("av")
+    from unienv_data.storages.video_storage import VideoStorage
+
+    space = BoxSpace(NumpyComputeBackend, 0, 255, np.uint8, shape=(4, 4, 3))
+    options = {"crf": "28", "x265-params": "keyint=15"}
+    storage = VideoStorage.create(
+        space,
+        cache_path=str(tmp_path / "video_x265"),
+        codec="libx265",
+        encoder_options=options,
+        decode_backend="pyav",
+        hardware_acceleration=None,
+    )
+    short = storage._encoder_options_for_clip(2)
+    assert short == {"crf": "28", "x265-params": "keyint=15:bframes=0"}
+    assert storage.encoder_options == options  # the persisted options are unchanged
+    assert storage._encoder_options_for_clip(VideoStorage.X265_MIN_BFRAME_CLIP_LENGTH) == options
+
+    storage.codec = "libx264"
+    assert storage._encoder_options_for_clip(2) == options
