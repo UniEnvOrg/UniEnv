@@ -63,6 +63,15 @@ def make_rb(n: int = 10, capacity: Optional[int] = None, start: int = 0):
     return rb
 
 
+def _tree_concat(backend, a, b):
+    """Concatenate two batched trees (dict / tuple / array) along the batch axis."""
+    if isinstance(a, dict):
+        return {k: _tree_concat(backend, a[k], b[k]) for k in a}
+    if isinstance(a, (tuple, list)):
+        return type(a)(_tree_concat(backend, x, y) for x, y in zip(a, b))
+    return backend.concat([a, b], axis=0)
+
+
 class ArrayBatch(BatchBase):
     """Mutable in-memory batch over batched arrays, with optional metadata."""
 
@@ -116,10 +125,10 @@ class ArrayBatch(BatchBase):
 
     def extend(self, value):
         n = sbu.batch_size_data(value)
-        self.data = sbu.concatenate(self._space(self.single_space), [self.data, value])
+        self.data = _tree_concat(self.backend, self.data, value)
         if self.metadata is not None:
             extra = sbu.batch_space(self.single_metadata_space, n).create_empty()
-            self.metadata = sbu.concatenate(self._space(self.single_metadata_space), [self.metadata, extra])
+            self.metadata = _tree_concat(self.backend, self.metadata, extra)
 
     def close(self) -> None:
         self.closed += 1

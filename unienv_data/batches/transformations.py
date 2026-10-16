@@ -135,7 +135,7 @@ class TransformedBatch(
         assert self.transformation.has_inverse, "Cannot extend values on a transformed batch without an inverse transformation"
         assert self.batch.is_mutable, "Cannot extend values on an immutable batch"
         source_dat = self._transform_inv.transform(
-            self.batch._batched_space,
+            self._batched_space,
             value
         )
         self.batch.extend(source_dat)
