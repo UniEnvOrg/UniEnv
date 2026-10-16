@@ -47,6 +47,25 @@ def _round_trip(tf, shape):
     return images, decoded
 
 
+@pytest.mark.parametrize("shape", [(32, 48), (3, 16, 16)], ids=["single", "batched"])
+def test_round_trip_channelless_images(shape):
+    # Regression: last_channel=False built the decode buffer with a None channel count.
+    tf = ImageCompressTransformation(last_channel=False, max_size_bytes=4096)
+    space = _space(shape)
+    assert tf.get_target_space_from_source(space).shape == shape[:-2] + (4096,)
+    images, decoded = _round_trip(tf, shape)
+    assert decoded.shape == images.shape
+    assert np.abs(decoded.astype(int) - images.astype(int)).max() <= TOLERANCE
+
+
+def test_grayscale_with_channel_axis_decodes_to_channel_axis():
+    # Regression: decoding (H, W) grayscale JPEGs into an (H, W, 1) slot raised a broadcast error.
+    tf = ImageCompressTransformation(max_size_bytes=4096)
+    images, decoded = _round_trip(tf, (16, 16, 1))
+    assert decoded.shape == (16, 16, 1)
+    assert np.abs(decoded.astype(int) - images.astype(int)).max() <= TOLERANCE
+
+
 @pytest.mark.parametrize("init_quality", [1, 10, 19, 20, 55, 100])
 def test_any_init_quality_encodes(init_quality):
     # Regression: init_quality < 20 skipped the encode loop (UnboundLocalError).

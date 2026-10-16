@@ -302,13 +302,20 @@ class ImageDecompressTransformation(DataTransformation):
         self.validate_source_space(source_space)
         data_numpy = source_space.backend.to_numpy(data)
         flat_data_numpy = data_numpy.reshape(-1, data_numpy.shape[-1])
-        flat_decompressed_image = np.zeros((flat_data_numpy.shape[0], self.target_height, self.target_width, self.target_channels), dtype=np.uint8)
+        image_shape = (self.target_height, self.target_width)
+        if self.target_channels is not None:
+            image_shape = image_shape + (self.target_channels,)
+        flat_decompressed_image = np.zeros((flat_data_numpy.shape[0], *image_shape), dtype=np.uint8)
         for i in range(flat_data_numpy.shape[0]):
             byte_array : np.ndarray = flat_data_numpy[i]
-            flat_decompressed_image[i] = self.decode_bytes(
+            decoded = self.decode_bytes(
                 byte_array.tobytes(),
                 mode=self.mode
             )
+            if decoded.ndim == 2 and len(image_shape) == 3:
+                # Grayscale JPEGs decode to (H, W); restore the channel axis.
+                decoded = decoded[..., None]
+            flat_decompressed_image[i] = decoded
         if self.target_channels is None:
             decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width))
         else:
