@@ -12,6 +12,7 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
         backend : ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         spaces: Iterable[Space[Any, BDeviceType, BDtypeType, BRNGType]],
         device : Optional[BDeviceType] = None,
+        metadata : Optional[Mapping[str, Any]] = None,
     ):
         new_spaces = []
         for space in spaces:
@@ -33,6 +34,7 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             shape=None,
             device=device,
             dtype=None,
+            metadata=metadata,
         )
 
     def to(self, backend = None, device = None):
@@ -43,7 +45,8 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
         return TupleSpace(
             backend=backend or self.backend,
             spaces=[space.to(backend, new_device) for space in self.spaces],
-            device=new_device
+            device=new_device,
+            metadata=self._metadata,
         )
 
     def sample(self, rng : BRNGType) -> Tuple[BRNGType, Tuple[Any, ...]]:
@@ -117,7 +120,8 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
         return TupleSpace(
             backend=self.backend,
             spaces=copy.copy(self.spaces),
-            device=self.device
+            device=self.device,
+            metadata=self._metadata,
         )
     
     def data_to(self, data, backend = None, device = None):

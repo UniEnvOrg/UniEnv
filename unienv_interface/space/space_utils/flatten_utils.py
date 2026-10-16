@@ -93,6 +93,12 @@ def _flat_dim_oneof(space: UnionSpace, start_dim : int = 0) -> Optional[int]:
 
 @singledispatch
 def flatten_space(space: Space, start_dim : int = 0) -> BoxSpace:
+    """Flatten ``space`` (from ``start_dim`` on) into a single ``BoxSpace``.
+
+    The flat box carries no metadata: a description such as
+    ``{"kind": "image", "layout": "HWC"}`` does not hold for the flattened
+    (and, for structured spaces, concatenated) data.
+    """
     raise NotImplementedError(f"Unknown space: `{space}`")
 
 @flatten_space.register(BoxSpace)

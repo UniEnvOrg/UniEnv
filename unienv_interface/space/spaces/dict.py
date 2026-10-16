@@ -57,8 +57,12 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             Sequence[Tuple[str, Space[Any, BDeviceType, BDtypeType, BRNGType]]]
         ]] = None,
         device : Optional[BDeviceType] = None,
+        metadata : Optional[Mapping[str, Any]] = None,
     ):
-        """Create a dictionary-valued space from named child spaces."""
+        """Create a dictionary-valued space from named child spaces.
+
+        ``metadata`` describes the dict as a whole; every child keeps its own.
+        """
         if isinstance(spaces, Mapping):
             try:
                 spaces = dict(sorted(spaces.items()))
@@ -103,6 +107,7 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             shape=None,
             device=device,
             dtype=None,
+            metadata=metadata,
         )
 
     def to(
@@ -118,7 +123,8 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
                 key: space.to(backend=backend, device=device) 
                 for key, space in self.spaces.items()
             },
-            device=device if backend is not None else (device or self.device)
+            device=device if backend is not None else (device or self.device),
+            metadata=self._metadata,
         )
 
     def sample(self, rng : BDeviceType) -> Tuple[BDeviceType, Dict[str, Any]]:
@@ -239,8 +245,15 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
         return DictSpace(
             backend=self.backend,
             spaces=self.spaces.copy(),
-            device=self.device
+            device=self.device,
+            metadata=self._metadata,
         )
+
+    def _copy_with_metadata(self, metadata):
+        new = super()._copy_with_metadata(metadata)
+        # The copy must not share (and mutate) this space's ``spaces`` dict
+        new.__dict__["spaces"] = _SpaceDict(self.spaces)
+        return new
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == "spaces" and type(value) is not _SpaceDict:

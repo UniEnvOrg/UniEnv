@@ -25,10 +25,23 @@ SPACE_TYPES: typing.Dict[str, typing.Type[Space]] = {
     "BatchedSpace": BatchedSpace,
 }
 
+def _with_metadata(space : Space, json_data : typing.Dict[str, Any]) -> typing.Dict[str, Any]:
+    """Add the space's metadata to its JSON payload (only when there is some, so old readers are unaffected)."""
+    if len(space.metadata) > 0:
+        json_data["metadata"] = space.metadata.to_dict()
+    return json_data
+
+def _metadata_from_json(json_data : typing.Dict[str, Any]) -> Optional[typing.Dict[str, Any]]:
+    """The metadata stored by ``space_to_json`` (``None`` for payloads written without it)."""
+    return json_data.get("metadata")
+
 @singledispatch
 def space_to_json(space : Space) -> typing.Dict[str, Any]:
     """
     Serialize a Space to a JSON-compatible dictionary.
+
+    The space's metadata (and that of every nested space) is stored under a
+    ``"metadata"`` key, which is omitted when the metadata is empty.
     
     Args:
         space (Space): The space to serialize.
@@ -64,14 +77,14 @@ def json_to_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend,
 
 @space_to_json.register(BoxSpace)
 def _box_space_to_json(space: BoxSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "BoxSpace",
         "shape": space.shape,
         "low": space.backend.to_numpy(space._low).tolist(),
         "high": space.backend.to_numpy(space._high).tolist(),
         "dtype": bsu.serialize_dtype(space.backend, space.dtype),
         "shape": space.shape,
-    }
+    })
 
 @json_to_space.register(BoxSpace)
 def _json_to_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> BoxSpace:
@@ -86,16 +99,17 @@ def _json_to_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBac
         high=high,
         shape=json_data["shape"],
         dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
-        device=map_device
+        device=map_device,
+        metadata=_metadata_from_json(json_data),
     )
 
 @space_to_json.register(BinarySpace)
 def _binary_space_to_json(space: BinarySpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "BinarySpace",
         "shape": space.shape,
         "dtype": bsu.serialize_dtype(space.backend, space.dtype),
-    }
+    })
 
 @json_to_space.register(BinarySpace)
 def _json_to_binary_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> BinarySpace:
@@ -103,12 +117,13 @@ def _json_to_binary_space(json_data: typing.Dict[str, Any], map_backend: Compute
         map_backend,
         shape=json_data["shape"],
         dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
-        device=map_device
+        device=map_device,
+        metadata=_metadata_from_json(json_data),
     )
 
 @space_to_json.register(DynamicBoxSpace)
 def _dynamic_box_space_to_json(space: DynamicBoxSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "DynamicBoxSpace",
         "low": space.backend.to_numpy(space._low).tolist(),
         "high": space.backend.to_numpy(space._high).tolist(),
@@ -116,7 +131,7 @@ def _dynamic_box_space_to_json(space: DynamicBoxSpace) -> typing.Dict[str, Any]:
         "shape_high": space.shape_high,
         "dtype": bsu.serialize_dtype(space.backend, space.dtype),
         "fill_value": space.fill_value
-    }
+    })
 
 @json_to_space.register(DynamicBoxSpace)
 def _json_to_dynamic_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> DynamicBoxSpace:
@@ -133,41 +148,42 @@ def _json_to_dynamic_box_space(json_data: typing.Dict[str, Any], map_backend: Co
         shape_high=json_data["shape_high"],
         dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
         device=map_device,
-        fill_value=json_data["fill_value"]
+        fill_value=json_data["fill_value"],
+        metadata=_metadata_from_json(json_data),
     )
 
 @space_to_json.register(TupleSpace)
 def _tuple_space_to_json(space: TupleSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "TupleSpace",
         "spaces": [space_to_json(s) for s in space.spaces],
-    }
+    })
 
 @json_to_space.register(TupleSpace)
 def _json_to_tuple_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> TupleSpace:
     spaces = [json_to_space(s, map_backend, map_device) for s in json_data["spaces"]]
-    return TupleSpace(map_backend, spaces, device=map_device)
+    return TupleSpace(map_backend, spaces, device=map_device, metadata=_metadata_from_json(json_data))
 
 @space_to_json.register(DictSpace)
 def _dict_space_to_json(space: DictSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "DictSpace",
         "spaces": {k: space_to_json(v) for k, v in space.spaces.items()},
-    }
+    })
 
 @json_to_space.register(DictSpace)
 def _json_to_dict_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> DictSpace:
     spaces = {k: json_to_space(v, map_backend, map_device) for k, v in json_data["spaces"].items()}
-    return DictSpace(map_backend, spaces, device=map_device)
+    return DictSpace(map_backend, spaces, device=map_device, metadata=_metadata_from_json(json_data))
 
 @space_to_json.register(TextSpace)
 def _text_space_to_json(space: TextSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "TextSpace",
         "min_length": space.min_length,
         "max_length": space.max_length,
         "charset": "".join(sorted(space.charset)) if space.charset is not None else None,
-    }
+    })
 
 @json_to_space.register(TextSpace)
 def _json_to_text_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> TextSpace:
@@ -176,12 +192,13 @@ def _json_to_text_space(json_data: typing.Dict[str, Any], map_backend: ComputeBa
         max_length=json_data['max_length'],
         min_length=json_data['min_length'],
         charset=json_data.get("charset", None),
-        device=map_device
+        device=map_device,
+        metadata=_metadata_from_json(json_data),
     )
 
 @space_to_json.register(GraphSpace)
 def _graph_space_to_json(space: GraphSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "GraphSpace",
         "max_nodes": space.max_nodes,
         "min_nodes": space.min_nodes,
@@ -191,7 +208,7 @@ def _graph_space_to_json(space: GraphSpace) -> typing.Dict[str, Any]:
         "node_feature_space": space_to_json(space.node_feature_space),
         "edge_feature_space": space_to_json(space.edge_feature_space) if space.edge_feature_space is not None else None,
         "batch_shape": space.batch_shape,
-    }
+    })
 
 @json_to_space.register(GraphSpace)
 def _json_to_graph_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> GraphSpace:
@@ -210,33 +227,35 @@ def _json_to_graph_space(json_data: typing.Dict[str, Any], map_backend: ComputeB
         min_edges=json_data['min_edges'],
         max_edges=json_data.get('max_edges', None),
         batch_shape=json_data.get("batch_shape", ()),
-        device=map_device
+        device=map_device,
+        metadata=_metadata_from_json(json_data),
     )
 
 @space_to_json.register(UnionSpace)
 def _union_space_to_json(space: UnionSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "UnionSpace",
         "spaces": [space_to_json(s) for s in space.spaces],
-    }
+    })
 
 @json_to_space.register(UnionSpace)
 def _json_to_union_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> UnionSpace:
     spaces = [json_to_space(s, map_backend, map_device) for s in json_data["spaces"]]
-    return UnionSpace(map_backend, spaces, device=map_device)
+    return UnionSpace(map_backend, spaces, device=map_device, metadata=_metadata_from_json(json_data))
 
 @space_to_json.register(BatchedSpace)
 def _batched_space_to_json(space: BatchedSpace) -> typing.Dict[str, Any]:
-    return {
+    return _with_metadata(space, {
         "type": "BatchedSpace",
         "single_space": space_to_json(space.single_space),
         "batch_shape": space.batch_shape,
-    }
+    })
 
 @json_to_space.register(BatchedSpace)
 def _json_to_batched_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> BatchedSpace:
     single_space = json_to_space(json_data["single_space"], map_backend, map_device)
     return BatchedSpace(
         single_space,
-        batch_shape=json_data["batch_shape"]
+        batch_shape=json_data["batch_shape"],
+        metadata=_metadata_from_json(json_data),
     )

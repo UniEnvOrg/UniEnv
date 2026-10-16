@@ -147,8 +147,12 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         dtype: BDtypeType,
         device : Optional[BDeviceType] = None,
         shape: Optional[Sequence[int]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
-        """Create a box with broadcastable ``low`` and ``high`` bounds."""
+        """Create a box with broadcastable ``low`` and ``high`` bounds.
+
+        ``metadata`` is an optional JSON-serializable description of the data (see ``Space``).
+        """
         assert (
             dtype is not None
         ), "Box dtype must be explicitly provided, cannot be None."
@@ -186,6 +190,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             shape=shape,
             device=device,
             dtype=dtype,
+            metadata=metadata,
         )
 
         # Cast low and high to backend arrays
@@ -294,6 +299,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         dtype : BDtypeType,
         shape : Sequence[int],
         device : Optional[BDeviceType] = None,
+        metadata : Optional[Mapping[str, Any]] = None,
     ) -> "BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]":
         """Internal constructor that skips validation.
 
@@ -303,7 +309,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         to ``shape`` and satisfy ``low <= high``.
         """
         self = cls.__new__(cls)
-        Space.__init__(self, backend=backend, shape=shape, device=device, dtype=dtype)
+        Space.__init__(self, backend=backend, shape=shape, device=device, dtype=dtype, metadata=metadata)
         self._dtype_is_float = backend.dtype_is_real_floating(dtype)
         self._low = low
         self._high = high
@@ -368,7 +374,8 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             high=new_high,
             dtype=new_dtype,
             shape=self.shape,
-            device=new_device
+            device=new_device,
+            metadata=self._metadata,
         )
 
     def is_bounded(self, manner = "both"):

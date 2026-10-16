@@ -11,6 +11,7 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         backend: ComputeBackend[Any, BDeviceType, BDtypeType, BRNGType],
         spaces: Iterable[Space[Any, BDeviceType, BDtypeType, BRNGType]],
         device: Optional[BDeviceType] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
         assert isinstance(spaces, Iterable), f"{spaces} is not an iterable"
         self.spaces = tuple(spaces if device is None else [space.to(device=device) for space in spaces])
@@ -29,6 +30,7 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
             shape=None,
             device=device,
             dtype=None,
+            metadata=metadata,
         )
 
     def to(self, backend = None, device = None):
@@ -39,7 +41,8 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         return UnionSpace(
             backend=backend or self.backend,
             spaces=[space.to(backend, new_device) for space in self.spaces],
-            device=new_device
+            device=new_device,
+            metadata=self._metadata,
         )
     
     def sample(self, rng : BRNGType) -> Tuple[

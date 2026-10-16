@@ -11,6 +11,7 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         shape: Sequence[int],
         dtype: Optional[BDtypeType] = None,
         device : Optional[BDeviceType] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
         assert dtype is None or backend.dtype_is_boolean(dtype), f"Invalid dtype {dtype}"
         
@@ -24,6 +25,7 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             shape=shape,
             device=device,
             dtype=dtype or backend.default_boolean_dtype,
+            metadata=metadata,
         )
 
     def to(self, backend = None, device = None):
@@ -41,7 +43,8 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             backend or self.backend,
             self.shape,
             dtype=new_dtype,
-            device=new_device
+            device=new_device,
+            metadata=self._metadata,
         )
     
     def sample(self, rng : BRNGType) -> Tuple[

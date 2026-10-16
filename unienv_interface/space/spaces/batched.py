@@ -12,6 +12,7 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         self, 
         single_space : Space[SpaceDataT, BDeviceType, BDtypeType, BRNGType],
         batch_shape: Sequence[int],
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
         assert len(batch_shape) > 0, "Batch shape must be a non-empty sequence"
         batch_shape = tuple(int(dim) for dim in batch_shape)  # This changes any np types to int
@@ -20,6 +21,7 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             shape=batch_shape if single_space.shape is None else batch_shape + single_space.shape,
             device=single_space.device,
             dtype=single_space.dtype,
+            metadata=metadata,
         )
 
         self.batch_shape = batch_shape
@@ -36,7 +38,8 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
     def to(self, backend = None, device = None):
         return BatchedSpace(
             self.single_space.to(backend=backend, device=device),
-            self.batch_shape
+            self.batch_shape,
+            metadata=self._metadata,
         )
     
     def sample(self, rng : BRNGType) -> Tuple[

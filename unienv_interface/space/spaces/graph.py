@@ -37,6 +37,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         max_edges : Optional[int] = None,
         batch_shape : Sequence[int] = (),
         device : Optional[BDeviceType] = None,
+        metadata : Optional[Mapping[str, Any]] = None,
     ):
         device = device or node_feature_space.device
 
@@ -81,6 +82,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             shape=None,
             device=device,
             dtype=None,
+            metadata=metadata,
         )
 
     def to(
@@ -104,6 +106,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             is_edge=self.is_edge,
             batch_shape=self.batch_shape,
             device=new_device,
+            metadata=self._metadata,
         )
     
     def _make_batched_node_feature_space(
