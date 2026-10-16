@@ -7,6 +7,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT, IndexableType
+from ._io_pool import map_io
 
 import os
 import shutil
@@ -118,12 +119,8 @@ class ListStorageBase(SpaceStorage[
             indexes = batched_index_to_list(self.backend, index, len(self))
             if len(indexes) == 0:
                 return self._empty_batch()
-            result = sbu.concatenate(
-                self._batched_single_space,    
-                [
-                    self.get_single(i) for i in indexes
-                ]
-            )
+            # One file per sample: decode them on the shared IO pool
+            result = sbu.concatenate(self._batched_single_space, map_io(self.get_single, indexes))
         return result
 
     def set(self, index, value):
@@ -132,8 +129,10 @@ class ListStorageBase(SpaceStorage[
             self.set_single(index, value)
         else:
             indexes = batched_index_to_list(self.backend, index, len(self))
-            for i, ind in enumerate(indexes):
-                self.set_single(ind, sbu.get_at(self._batched_single_space, value, i))
+            # Encode the files on the shared IO pool; with duplicated indices the last value wins, as in a serial loop
+            last_position = {int(ind): i for i, ind in enumerate(indexes)}
+            jobs = [(ind, sbu.get_at(self._batched_single_space, value, i)) for ind, i in last_position.items()]
+            map_io(lambda job: self.set_single(*job), jobs)
 
     def clear(self):
         assert self.is_mutable, "Cannot clear a read-only storage"
