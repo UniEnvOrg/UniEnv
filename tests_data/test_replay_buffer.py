@@ -335,7 +335,18 @@ def check_fixed_capacity_replay_buffer(
     seed : Optional[int] = None,
     load_kwargs : DictT[str, Any] = {},
 ):
-    tempdumpdir = rb.cache_path if rb.cache_path is not None else tempfile.mkdtemp()
+    if rb.cache_path is not None:
+        return _check_fixed_capacity_replay_buffer(rb, rb.cache_path, seed, load_kwargs)
+    # Buffers without a cache path are dumped to a temporary directory that is removed afterwards.
+    with tempfile.TemporaryDirectory() as tempdumpdir:
+        return _check_fixed_capacity_replay_buffer(rb, tempdumpdir, seed, load_kwargs)
+
+def _check_fixed_capacity_replay_buffer(
+    rb : ReplayBuffer[Any, BArrayType, BDeviceType, BDtypeType, BRNGType],
+    tempdumpdir : str,
+    seed : Optional[int],
+    load_kwargs : DictT[str, Any],
+):
     rng = rb.backend.random.random_number_generator(seed, device=rb.device)
     perform_rb_fill_test(
         rb,
@@ -390,6 +401,10 @@ def check_fixed_capacity_replay_buffer(
     new_slice = new_rb.get_at(ref_idx)
     new_flat_slice = sfu.flatten_data(slice_space, new_slice)
     assert new_rb.backend.all(flat_ref_slice==new_flat_slice)
+    new_storage = new_rb.storage
+    new_rb.close()
+    if new_storage is not rb.storage:
+        new_storage.close()
 
     perform_rb_fill_test(
         rb,
@@ -421,12 +436,10 @@ def check_fixed_capacity_replay_buffer(
 def test_torch_replay_buffer(
     capacity : int,
     use_mmap : bool,
-    seed : int
+    seed : int,
+    tmp_path,
 ):
-    if not use_mmap:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device("cpu")
+    device = torch.device("cpu")
     space = BoxSpace(
         PyTorchComputeBackend,
         0.0,
@@ -435,12 +448,11 @@ def test_torch_replay_buffer(
         device=device,
         shape=(3, 5, 2)
     )
-    tempdumpdir = tempfile.mkdtemp()
     rb = ReplayBuffer.create(
         FlattenedStorage,
         space,
         inner_storage_cls=PytorchTensorStorage,
-        cache_path=tempdumpdir if use_mmap else None,
+        cache_path=str(tmp_path) if use_mmap else None,
         capacity=capacity,
         is_memmap=use_mmap,
     )
@@ -457,7 +469,8 @@ def test_torch_replay_buffer(
 @pytest.mark.parametrize("seed", [0, 1024, 2048])
 def test_hdf5_replay_buffer(
     capacity : int,
-    seed : int
+    seed : int,
+    tmp_path,
 ):
     space = BoxSpace(
         NumpyComputeBackend,
@@ -466,7 +479,7 @@ def test_hdf5_replay_buffer(
         np.float32,
         shape=(3, 5, 2)
     )
-    tempdumpdir = tempfile.mkdtemp()
+    tempdumpdir = str(tmp_path)
     rb = ReplayBuffer.create(
         HDF5Storage,
         space,
@@ -484,7 +497,8 @@ def test_hdf5_replay_buffer(
 @pytest.mark.parametrize("seed", [0, 1024, 2048])
 def test_parquet_replay_buffer(
     capacity : int,
-    seed : int
+    seed : int,
+    tmp_path,
 ):
     space = BoxSpace(
         NumpyComputeBackend,
@@ -493,7 +507,7 @@ def test_parquet_replay_buffer(
         np.float32,
         shape=(3, 5, 2)
     )
-    tempdumpdir = tempfile.mkdtemp()
+    tempdumpdir = str(tmp_path)
     rb = ReplayBuffer.create(
         ParquetStorage,
         space,
@@ -511,7 +525,8 @@ def test_parquet_replay_buffer(
 @pytest.mark.parametrize("seed", [0, 1024])
 def test_parquet_dict_replay_buffer(
     capacity : int,
-    seed : int
+    seed : int,
+    tmp_path,
 ):
     space = DictSpace(
         NumpyComputeBackend,
@@ -520,7 +535,7 @@ def test_parquet_dict_replay_buffer(
             "action": BoxSpace(NumpyComputeBackend, -1.0, 1.0, np.float32, shape=(2,)),
         },
     )
-    tempdumpdir = tempfile.mkdtemp()
+    tempdumpdir = str(tmp_path)
     rb = ReplayBuffer.create(
         ParquetStorage,
         space,
