@@ -33,6 +33,12 @@ CONSERVATIVE_COMPRESSION_RATIOS = {
     "JPEG": get_jpeg_compression_ratio,
 }
 
+# Fixed per-image overhead (markers, quantization and Huffman tables...) that does not scale with the
+# number of pixels. A baseline JPEG written by PIL carries ~630 bytes for RGB and ~330 for grayscale.
+CONSERVATIVE_HEADER_BYTES = {
+    "JPEG": 1024,
+}
+
 class ImageCompressTransformation(DataTransformation):
     has_inverse = True
 
@@ -44,14 +50,21 @@ class ImageCompressTransformation(DataTransformation):
         mode : Optional[str] = None,
         format : str = "JPEG",
         last_channel : bool = True,
+        header_bytes : Optional[int] = None,
     ) -> None:
         """
         Initialize JPEG compression transformation.
         Args:
             init_quality: Initial JPEG quality setting (1-100).
             max_size_bytes: Maximum allowed size of compressed JPEG in bytes.
+            compression_ratio: Size budget as ``H * W * C // compression_ratio + 1 + header_bytes`` bytes
+                (defaults to a conservative ratio for ``format`` derived from ``init_quality``).
             mode: Optional mode for PIL Image (e.g., "RGB", "L"). If None, inferred from input.
             format: Image format to use for compression (default "JPEG"). See https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html for options.
+            last_channel: Whether images are (..., H, W, C) (True) or channel-less (..., H, W) (False).
+            header_bytes: Fixed allowance added to ratio-based budgets for the per-image format overhead,
+                which dominates for small images. Defaults to a conservative value for ``format``;
+                ignored when ``max_size_bytes`` is given.
         """
         assert not (max_size_bytes is not None and compression_ratio is not None), "Specify either max_size_bytes or compression_ratio, not both."
         assert max_size_bytes is not None or compression_ratio is not None or format in CONSERVATIVE_COMPRESSION_RATIOS, "Either max_size_bytes must be specified or format must have a conservative compression ratio defined."
@@ -62,6 +75,7 @@ class ImageCompressTransformation(DataTransformation):
         self.mode = mode
         self.format = format
         self.last_channel = last_channel
+        self.header_bytes = header_bytes if header_bytes is not None else CONSERVATIVE_HEADER_BYTES.get(format, 0)
 
     def validate_source_space(self, source_space: Space[Any, BDeviceType, BDtypeType, BRNGType]) -> None:
         assert isinstance(source_space, BoxSpace), "JPEGCompressTransformation only supports BoxSpace source spaces."
@@ -85,7 +99,7 @@ class ImageCompressTransformation(DataTransformation):
         else:
             H, W = source_space.shape[-2], source_space.shape[-1]
             C = 1
-        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1
+        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1 + self.header_bytes
 
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
@@ -202,6 +216,9 @@ class ImageCompressTransformation(DataTransformation):
         self.__dict__.update(state)
         if 'last_channel' not in state:
             self.last_channel = True
+        if 'header_bytes' not in state:
+            # Older versions had no header allowance; keep their target space unchanged.
+            self.header_bytes = 0
 
     def serialize(
         self,
@@ -214,6 +231,7 @@ class ImageCompressTransformation(DataTransformation):
             "mode": self.mode,
             "format": self.format,
             "last_channel": self.last_channel,
+            "header_bytes": self.header_bytes,
         }
 
     @classmethod
@@ -229,6 +247,8 @@ class ImageCompressTransformation(DataTransformation):
             mode=json_data.get("mode", None),
             format=json_data.get("format", "JPEG"),
             last_channel=json_data.get("last_channel", True),
+            # Configurations saved before the header allowance existed must keep their target shape.
+            header_bytes=json_data.get("header_bytes", 0),
         )
 
 class ImageDecompressTransformation(DataTransformation):
