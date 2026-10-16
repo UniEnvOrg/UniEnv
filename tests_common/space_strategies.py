@@ -52,7 +52,9 @@ def _bounds(draw, shape, dtype, allow_inf=True, finite_low=False):
     else:
         values = st.floats(-50, 50, allow_nan=False, width=32)
         low = np.array(draw(st.lists(values, min_size=size, max_size=size)), dtype=np.float64)
-        width = np.array(draw(st.lists(st.floats(0, 50, width=32), min_size=size, max_size=size)), dtype=np.float64)
+        # Widths are 0 or not tiny: rescaling a ~1e-38 wide box overflows float32 by design
+        widths = st.one_of(st.just(0.0), st.floats(0.0009765625, 50, width=32))
+        width = np.array(draw(st.lists(widths, min_size=size, max_size=size)), dtype=np.float64)
         high = low + width
         if allow_inf:
             if not finite_low:
