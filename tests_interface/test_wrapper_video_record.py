@@ -344,3 +344,66 @@ def test_episode_video_wrapper_supports_declared_formats(tmp_path, fmt):
     written_path = tmp_path / f"episode_0_step_0.{fmt}"
     assert written_path.exists()
     assert written_path.stat().st_size > 0
+
+
+# ---------------------------------------------------------------------------
+# EpisodeWandbVideoWrapper with a fake ``wandb`` module
+# ---------------------------------------------------------------------------
+import sys  # noqa: E402
+import types  # noqa: E402
+
+from unienv_interface.wrapper.video_record import EpisodeWandbVideoWrapper  # noqa: E402
+
+
+@pytest.fixture
+def fake_wandb(monkeypatch):
+    module = types.ModuleType("wandb")
+    module.logged = []
+
+    class Video:
+        def __init__(self, data, fps, format):
+            self.data, self.fps, self.format = data, fps, format
+
+    module.Video = Video
+    module.log = lambda data, **kwargs: module.logged.append((data, kwargs))
+    monkeypatch.setitem(sys.modules, "wandb", module)
+    return module
+
+
+def test_wandb_wrapper_logs_single_frame_episode(fake_wandb):
+    env = DummyRenderEnv([make_rgb_frame(1), make_rgb_frame(2), make_rgb_frame(3)])
+    wrapper = EpisodeWandbVideoWrapper(env, wandb_log_key="video", format="gif")
+    wrapper.reset()
+    wrapper.step(None)
+    wrapper.reset()
+    (data, kwargs), = fake_wandb.logged
+    assert kwargs == {"commit": False}
+    video = data["video"]
+    assert video.data.shape == (2, 3, 16, 16) and video.fps == 12 and video.format == "gif"
+    assert data["video_episode_id"] == 0
+
+
+def test_wandb_wrapper_logs_mapping_frames_with_step(fake_wandb):
+    env = DummyRenderEnv([make_nested_render(1), make_nested_render(2)])
+    wrapper = EpisodeWandbVideoWrapper(env, wandb_log_key="video", control_wandb_step=True, log_wandb_episode_id=False)
+    wrapper.reset()
+    wrapper.step(None)
+    wrapper.close()
+    (data, kwargs), = fake_wandb.logged
+    assert kwargs == {"step": 0}
+    assert set(data) == {"video/camera.left", "video/camera.right", "video/overview"}
+
+
+def test_wandb_wrapper_requires_wandb(monkeypatch):
+    monkeypatch.setitem(sys.modules, "wandb", None)
+    with pytest.raises(ImportError, match="wandb"):
+        EpisodeWandbVideoWrapper(DummyRenderEnv([make_rgb_frame(1)]), wandb_log_key="v")
+
+
+def test_frame_conversion_rejects_non_rgb():
+    wrapper = EpisodeRenderStackWrapper(DummyRenderEnv([make_rgb_frame(1)]))
+    with pytest.raises(AssertionError):
+        wrapper._frame_to_numpy_rgb(np.zeros((4, 4), np.uint8))
+    with pytest.raises(ValueError, match="rendered_index"):
+        EpisodeRenderStackWrapper(DummyRenderEnv([make_rgb_frame(1)]), rendered_index=99)._index_render_tensor_if_needed(
+            make_rgb_frame(1)[:2])

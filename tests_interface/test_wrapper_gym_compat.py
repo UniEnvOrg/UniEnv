@@ -182,3 +182,58 @@ def test_gymnasium_round_trip_through_both_adapters():
     ref_obs, ref_reward, *_ = reference.step(action)
     np.testing.assert_allclose(obs["position"], ref_obs["position"])
     assert reward == pytest.approx(ref_reward)
+
+
+def _box(n=1):
+    return BoxSpace(B, -1.0, 1.0, np.float32, shape=(n,))
+
+
+def test_combine_context_obs_space_branches():
+    combine = ToGymnasiumEnv.combine_context_obs_space
+    both = combine(DictSpace(B, {"goal": _box()}), DictSpace(B, {"pos": _box()}))
+    assert set(both.keys()) == {"goal", "pos"}
+    ctx_dict = combine(DictSpace(B, {"goal": _box()}), _box(2))
+    assert set(ctx_dict.keys()) == {"goal", "observation"}
+    obs_dict = combine(_box(), DictSpace(B, {"pos": _box()}))
+    assert set(obs_dict.keys()) == {"pos", "context"}
+    neither = combine(_box(), _box(2))
+    assert set(neither.keys()) == {"context", "observation"}
+    obs_only = _box(3)
+    assert combine(None, obs_only) is obs_only
+
+
+def test_combine_context_obs_branches():
+    combine = ToGymnasiumEnv.combine_context_obs
+    assert combine({"goal": 1}, {"pos": 2}) == {"goal": 1, "pos": 2}
+    assert combine({"goal": 1}, 2) == {"goal": 1, "observation": 2}
+    assert combine(1, {"pos": 2}) == {"pos": 2, "context": 1}
+    assert combine(1, 2) == {"context": 1, "observation": 2}
+    assert combine(None, 2) == 2
+
+
+def test_to_gymnasium_metadata_and_render_mode_setters():
+    env = StubEnv()
+    gym_env = ToGymnasiumEnv(env)
+    gym_env.metadata = {"render_modes": []}
+    assert gym_env.metadata == {"render_modes": []}
+    gym_env.render_mode = None
+    assert env.render_mode is None
+    env.render_fps = None
+    assert ToGymnasiumEnv(env).metadata is env.metadata
+    gym_env.np_random = np.random.default_rng(1)
+    assert gym_env.np_random_seed == -1
+
+
+def test_from_gymnasium_misc():
+    gym_env = TinyGymEnv()
+    env = FromGymnasiumEnv(gym_env)
+    env.render_mode = None
+    assert gym_env.render_mode is None
+    assert "TinyGymEnv" in str(env)
+    gym_env.plain_attr = 1
+    assert env.get_wrapper_attr("plain_attr") == 1
+    env.set_wrapper_attr("plain_attr", 2)
+    assert gym_env.plain_attr == 2
+    env.set_wrapper_attr("batch_size", None)
+    with pytest.raises(AssertionError):
+        env.reset(mask=np.array([True]))
