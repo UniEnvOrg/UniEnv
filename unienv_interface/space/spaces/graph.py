@@ -53,7 +53,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             assert is_edge, "Expects edge_feature_space to be provided only when is_edge is True"
             assert isinstance(
                 edge_feature_space, BoxSpace
-            ), f"Values of the edge_space should be instances of BoxSpace, got {type(edge_space)}"
+            ), f"Values of the edge_space should be instances of BoxSpace, got {type(edge_feature_space)}"
             assert backend == edge_feature_space.backend, f"Backend mismatch for edge feature space: {backend} != {edge_feature_space.backend}"
 
         self.is_edge = is_edge
@@ -61,9 +61,9 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         self.edge_feature_space = edge_feature_space if (device is None or edge_feature_space is None) else edge_feature_space.to(device=device)
         
         assert min_nodes >= 1, f"Expects the minimum number of nodes to be at least 1, actual value: {min_nodes}"
-        assert max_nodes >= min_nodes or max_nodes is None, f"Expects the maximum number of nodes to be at least the minimum number of nodes, actual values: {max_nodes} < {min_nodes}"
+        assert max_nodes is None or max_nodes >= min_nodes, f"Expects the maximum number of nodes to be at least the minimum number of nodes, actual values: {max_nodes} < {min_nodes}"
         assert min_edges >= 1, f"Expects the minimum number of edges to be at least 1, actual value: {min_edges}"
-        assert min_edges <= max_edges or max_edges is None, f"Expects the minimum number of edges to be at most the maximum number of edges, actual values: {min_edges} > {max_edges}"
+        assert max_edges is None or min_edges <= max_edges, f"Expects the minimum number of edges to be at most the maximum number of edges, actual values: {min_edges} > {max_edges}"
         assert max_edges is None or max_edges >= min_edges, f"Expects the maximum number of edges to be at least the minimum number of edges, actual values: {max_edges} < {min_edges}"
         max_possible_edges = max_nodes * (max_nodes - 1) if max_nodes is not None else None
         if max_possible_edges is not None:
@@ -94,7 +94,6 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         new_device = device if backend is not None else (device or self.device)
         return GraphSpace(
             new_backend,
-            self.max_nodes,
             node_feature_space=self.node_feature_space.to(backend=new_backend, device=new_device) if self.node_feature_space is not None else None,
             edge_feature_space=self.edge_feature_space.to(backend=new_backend, device=new_device) if self.edge_feature_space is not None else None,
             min_nodes=self.min_nodes,
@@ -167,9 +166,11 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
                 device=self.device,
             )
             num_nodes = self.backend.astype(self.backend.floor(num_nodes), self.backend.default_integer_dtype) + self.min_nodes
+        # Scalar arithmetic may decay 0-d arrays into backend scalars (e.g. ``np.int64``)
+        num_nodes = self.backend.asarray(num_nodes, dtype=self.backend.default_integer_dtype, device=self.device)
 
         if self.is_edge:
-            max_edge = self.max_edges or (num_nodes ** 2) # Assume we allow node to have edges to itself
+            max_edge = self.max_edges if self.max_edges is not None else (num_nodes ** 2) # Assume we allow node to have edges to itself
             rng, num_edges = self.backend.random.random_uniform(
                 self.batch_shape,
                 rng=rng,
@@ -177,10 +178,11 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
                 device=self.device,
             )
             num_edges = self.backend.astype(self.backend.floor(num_edges * (max_edge - self.min_edges + 1)), self.backend.default_integer_dtype) + self.min_edges
+            num_edges = self.backend.asarray(num_edges, dtype=self.backend.default_integer_dtype, device=self.device)
         else:
             num_edges = None
 
-        if self.node_feature_space is None:
+        if self.node_feature_space is not None:
             batched_node_space = self._make_batched_node_feature_space(int(self.backend.max(num_nodes)))
             rng, node_features = batched_node_space.sample(rng=rng)
         else:
@@ -193,7 +195,9 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
                 rng=rng,
                 device=self.device,
             )
-            edges = self.backend.astype(self.backend.floor(edges * num_nodes), self.backend.default_integer_dtype)
+            # Each graph's edge endpoints are drawn from its own node count
+            num_nodes_per_edge = self.backend.reshape(num_nodes, self.batch_shape + (1, 1))
+            edges = self.backend.astype(self.backend.floor(edges * num_nodes_per_edge), self.backend.default_integer_dtype)
         else:
             edges = None
 
@@ -205,7 +209,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
 
         return rng, GraphInstance(
             n_nodes=num_nodes,
-            n_edges=num_edges if num_edges > 0 else None,
+            n_edges=num_edges,
             nodes_features=node_features,
             edges_features=edge_features,
             edges=edges,
@@ -293,6 +297,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             isinstance(other, GraphSpace)
             and (self.backend == other.backend)
             and (self.is_edge == other.is_edge)
+            and (self.batch_shape == other.batch_shape)
             and (self.min_nodes == other.min_nodes)
             and (self.max_nodes == other.max_nodes)
             and (self.min_edges == other.min_edges)
@@ -317,6 +322,8 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         ``device`` is ignored.
         """
         if not (isinstance(other, GraphSpace) and self.backend == other.backend):
+            return False
+        if self.batch_shape != other.batch_shape:
             return False
         if self.is_edge != other.is_edge:
             return False
@@ -355,8 +362,15 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         return True
     
     def data_to(self, data, backend = None, device = None):
-        if backend is not None and backend != self.backend:
-            data = backend.from_other_backend(self.backend, data)
-        if device is not None:
-            data = (backend or self.backend).to_device(data,device)
-        return data
+        def convert_array(array):
+            if array is None:
+                return None
+            if backend is not None and backend != self.backend:
+                array = backend.from_other_backend(self.backend, array)
+            if device is not None:
+                array = (backend or self.backend).to_device(array, device)
+            return array
+        return GraphInstance(**{
+            field.name: convert_array(getattr(data, field.name))
+            for field in dataclasses.fields(GraphInstance)
+        })
