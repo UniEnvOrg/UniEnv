@@ -8,10 +8,12 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytest
+import torch
 
 from unienv_data.replay_buffer import ReplayBuffer
 from unienv_data.replay_buffer import replay_buffer as rb_module
 from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
 from unienv_interface.space import BoxSpace
 
 
@@ -190,3 +192,29 @@ def test_subtract_physical_range_matches_per_index_reference():
             victims = rb_module._linear_pieces((victim_start, victim_end), capacity)
         expected = _compress([i for i in _expand(segment, capacity) if i not in victim_set], capacity)
         assert rb_module._subtract_physical_range(segment, victims, capacity) == expected
+
+
+def test_extend_writes_a_slice_unless_it_wraps():
+    storage = _RecordingStorage(8)
+    rb = ReplayBuffer(storage, "s")
+    rb.extend(np.zeros((5, 1), np.float32))
+    rb.extend(np.zeros((3, 1), np.float32))
+    assert storage.set_indices[:2] == [slice(0, 5), slice(5, 8)]
+    rb.extend(np.zeros((2, 1), np.float32))
+    assert storage.set_indices[2] == slice(0, 2)
+    rb.extend(np.zeros((7, 1), np.float32))
+    wrapped = storage.set_indices[3]
+    np.testing.assert_array_equal(wrapped, np.array([2, 3, 4, 5, 6, 7, 0]))
+    assert (rb.count, rb.offset) == (8, 1)
+
+
+@pytest.mark.parametrize("backend, make", [
+    (NumpyComputeBackend, lambda values: np.asarray(values, dtype=np.int64)),
+    (PyTorchComputeBackend, lambda values: torch.tensor(values, dtype=torch.int64)),
+])
+def test_index_with_offset_bounds_check(backend, make):
+    mapped = rb_module.index_with_offset(backend, make([-4, -1, 0, 3]), 4, 1)
+    assert [int(x) for x in mapped] == [1, 0, 1, 0]
+    for bad in ([4], [-5], [0, 4], [-5, 3]):
+        with pytest.raises(AssertionError, match="out of bounds"):
+            rb_module.index_with_offset(backend, make(bad), 4, 1)

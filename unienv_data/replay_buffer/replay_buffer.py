@@ -48,7 +48,8 @@ def index_with_offset(
             nonzero_index = backend.nonzero(index)[0]
         else:
             assert backend.dtype_is_real_integer(index.dtype), f"Index dtype {index.dtype} is not an integer"
-            assert backend.all(index >= -len_transitions) and backend.all(index < len_transitions), \
+            # One fused reduction: every `backend.all(...)` truth test is a host sync on GPU backends
+            assert backend.all(backend.logical_and(index >= -len_transitions, index < len_transitions)), \
                 f"Index values {index} are out of bounds for length {len_transitions}"
             nonzero_index = index + len_transitions
         data_index = (nonzero_index + offset) % len_transitions
@@ -780,7 +781,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             
             # Otherwise, perform round-robin writes
             start_physical = (old_offset + old_count) % self.capacity
-            indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
+            if start_physical + B <= self.capacity:
+                # No wrap-around: a slice lets every storage take its contiguous fast path
+                # (h5py hyperslab, tensor slice copy, one file for episode storages, ...) instead of fancy indexing
+                indexes = slice(start_physical, start_physical + B)
+            else:
+                indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
             self._account_round_robin_write(start_physical, B)
 
