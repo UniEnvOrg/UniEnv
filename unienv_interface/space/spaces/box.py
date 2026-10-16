@@ -84,7 +84,8 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
         # Cast low and high to backend arrays
         if backend.dtype_is_real_integer(dtype):
-            dttype_iinfo = backend.iinfo(dtype)
+            # Query the materialised dtype: e.g. jax without x64 stores ``int`` as int32
+            dttype_iinfo = backend.iinfo(backend.empty((0,), dtype=dtype, device=device).dtype)
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
 

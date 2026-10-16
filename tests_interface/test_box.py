@@ -11,6 +11,7 @@ from unienv_interface.space.space_utils import gym_utils as space_gym_utils
 import jax
 import torch
 import numpy as np
+from tests_common.backends import backend_params, cpu_backend_params
 
 ALL_BACKENDS_AND_DEVICES : typing.Dict[ComputeBackend, typing.List[typing.Any]] = {
     NumpyComputeBackend: [],
@@ -117,3 +118,13 @@ def test_integer_box_samples_cover_closed_interval():
     space = BoxSpace(NumpyComputeBackend, -1, 2, np.int64, shape=(64,))
     _, x = space.sample(NumpyComputeBackend.random.random_number_generator(0))
     assert set(x.tolist()) == {-1, 0, 1, 2}
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_infinite_bounds_with_default_integer_dtype(backend, device):
+    # jax without x64 materialises the default ``int`` as int32 while iinfo(int) reports int64
+    space = BoxSpace(backend, -np.inf, np.inf, backend.default_integer_dtype, shape=(4,), device=device)
+    info = backend.iinfo(space.low.dtype)
+    assert int(space.low.min()) == int(info.min) and int(space.high.max()) == int(info.max)
+    _, x = space.sample(backend.random.random_number_generator(0, device=device))
+    assert space.contains(x)

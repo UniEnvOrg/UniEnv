@@ -48,3 +48,13 @@ def test_float_scalar_bounds_with_integer_dtype(low, high):
     if np.isinf(low):
         assert int(space.low.min()) == np.iinfo(np.int64).min
         assert int(space.high.max()) == np.iinfo(np.int64).max
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_infinite_bounds_with_default_integer_dtype(backend, device):
+    # jax without x64 materialises the default ``int`` as int32 while iinfo(int) reports int64
+    space = DynamicBoxSpace(backend, -np.inf, np.inf, (1,), (3,), backend.default_integer_dtype, device=device)
+    info = backend.iinfo(space.low.dtype)
+    assert int(space.low.min()) == int(info.min) and int(space.high.max()) == int(info.max)
+    _, x = space.sample(_rng(0, backend, device))
+    assert space.contains(x)
