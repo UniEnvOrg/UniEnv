@@ -389,6 +389,46 @@ class SliceStackedBatch(BatchBase[
         metadata['slice_valid_mask'] = valid_mask
         return metadata
 
+    def get_column(self, nested_keys : Sequence[Any]) -> BatchBase:
+        """
+        Lazy view over one field of the stacked samples.
+
+        Stacks ``self.batch.get_column(nested_keys)`` instead of stacking whole samples and
+        dropping the other fields afterwards, so only that column (plus the episode column the
+        built-in valid-mask helpers read) is gathered. Values, spaces, metadata and the
+        flattened layout are those of ``SubItemBatch(self, nested_keys)``, which is returned
+        when that is not possible (a custom valid mask function, which may read any field, a
+        mask read from metadata, or a column view with different metadata).
+        """
+        fallback = lambda: super(SliceStackedBatch, self).get_column(nested_keys)
+        mask_fn = self.get_valid_mask_function
+        mask_key = None
+        if mask_fn is not None:
+            func = getattr(mask_fn, "func", None)
+            keywords = getattr(mask_fn, "keywords", None) or {}
+            if func is SliceStackedBatch._valid_mask_function_episodeid_key:
+                mask_key = keywords.get("episode_id_key")
+            elif func is SliceStackedBatch._valid_mask_function_episode_end_key:
+                mask_key = keywords.get("episode_end_key")
+            if mask_key is None or keywords.get("is_in_metadata", False) or getattr(mask_fn, "args", ()):
+                return fallback()
+        try:
+            column = self.batch.get_column(nested_keys)
+            mask_batch = None if mask_key is None else self.batch.get_column([mask_key])
+        except (KeyError, IndexError, TypeError):
+            return fallback()
+        if column.single_metadata_space != self.batch.single_metadata_space:
+            return fallback()
+        return _ColumnSliceStackedBatch(
+            column,
+            self.fixed_offset,
+            get_valid_mask_function=mask_fn,
+            fill_invalid_data=self.fill_invalid_data,
+            stack_metadata=self.stack_metadata,
+            mask_batch=mask_batch,
+            mask_key=mask_key,
+        )
+
     def close(self) -> None:
         """Release this view. The wrapped batch is not owned by the view and stays open;
         close it through whoever created it (``BatchBase.__del__`` calls ``close()``, so
@@ -460,3 +500,45 @@ class SliceStackedBatch(BatchBase[
             episode_end_key=episode_end_key,
             is_in_metadata=is_in_metadata
         )
+
+
+class _ColumnSliceStackedBatch(SliceStackedBatch[
+    BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
+]):
+    """
+    ``SliceStackedBatch`` over one column of a batch (see ``SliceStackedBatch.get_column``).
+    The episode-based valid mask is computed from the separate ``mask_batch`` column, and the
+    flattened layout is the one of ``SubItemBatch`` (the stacked column flattened with this
+    view's space) rather than per-frame flattened source data.
+    """
+
+    def __init__(
+        self,
+        batch : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
+        fixed_offset : BArrayType,
+        *,
+        mask_batch : Optional[BatchBase] = None,
+        mask_key : Optional[Union[str, int]] = None,
+        **kwargs,
+    ):
+        super().__init__(batch, fixed_offset, **kwargs)
+        self.mask_batch = mask_batch
+        self.mask_key = mask_key
+
+    def get_flattened_at(self, idx):
+        return self.get_flattened_at_with_metadata(idx)[0]
+
+    def get_flattened_at_with_metadata(self, idx):
+        data, metadata = self.get_at_with_metadata(idx)
+        if isinstance(idx, int):
+            return sfu.flatten_data(self.single_space, data), metadata
+        return sfu.flatten_data(self._batched_space, data, start_dim=1), metadata
+
+    def get_valid_mask(self, expanded_idx, data, metadata):
+        if self.mask_batch is None:
+            return super().get_valid_mask(expanded_idx, data, metadata)
+        flat_idx = self.backend.reshape(expanded_idx, (-1,))
+        mask_column = sbu.reshape_batch_size_in_data(
+            self.backend, self.mask_batch.get_at(flat_idx), flat_idx.shape, expanded_idx.shape
+        )
+        return self.get_valid_mask_function(self, expanded_idx, {self.mask_key: mask_column}, metadata)

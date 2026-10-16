@@ -159,6 +159,28 @@ class CombinedBatch(BatchBase[
         self.use_thread_pool = use_thread_pool
         self._build_index_cache()
 
+    def get_column(self, nested_keys : Sequence[Any]) -> BatchBase:
+        """
+        Lazy view over one field of the samples that combines the children's column views, so
+        that children able to read a single column cheaply (replay buffers, stacked views, ...)
+        do so instead of fetching whole samples. Values, spaces, metadata and the flattened
+        layout are those of ``SubItemBatch(self, nested_keys)``, which is returned when the
+        children's column views cannot be combined. The view is read-only.
+        """
+        from .subitem_batch import SubItemBatch
+        fallback = lambda: super(CombinedBatch, self).get_column(nested_keys)
+        columns = [batch.get_column(nested_keys) for batch in self.batches]
+        if all(isinstance(column, SubItemBatch) and column.batch is batch for column, batch in zip(columns, self.batches)):
+            return fallback()  # nothing to gain over a view of this batch
+        if any(column.single_metadata_space != batch.single_metadata_space for column, batch in zip(columns, self.batches)):
+            return fallback()
+        try:
+            combined = CombinedBatch(columns, use_thread_pool=self.use_thread_pool)
+        except AssertionError:
+            return fallback()  # the column views disagree on their spaces
+        combined.is_mutable = False
+        return combined
+
     def _build_index_cache(self) -> None:
         """
         Build a cache of start and end indices for each batch
