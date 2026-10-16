@@ -656,7 +656,7 @@ class EpisodeStorageBase(SpaceStorage[
             self._add_file_range(second_start_index, first_end_index)
     
     def dumps(self, path):
-        assert os.path.samefile(path, self.cache_filename), \
+        assert os.path.exists(path) and os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         self._save_file_range_cache()
 

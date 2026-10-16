@@ -131,7 +131,7 @@ class ImageStorage(ListStorageBase[
             img.close()
 
     def dumps(self, path):
-        assert os.path.samefile(path, self.cache_filename), \
+        assert os.path.exists(path) and os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         metadata = {
             "storage_type": __class__.__name__,

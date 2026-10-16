@@ -52,3 +52,17 @@ def test_empty_selection_returns_empty_batch(tmp_path, name, capacity, index):
             storage.extend_length(4)
         storage.set(slice(0, 4), _frames(4))
     storage.close()
+
+
+@pytest.mark.parametrize("name", list(FILE_BACKED))
+@pytest.mark.parametrize("target_exists", [False, True], ids=["missing-target", "existing-target"])
+def test_dumps_elsewhere_fails_with_clear_assertion(tmp_path, name, target_exists):
+    cls, kwargs = FILE_BACKED[name]
+    storage = cls.create(_space(), capacity=2, cache_path=str(tmp_path / name), **kwargs)
+    target = tmp_path / "elsewhere"
+    if target_exists:
+        target.mkdir()
+    with pytest.raises(AssertionError, match="does not match cache filename"):
+        storage.dumps(str(target))
+    storage.dumps(str(tmp_path / name))  # dumping in place works
+    storage.close()
