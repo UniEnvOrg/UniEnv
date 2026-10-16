@@ -108,6 +108,34 @@ class PyAvVideoReader:
         self.seek_mode = seek_mode
         self.backend = backend
         self.device = device
+        # Sorted frame indices of the keyframes (set by the storage from its cache, or built lazily
+        # by `keyframe_indices()`); lets sparse reads decode forward instead of re-seeking within a GOP.
+        self.keyframes : Optional[np.ndarray] = None
+
+    def keyframe_indices(self) -> np.ndarray:
+        """Frame indices of the keyframes, from a demux pass over the packets (no decoding)."""
+        if self.keyframes is None:
+            keyframes = []
+            for packet in self.container.demux(self.video_stream):
+                if packet.pts is not None and packet.is_keyframe:
+                    keyframes.append(self.pts_to_frame_index(packet.pts))
+            self.keyframes = np.unique(np.asarray(keyframes, dtype=np.int64))
+            self._reset_decoder()
+            self._pointer_position = 0
+        return self.keyframes
+
+    def _can_decode_forward(self, frame_index: int) -> bool:
+        """True when decoding on from the current position reaches `frame_index` with fewer frames than a seek."""
+        position = self.tell()
+        if self.keyframes is None or frame_index <= position or len(self.keyframes) == 0:
+            return False
+        nearest = int(np.searchsorted(self.keyframes, frame_index, side='right')) - 1
+        return nearest >= 0 and int(self.keyframes[nearest]) <= position
+
+    def _next_raw_frame(self):
+        if self._frame_buffer:
+            return self._frame_buffer.popleft()
+        return next(self._frame_iterator)
 
     def _start_pts(self) -> int:
         start_time = getattr(self.video_stream, 'start_time', None)
@@ -160,15 +188,16 @@ class PyAvVideoReader:
         if self.tell() == frame_index:
             return
 
-        target_pts = self.frame_index_to_pts(frame_index)
-        self._reset_decoder(target_pts)
+        if not self._can_decode_forward(frame_index):
+            target_pts = self.frame_index_to_pts(frame_index)
+            self._reset_decoder(target_pts)
 
         if self.seek_mode == 'exact':
             past_frame = None
             past_frame_index = None
             while True:
                 try:
-                    frame = next(self._frame_iterator)
+                    frame = self._next_raw_frame()
                 except (av.error.EOFError, StopIteration):
                     if past_frame is None:
                         raise RuntimeError(f"Reached end of video while seeking to frame index {frame_index}")
@@ -208,7 +237,7 @@ class PyAvVideoReader:
             last_frame_index = None
             while True:
                 try:
-                    next_frame = next(self._frame_iterator)
+                    next_frame = self._next_raw_frame()
                 except (av.error.EOFError, StopIteration):
                     if last_frame is None:
                         raise RuntimeError(f"Reached end of video while seeking to frame index {frame_index}")
@@ -289,6 +318,9 @@ class PyAvVideoReader:
             if len(index) < total_length // 2:
                 all_frames_np = []
                 past_frame_np = None
+                if len(index) > 1 and np.any(np.diff(sorted_index) > 1):
+                    # Gaps between requested frames: learn the GOP layout so close targets decode forward
+                    self.keyframe_indices()
                 for frame_i in sorted_index:
                     self.seek(int(frame_i))
 
@@ -417,6 +449,13 @@ class VideoStorage(EpisodeStorageBase[
         - Set `file_ext` to `mkv`
     `encoder_options` are passed to the encoder (e.g. `{"crf": "28", "g": "15"}`) and persisted in the metadata,
     so a loaded storage keeps encoding new segments the same way.
+
+    Random access: reading frame `i` decodes from the keyframe at or before `i`, so the cost of a random read
+    grows with the GOP size (keyframe interval). Encoders default to long GOPs (libx264: 250 frames, i.e. one
+    keyframe per episode); for buffers sampled at random positions set a short one, e.g.
+    `encoder_options={"g": "15"}` (larger files, much cheaper random reads). Sequential and dense reads are not
+    affected, and sparse reads within one file decode forward instead of seeking when no keyframe lies between
+    two requested frames (the PyAV reader indexes each file's keyframes once).
     """
 
     # ========== Class Attributes ==========
@@ -537,6 +576,9 @@ class VideoStorage(EpisodeStorageBase[
     single_file_ext = None
 
     def _invalidate_decoder_cache(self):
+        keyframe_cache = getattr(self, "_keyframe_cache", None)
+        if keyframe_cache is not None:
+            keyframe_cache.clear()
         for decoder in self._decoder_cache.values():
             try:
                 decoder.close()
@@ -757,6 +799,9 @@ class VideoStorage(EpisodeStorageBase[
         self.buffer_pixel_format = buffer_pixel_format
         self.cache_decoders = cache_decoders
         self._decoder_cache = {}
+        # filename -> ((mtime_ns, size), keyframe frame indices) of the files read so far; cleared on every write
+        # and checked against the file on use, as a file name is reused when its index range is rewritten
+        self._keyframe_cache : Dict[str, Tuple[Tuple[int, int], np.ndarray]] = {}
 
     #: libx265 clips shorter than this are encoded without B-frames. With B-frames, x265 only
     #: initializes its dts offset (`Encoder::m_bframeDelayTime`) once it receives frame
@@ -803,7 +848,16 @@ class VideoStorage(EpisodeStorageBase[
     def get_from_file(self, filename : str, index : Union[IndexableType, BArrayType], total_length : int) -> BArrayType:
         
         with self.get_cached_decoder(filename) as video_reader:
+            file_stamp = None
+            if isinstance(video_reader, PyAvVideoReader):
+                file_stat = os.stat(filename)
+                file_stamp = (file_stat.st_mtime_ns, file_stat.st_size)
+                cached = self._keyframe_cache.get(filename)
+                if video_reader.keyframes is None and cached is not None and cached[0] == file_stamp:
+                    video_reader.keyframes = cached[1]
             data = video_reader.read(index, total_length)
+            if file_stamp is not None and video_reader.keyframes is not None:
+                self._keyframe_cache[filename] = (file_stamp, video_reader.keyframes)
         if not self.cache_decoders:
             video_reader.close()
         return data
