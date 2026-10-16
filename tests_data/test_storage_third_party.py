@@ -194,3 +194,25 @@ def test_index_with_no_episodes():
     assert index.total_frames == 0 and index.total_episodes == 0
     single = LeRobotIndex(episodes=[EpisodeMetadata(index=0, length=2)], tasks={})
     assert single.global_index_to_episode_and_local(1) == (0, 1)
+
+
+def test_v3_episodes_in_chunked_layout(tmp_path):
+    """LeRobot v3 stores episode metadata as meta/episodes/chunk-XXX/file-XXX.parquet."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = str(tmp_path)
+    _write_info(root, "v3.0", data_path="data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet")
+    for chunk, file, episodes in [(0, 0, [0, 1]), (0, 1, [2]), (1, 0, [3])]:
+        directory = os.path.join(root, "meta", "episodes", f"chunk-{chunk:03d}")
+        os.makedirs(directory, exist_ok=True)
+        pq.write_table(pa.table({
+            "episode_index": episodes,
+            "length": [2] * len(episodes),
+            "data/chunk_index": [chunk] * len(episodes),
+            "data/file_index": [file] * len(episodes),
+        }), os.path.join(directory, f"file-{file:03d}.parquet"))
+    index = build_index(root, parse_info_json(root))
+    assert [e.index for e in index.episodes] == [0, 1, 2, 3]
+    assert [(e.data_chunk_index, e.data_file_index) for e in index.episodes] == [(0, 0), (0, 0), (0, 1), (1, 0)]
+    assert index.total_frames == 8

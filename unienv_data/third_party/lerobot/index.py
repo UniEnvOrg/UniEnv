@@ -170,10 +170,16 @@ def _load_episodes_v3(
             f"v3.0 dataset missing meta/episodes/ directory: {episodes_dir}"
         )
 
-    for fname in sorted(os.listdir(episodes_dir)):
-        if not fname.endswith(".parquet"):
-            continue
-        table = pq.read_table(os.path.join(episodes_dir, fname))
+    # Episode metadata lives in meta/episodes/chunk-XXX/file-XXX.parquet in LeRobot v3;
+    # files placed directly in meta/episodes/ are accepted as well.
+    episode_files = []
+    for dirpath, _, filenames in os.walk(episodes_dir):
+        for fname in filenames:
+            if fname.endswith(".parquet"):
+                episode_files.append(os.path.relpath(os.path.join(dirpath, fname), episodes_dir))
+
+    for rel_path in sorted(episode_files):
+        table = pq.read_table(os.path.join(episodes_dir, rel_path))
         col_names = set(table.column_names)
 
         for i in range(table.num_rows):
