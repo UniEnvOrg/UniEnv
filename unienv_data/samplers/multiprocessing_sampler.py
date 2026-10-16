@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable
+from typing import Any, Tuple, Union, Optional, List, Dict, Type, TypeVar, Generic, Callable, Sequence
 from unienv_data.base import BatchBase, BatchT, SamplerBatchT, SamplerArrayType, SamplerDeviceType, SamplerDtypeType, SamplerRNGType, BatchSampler
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
@@ -7,13 +7,9 @@ from unienv_interface.utils.seed_util import next_seed_rng
 import multiprocessing as mp
 from multiprocessing.context import BaseContext as MPContext
 from multiprocessing.synchronize import Event as MPEvent
+import copy
 import queue
 import time
-
-# try:
-#     import torch
-# except ImportError:
-#     torch = None
 
 def worker_loop(
     fetch_fn : Callable[[BatchSampler[
@@ -24,10 +20,13 @@ def worker_loop(
     result_queue : mp.Queue,
     done_event : MPEvent,
     doze_time : float = 0.005,
+    init_fn : Optional[Callable[[int], None]] = None,
+    seed : Optional[int] = None,
 ):
-    # if seed is not None:
-    #     sampler.rng = sampler.backend.random.random_number_generator(seed, device=sampler.device)
-    #     sampler.data_rng = sampler.backend.random.random_number_generator(seed, device=sampler.data.device)
+    # Every worker starts from a copy of the parent's sampler (and RNG state); reseed it so
+    # that workers do not all draw the same batches.
+    if init_fn is not None and seed is not None:
+        init_fn(seed)
 
     try:
         while True:
@@ -46,12 +45,78 @@ def worker_loop(
     except KeyboardInterrupt:
         pass
     finally:
-        # if seed is not None:
-        #     del sampler.rng
-        #     del sampler.data_rng
-        #     sampler.rng = None
-        #     sampler.data_rng = None
-        pass
+        # Results nobody will fetch any more must not keep this process alive on exit.
+        result_queue.cancel_join_thread()
+
+class _SamplerTask:
+    """
+    Picklable worker task calling ``fn()`` (or ``fn(work_info)``) on a sampler.
+
+    Local closures cannot be sent to ``spawn``/``forkserver`` workers, so the task is a
+    module-level object. When pickled, the sampler is shallow-copied without its RNG
+    state (``torch.Generator`` state cannot travel through multiprocessing pickling);
+    :meth:`reseed` re-creates those RNGs in the worker.
+    """
+    _RNG_ATTRS = ("rng", "data_rng")
+
+    def __init__(
+        self,
+        sampler : BatchSampler,
+        fn : Callable[..., Any],
+        takes_work_info : bool,
+    ):
+        self.sampler = sampler
+        if getattr(fn, "__self__", None) is sampler:
+            self.fn_name, self.fn = fn.__name__, None
+        else:
+            self.fn_name, self.fn = None, fn
+        self.takes_work_info = takes_work_info
+        self._stripped_rngs : Tuple[str, ...] = ()
+
+    def __call__(self, work_info : Any) -> Any:
+        fn = getattr(self.sampler, self.fn_name) if self.fn_name is not None else self.fn
+        return fn(work_info) if self.takes_work_info else fn()
+
+    def reseed(self, seed : int) -> None:
+        sampler = self.sampler
+        if not self._stripped_rngs:
+            sampler.manual_seed(seed)
+            return
+        for name in self._stripped_rngs:
+            device = sampler.device if name == "rng" else sampler.data.device
+            setattr(sampler, name, sampler.backend.random.random_number_generator(seed, device=device))
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        sampler_copy = copy.copy(self.sampler)
+        instance_attrs = vars(sampler_copy)
+        stripped = tuple(
+            name for name in self._RNG_ATTRS if instance_attrs.get(name, None) is not None
+        )
+        for name in stripped:
+            instance_attrs[name] = None
+        state["sampler"] = sampler_copy
+        state["_stripped_rngs"] = stripped
+        return state
+
+def _draw_worker_seeds(
+    sampler : BatchSampler,
+    n_workers : int,
+) -> Optional[List[int]]:
+    """Draw one seed per worker from the sampler's RNG (advancing it), or None if it has no RNG."""
+    use_data_rng = sampler.data_rng is not None
+    rng = sampler.data_rng if use_data_rng else sampler.rng
+    if rng is None:
+        return None
+    seeds = []
+    for _ in range(n_workers):
+        rng, seed = next_seed_rng(rng, sampler.backend)
+        seeds.append(seed % (2 ** 31))
+    if use_data_rng:
+        sampler.data_rng = rng
+    else:
+        sampler.rng = rng
+    return seeds
 
 TaskInfoT = TypeVar('TaskInfoT')
 ResultT = TypeVar('ResultT')
@@ -64,8 +129,14 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         done_event = None,
         doze_time : float = 0.001,
         daemon : Optional[bool] = None,
+        worker_init_fn : Optional[Callable[[int], None]] = None,
+        worker_seeds : Optional[Sequence[int]] = None,
     ):
+        # Set first so that close() (also called from __del__) works on a half-built manager.
+        self.closed = True
+        self.workers : List[mp.Process] = []
         assert n_workers > 0
+        assert worker_seeds is None or len(worker_seeds) == n_workers
         if ctx is None:
             ctx = mp.get_context()
 
@@ -76,26 +147,7 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
         self.doze_time = doze_time
         self.remaining_work = 0
 
-        # ===== Cache RNGs =====
-        # tmp_rng = sampler.rng
-        # tmp_data_rng = sampler.data_rng
-        # cache_rng = torch is not None and (isinstance(tmp_rng, torch.Generator) or isinstance(tmp_data_rng, torch.Generator))
-        # if cache_rng:
-        #     # For some reason we cannot pickle pytorch's Generator object
-        #     sampler.rng = None
-        #     sampler.data_rng = None
-        # ===== End Cache RNGs =====
-
-        self.workers : List[mp.Process] = []
         for i in range(n_workers):
-            # if cache_rng and (tmp_rng is not None or tmp_data_rng is not None):
-            #     if tmp_rng is not None:
-            #         tmp_rng, seed = next_seed_rng(tmp_rng, sampler.backend)
-            #     else:
-            #         tmp_data_rng, seed = next_seed_rng(tmp_data_rng, sampler.backend)
-            # else:
-            #     seed = None
-
             worker = ctx.Process(
                 target=worker_loop,
                 args=(
@@ -104,36 +156,39 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
                     self.sampler_result_queue, 
                     self.done_event,
                     self.doze_time,
+                    worker_init_fn,
+                    None if worker_seeds is None else worker_seeds[i],
                 ),
                 daemon=daemon,
             )
             self.workers.append(worker)
         
-        for worker in self.workers:
-            worker.start()
-        
-        # if cache_rng:
-        #     sampler.rng = tmp_rng
-        #     sampler.data_rng = tmp_data_rng
-        
         self.closed = False
+        try:
+            for worker in self.workers:
+                worker.start()
+        except BaseException:
+            self.close()
+            raise
 
     @property
     def n_workers(self):
         return len(self.workers)
 
     def close(self):
-        if self.closed:
+        if getattr(self, "closed", True):
             return
         
         self.done_event.set()
         self.sampler_result_queue.cancel_join_thread()
         self.sampler_result_queue.close()
-        for worker in self.workers:
+        started = [worker for worker in self.workers if worker.pid is not None]
+        for worker in started:
             worker.join(timeout=2)
-        for worker in self.workers:
+        for worker in started:
             if worker.is_alive():
                 worker.terminate()
+                worker.join(timeout=1)
         self.closed = True
     
     def fetch(self, block : bool = True, timeout : Optional[float] = None) -> Optional[ResultT]:
@@ -176,8 +231,7 @@ def wrap_sample_function(
     daemon : Optional[bool] = None,
     done_event = None,
 ):
-    def fn_fetch(_: Any):
-        return fn()
+    fn_fetch = _SamplerTask(sampler, fn, takes_work_info=False)
 
     def target_fn():
         if hasattr(target_fn, "sample_manager") and target_fn.sample_manager is not None:
@@ -190,6 +244,8 @@ def wrap_sample_function(
                 done_event=done_event,
                 doze_time=doze_time,
                 daemon=daemon,
+                worker_init_fn=fn_fetch.reseed,
+                worker_seeds=_draw_worker_seeds(sampler, n_workers),
             )
             for _ in range(n_buffers):
                 sample_manager.add_work(1)
@@ -214,9 +270,7 @@ def wrap_epoch_iter_function(
     daemon : Optional[bool] = None,
     done_event = None,
 ):
-    def fn_fetch(index: Any):
-        ret = getter_fn(index)
-        return ret
+    fn_fetch = _SamplerTask(sampler, getter_fn, takes_work_info=True)
 
     def target_fn():
         sample_manager = MultiProcessingSampleManager(
@@ -229,41 +283,42 @@ def wrap_epoch_iter_function(
         )
         target_fn.sample_manager = sample_manager
 
-        if sampler.data_rng is not None:
-            sampler.data_rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.data_rng, device=sampler.data.device)
-        else:
-            sampler.rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.rng, device=sampler.data.device)
-        n_batches = len(sampler.data) // sampler.batch_size
-        num_left = len(sampler.data) % sampler.batch_size
-        
-        total_batches = n_batches + (1 if num_left > 0 else 0)
+        try:
+            if sampler.data_rng is not None:
+                sampler.data_rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.data_rng, device=sampler.data.device)
+            else:
+                sampler.rng, idx = sampler.backend.random.random_permutation(len(sampler.data), rng=sampler.rng, device=sampler.data.device)
+            n_batches = len(sampler.data) // sampler.batch_size
+            num_left = len(sampler.data) % sampler.batch_size
+            
+            total_batches = n_batches + (1 if num_left > 0 else 0)
 
-        added_batch_i = 0
-        fetch_batch_i = 0
+            added_batch_i = 0
 
-        def try_add_batch():
-            nonlocal added_batch_i
-            nonlocal fetch_batch_i
-            if added_batch_i < total_batches:
-                if added_batch_i < n_batches:
-                    sample_manager.add_work(idx[added_batch_i*sampler.batch_size:(added_batch_i+1)*sampler.batch_size])
-                else:
-                    sample_manager.add_work(idx[-num_left:])
-                added_batch_i += 1
+            def try_add_batch():
+                nonlocal added_batch_i
+                if added_batch_i < total_batches:
+                    if added_batch_i < n_batches:
+                        sample_manager.add_work(idx[added_batch_i*sampler.batch_size:(added_batch_i+1)*sampler.batch_size])
+                    else:
+                        sample_manager.add_work(idx[-num_left:])
+                    added_batch_i += 1
 
-        for _ in range(n_buffers):
-            try_add_batch()
+            for _ in range(n_buffers):
+                try_add_batch()
 
-        for i in range(n_batches):
-            try_add_batch()
-            yield sample_manager.fetch()
+            for i in range(n_batches):
+                try_add_batch()
+                yield sample_manager.fetch()
 
-        if num_left > 0:
-            try_add_batch()
-            yield sample_manager.fetch()
-        
-        sample_manager.close()
-        target_fn.sample_manager = None
+            if num_left > 0:
+                try_add_batch()
+                yield sample_manager.fetch()
+        finally:
+            # Also runs when the consumer stops iterating early (generator close / GC).
+            sample_manager.close()
+            if getattr(target_fn, "sample_manager", None) is sample_manager:
+                target_fn.sample_manager = None
     
     target_fn.close = close_fn_for_wrapped_fn(target_fn)
 
@@ -383,7 +438,7 @@ class MultiprocessingSampler(
         return self.sampler.get_flattened_at_with_metadata(idx)
 
     def close(self):
-        if self.closed:
+        if getattr(self, "closed", True):
             return
         
         for fn in self.functions_to_close:
