@@ -111,3 +111,103 @@ def test_raw_parquet_box_space_round_trip(tmp_path):
     assert isinstance(rb.single_space, BoxSpace) and rb.single_space.shape == (2, 2)
     np.testing.assert_array_equal(rb.get_at(slice(None)), np.arange(12, dtype=np.uint8).reshape(3, 2, 2))
     rb.storage.close()
+
+
+def test_column_view_reads_writes_and_dumps_through_parent(tmp_path):
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=5, cache_path=path, piece_size=2)
+    storage.set(slice(None), _batch(5))
+    column = storage.get_column(["step"])
+    assert len(column) == 5 and column.capacity == 5
+    assert column.cache_filename == path and column.is_mutable and not column.is_multiprocessing_safe
+    np.testing.assert_array_equal(column.get(slice(None)), np.arange(5))
+    column.set(np.array([0, 4]), np.array([50, 40]))
+    np.testing.assert_array_equal(storage.get(slice(None))["step"], np.array([50, 1, 2, 3, 40]))
+    np.testing.assert_array_equal(storage.get(1)["obs"], np.array([2.0, 3.0], np.float32))
+    column.dumps(path)
+    column.close()
+    storage.close()
+    reloaded = ParquetStorage.load_from(path, _space(), capacity=5)
+    np.testing.assert_array_equal(reloaded.get(slice(None))["step"], np.array([50, 1, 2, 3, 40]))
+    with pytest.raises(AssertionError):
+        reloaded.get_column(["missing"])
+    with pytest.raises(AssertionError):
+        reloaded.get_column(["obs", "x"])
+    reloaded.close()
+
+
+def test_column_view_of_non_dict_storage_is_rejected(tmp_path):
+    storage = ParquetStorage.create(BoxSpace(B, 0.0, 1.0, np.float32, shape=(2,)), capacity=2,
+                                    cache_path=str(tmp_path / "pq"))
+    with pytest.raises(AssertionError):
+        storage.get_column(["data"])
+
+
+def test_nested_dict_space_is_rejected(tmp_path):
+    nested = DictSpace(B, {"a": DictSpace(B, {"b": BoxSpace(B, 0.0, 1.0, np.float32, shape=())})})
+    with pytest.raises(AssertionError, match="Nested DictSpace"):
+        ParquetStorage.create(nested, capacity=2, cache_path=str(tmp_path / "pq"))
+
+
+def test_unbounded_growth_across_pieces_and_truncation(tmp_path):
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=None, cache_path=path, piece_size=3)
+    storage.extend_length(2)
+    storage.set(slice(None), _batch(2))
+    storage.extend_length(5)  # fills the partial piece, then adds new pieces
+    assert len(storage) == 7 and storage._num_pieces == 3
+    storage.set(slice(2, 7), {"obs": _batch(7)["obs"][2:], "step": np.arange(2, 7)})
+    assert_tree_equal(storage.get(slice(None)), _batch(7))
+    storage.shrink_length(3)  # cached last piece is truncated
+    assert len(storage) == 4
+    storage.close()
+    reopened = ParquetStorage.load_from(path, _space(), read_only=False)
+    reopened.shrink_length(2)  # last piece is loaded from disk and truncated
+    reopened.close()
+    final = ParquetStorage.load_from(path, _space())
+    assert len(final) == 2
+    assert_tree_equal(final.get(slice(None)), _batch(2))
+    with pytest.raises(AssertionError):
+        final.extend_length(1)
+    final.close()
+
+
+def test_index_validation(storage):
+    with pytest.raises(AssertionError):
+        storage.get(5)
+    with pytest.raises(AssertionError):
+        storage.get(np.array([0, 9]))
+    with pytest.raises(AssertionError):
+        storage.get(np.array([True, False]))
+    with pytest.raises(ValueError):
+        storage.get("0")
+    assert_tree_equal(storage.get([4, -5]), {k: v[[4, 0]] for k, v in _batch(5).items()})
+    assert_tree_equal(storage.get(np.int64(2)), {k: v[2] for k, v in _batch(5).items()})
+
+
+@pytest.mark.parametrize("compression", [None, "gzip", {"obs": "zstd", "step": "snappy"}],
+                         ids=["none", "gzip", "per-column"])
+def test_compression_options_round_trip(tmp_path, compression):
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=4, cache_path=path, piece_size=4, compression=compression)
+    storage.set(slice(None), _batch(4))
+    storage.dumps(path)
+    storage.close()
+    loaded = ParquetStorage.load_from(path, _space(), capacity=4)
+    assert_tree_equal(loaded.get(slice(None)), _batch(4))
+    loaded.close()
+
+
+def test_pickling_flushes_dirty_pieces(tmp_path):
+    import pickle
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=4, cache_path=path, piece_size=2)
+    storage.set(slice(None), _batch(4))
+    clone = pickle.loads(pickle.dumps(storage))
+    assert not storage._dirty_pieces
+    assert_tree_equal(clone.get(slice(None)), _batch(4))
+    reader = ParquetStorage.load_from(path, _space(), capacity=4)
+    assert_tree_equal(reader.get(slice(None)), _batch(4))
+    reader.close()
+    clone.close()
+    storage.close()
