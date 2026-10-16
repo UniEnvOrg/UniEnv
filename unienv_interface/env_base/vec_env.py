@@ -3,7 +3,8 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.space import Space, batch_utils as sbu
 from unienv_interface.space.space_utils.serialization_utils import space_to_json, json_to_space
 from ._shared_memory import (
-    ParentSharedBuffers, WorkerSharedBuffers, check_leaf_layouts_match, select_mode, space_leaves,
+    ParentSharedBuffers, SharedMemoryUnavailable, WorkerSharedBuffers, check_leaf_layouts_match,
+    select_mode, space_leaves,
 )
 from typing import Any, Dict, Generic, Literal, Optional, SupportsFloat, Tuple, TypeVar, Callable, Iterable, Mapping, Sequence, List
 import numpy as np
@@ -12,6 +13,7 @@ from multiprocessing.connection import Connection as MPConnection
 from multiprocessing.context import BaseContext as MPContext
 from queue import Empty as QueueEmpty
 import atexit
+import logging
 import os
 import pickle
 import traceback
@@ -351,6 +353,19 @@ def _describe_env(env : Env) -> Dict[str, Any]:
         "render_fps": env.render_fps,
     }
 
+logger = logging.getLogger(__name__)
+
+def _ensure_resource_tracker() -> None:
+    """Start multiprocessing's resource tracker before any worker is created, so
+    that forked workers share it with the parent (a worker that attaches a shared
+    segment would otherwise start its own tracker, which unlinks the segment and
+    warns about a "leak" when the worker exits)."""
+    try:
+        from multiprocessing import resource_tracker
+        resource_tracker.ensure_running()
+    except Exception:
+        pass
+
 # Shared-memory envs that have not been closed yet. They are closed at interpreter
 # exit (this hook runs before multiprocessing's own exit handler, which would
 # terminate the workers), so that the workers release their CUDA IPC references
@@ -413,24 +428,32 @@ def _async_worker_fn(
                 else:
                     if shared.has_group("context"):
                         shared.write("context", context)
-                    shared.write("obs", observation)
+                        context = None
+                    if shared.has_group("observation"):
+                        shared.write("observation", observation)
+                        observation = None
                     shared.finish()
-                    pipe.send(((None, None, info), True))
+                    pipe.send(((context, observation, info), True))
             elif cmd == "step":
+                if shared is not None and shared.has_group("action"):
+                    # payload-free step: the action is in the shared buffer
+                    args = (shared.read("action"),)
                 observation, reward, terminated, truncated, info = env.step(*args, **kwargs)
                 if shared is None:
                     pipe.send(((observation, reward, terminated, truncated, info), True))
                 else:
-                    shared.write("obs", observation)
+                    if shared.has_group("observation"):
+                        shared.write("observation", observation)
+                        observation = None
                     shared.finish()
-                    pipe.send(((None, float(reward), bool(terminated), bool(truncated), info), True))
+                    pipe.send(((observation, float(reward), bool(terminated), bool(truncated), info), True))
             elif cmd == "render":
                 frame = env.render(*args, **kwargs)
                 pipe.send((frame, True))
             elif cmd == "_describe":
                 pipe.send((_describe_env(env), True))
             elif cmd == "_shared_setup":
-                shared = WorkerSharedBuffers(args[0], index, env.backend)
+                shared = WorkerSharedBuffers(args[0], index, env.backend, env.device)
                 pipe.send((None, True))
             elif cmd == "close":
                 break
@@ -469,12 +492,18 @@ class AsyncVecEnv(Env[
     workers disagree on backend or device. Differing sub-environment spaces are
     batched like in :class:`SyncVecEnv`.
 
-    **Shared-memory observations** (``shared_memory=True``, opt-in): the parent
+    **Shared memory** (``shared_memory=True``, the default): the parent
     allocates one buffer of shape ``(num_envs, *leaf_shape)`` per leaf of the
-    single-env observation space (and of the context space), worker ``i`` writes
-    its observation / context into row ``i``, and only reward, termination flags
-    and ``info`` travel through the pipe, so observations are neither pickled
-    nor concatenated. Where the buffers live follows the worker env:
+    single-env observation, context and action spaces. Worker ``i`` writes its
+    observation / context into row ``i`` and reads its action from row ``i``
+    (``step`` writes the whole action batch once and sends a payload-free
+    command), so only reward, termination flags and ``info`` travel through
+    the pipe and nothing is pickled or concatenated. Each group (observation,
+    context, action) that cannot be shared falls back to the pipe on its own,
+    with one INFO message on the ``unienv_interface.env_base.vec_env`` logger;
+    :attr:`shared_groups` lists the groups that are shared. ``shared_memory=False``
+    sends everything through the pipe. Where the buffers live follows the
+    worker env:
 
     ================  ===============================  =================================
     worker env        buffer                           parent read
@@ -493,14 +522,20 @@ class AsyncVecEnv(Env[
     devices           copies device -> host)           read
     ================  ===============================  =================================
 
-    Requirements and caveats of shared mode:
+    Actions use the same buffers in the other direction; every worker hands
+    its env a private copy of its row.
 
-    * Only fixed-size spaces are supported: ``BoxSpace`` / ``BinarySpace`` leaves
-      nested in ``DictSpace`` / ``TupleSpace`` (anything else raises a
-      ``ValueError`` from the constructor). Every observation / context must
-      match its declared space exactly (shape and dtype per leaf); a mismatch
-      raises in the worker and surfaces as the usual chained ``RuntimeError``,
-      nothing is cast silently. ``info`` always travels through the pipe.
+    Details of shared mode:
+
+    * Only fixed-size spaces can be shared: ``BoxSpace`` / ``BinarySpace``
+      leaves nested in ``DictSpace`` / ``TupleSpace`` (other groups use the
+      pipe). Observations and contexts must match their declared space
+      exactly (shape and dtype per leaf); a mismatch raises in the worker and
+      surfaces as the usual chained ``RuntimeError`` naming the leaf, nothing
+      is cast silently (fix the env or pass ``shared_memory=False``).
+      Actions must have shape ``(num_envs, *action_leaf_shape)``; their dtype
+      is cast with same-kind rules (e.g. float64 policy outputs into a
+      float32 space). ``info`` always travels through the pipe.
     * ``copy=True`` (default) returns data that never changes afterwards.
       ``copy=False`` returns the shared buffers themselves (or zero-copy views
       of them): they are only valid until the next ``step`` / ``reset`` (which
@@ -509,15 +544,17 @@ class AsyncVecEnv(Env[
       computations) have finished before the next call. CUDA buffers are
       synchronised by the parent before every ``step`` / ``reset``. Masked
       resets always return freshly gathered rows.
-    * CUDA sharing needs the ``spawn`` or ``forkserver`` start method; an
-      explicit ``fork`` context raises. When ``ctx`` is not given, shared mode
-      uses ``spawn`` (the env's device is only known once a worker built it).
-      CUDA IPC is Linux-only; elsewhere CUDA observations are staged through
-      host shared memory (with a warning). JAX GPU envs need PyTorch as the
-      IPC carrier and a CUDA-enabled jaxlib in the parent. A TPU belongs to a
-      single process, so TPU envs cannot be shared: run the workers on the
-      host (or let them copy to the host) and the parent performs one
-      host-to-TPU transfer per read.
+    * Every start method works. With ``fork`` (the Linux default) CUDA IPC
+      works as long as the parent had not initialised CUDA before the workers
+      were forked (no env is built in the parent, so that is the usual case);
+      otherwise the workers cannot use CUDA at all, which torch reports when
+      they build their env - use ``spawn`` / ``forkserver`` then. CUDA IPC is
+      Linux-only; elsewhere CUDA buffers are staged through host shared
+      memory (with a warning). JAX GPU envs need PyTorch as the IPC carrier
+      and a CUDA-enabled jaxlib in the parent (otherwise they use the pipe).
+      A TPU belongs to a single process, so TPU envs cannot be shared: run the
+      workers on the host (or let them copy to the host) and the parent
+      performs one host-to-TPU transfer per read.
     * Workers set ``XLA_PYTHON_CLIENT_PREALLOCATE=false`` unless the variable
       is already set, so that N JAX workers do not each reserve 75% of the GPU.
     * The parent owns the buffers until :meth:`close`, which first shuts the
@@ -537,7 +574,7 @@ class AsyncVecEnv(Env[
         seed : Optional[int] = None,
         ctx : Optional[MPContext] = None,
         daemon : bool = True,
-        shared_memory : bool = False,
+        shared_memory : bool = True,
         copy : bool = True,
     ):
         """Spawn worker processes and batch the spaces they report.
@@ -545,24 +582,28 @@ class AsyncVecEnv(Env[
         Args:
             env_fn: One factory per sub-environment; each builds an unbatched env.
             seed: Seed of the vector env's ``rng``.
-            ctx: Multiprocessing context. Defaults to the platform default, or to
-                ``spawn`` when ``shared_memory=True``.
+            ctx: Multiprocessing context (default: the platform default).
             daemon: Whether the worker processes are daemonic.
-            shared_memory: Transfer observations / contexts through shared
-                buffers instead of pickling them (see the class docstring).
-            copy: Only used with ``shared_memory=True``: return copies (``True``)
-                or views that are valid until the next ``step`` / ``reset``.
+            shared_memory: Transfer observations, contexts and actions through
+                shared buffers wherever their spaces allow it, falling back to the
+                pipe per group (see the class docstring); ``False`` pickles
+                everything through the pipe.
+            copy: Only used with shared memory: return copies (``True``) or views
+                that are valid until the next ``step`` / ``reset``.
         """
         if ctx is None:
-            ctx = mp.get_context("spawn") if shared_memory else mp.get_context()
+            ctx = mp.get_context()
         self.command_pipes : List[MPConnection] = []
         self.processes : List[mp.Process] = []
         self.error_queue : mp.Queue = ctx.Queue()
         self.shared_memory = shared_memory
         self.copy = copy
         self._shared : Optional[ParentSharedBuffers] = None
+        self.shared_groups : Tuple[str, ...] = ()
         self._reset_mask : Optional[BArrayType] = None
         env_var_defaults = {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"} if shared_memory else None
+        if shared_memory:
+            _ensure_resource_tracker()
 
         for i, fn in enumerate(env_fn):
             parent_pipe, child_pipe = ctx.Pipe()
@@ -582,7 +623,7 @@ class AsyncVecEnv(Env[
             assert len(self.processes) > 1, "env_fns should have more than 1 env function"
             device_description = self._init_from_workers(seed)
             if shared_memory:
-                self._init_shared_memory(device_description, ctx.get_start_method())
+                self._init_shared_memory(device_description)
         except BaseException:
             self.close()
             raise
@@ -592,8 +633,7 @@ class AsyncVecEnv(Env[
 
         Returns the worker-reported (serialized) device.
         """
-        for i in range(len(self.processes)):
-            self.send_command(i, "_describe")
+        self._send_setup_command("_describe")
         descriptions = self._get_command_results(range(len(self.processes)))
         first = descriptions[0]
         for i, description in enumerate(descriptions[1:], start=1):
@@ -624,7 +664,8 @@ class AsyncVecEnv(Env[
 
         self._single_observation_spaces = single_spaces("observation_space")
         self._single_context_spaces = single_spaces("context_space")
-        self.action_space = _batch_env_spaces(single_spaces("action_space"), device=self.device)
+        self._single_action_spaces = single_spaces("action_space")
+        self.action_space = _batch_env_spaces(self._single_action_spaces, device=self.device)
         self.observation_space = _batch_env_spaces(self._single_observation_spaces, device=self.device)
         self.context_space = _batch_env_spaces(self._single_context_spaces, device=self.device)
         self.rng = self.backend.random.random_number_generator(
@@ -633,29 +674,60 @@ class AsyncVecEnv(Env[
         )
         return first["device"]
 
-    def _init_shared_memory(self, device_description : Any, start_method : str) -> None:
-        """Allocate the shared buffers and hand them to the workers."""
-        groups = {"obs": self._single_observation_spaces[0]}
-        space_leaves(groups["obs"], "observation")
-        check_leaf_layouts_match(self.backend, self._single_observation_spaces, "observation")
-        if self.context_space is not None:
-            groups["context"] = self._single_context_spaces[0]
-            space_leaves(groups["context"], "context")
-            check_leaf_layouts_match(self.backend, self._single_context_spaces, "context")
-        mode = select_mode(self.backend, device_description, start_method)
-        self._shared = ParentSharedBuffers(
-            self.backend,
-            self.device,
-            len(self.processes),
-            groups,
-            mode,
-            self.copy,
-        )
+    def _init_shared_memory(self, device_description : Any) -> None:
+        """Allocate the shared buffers of every shareable group and hand them to the workers."""
+        candidates = {
+            "observation": self._single_observation_spaces,
+            "context": self._single_context_spaces,
+            "action": self._single_action_spaces,
+        }
+        groups : Dict[str, Space] = {}
+        for group, spaces in candidates.items():
+            if spaces[0] is None:
+                continue
+            try:
+                space_leaves(spaces[0], group)
+                check_leaf_layouts_match(self.backend, spaces, group)
+            except SharedMemoryUnavailable as e:
+                logger.info("AsyncVecEnv: %ss go through the pipe instead of shared memory: %s.", group, e)
+                continue
+            groups[group] = spaces[0]
+        if len(groups) == 0:
+            return
+        try:
+            mode = select_mode(self.backend, device_description)
+            self._shared = ParentSharedBuffers(
+                self.backend,
+                self.device,
+                len(self.processes),
+                groups,
+                mode,
+                self.copy,
+            )
+        except SharedMemoryUnavailable as e:
+            logger.info(
+                "AsyncVecEnv: %s go through the pipe instead of shared memory: %s.",
+                ", ".join(f"{group}s" for group in groups), e,
+            )
+            return
         _LIVE_SHARED_ENVS.add(self)
         spec = self._shared.worker_spec()
-        for i in range(len(self.processes)):
-            self.send_command(i, "_shared_setup", spec)
+        self._send_setup_command("_shared_setup", spec)
         self._get_command_results(range(len(self.processes)))
+        self.shared_groups = tuple(groups)
+
+    def _send_setup_command(self, cmd : str, *args) -> None:
+        """Send a setup command to every worker. A worker that failed to build its
+        env has already reported the error and closed its pipe: the error is read
+        (and raised) by the following ``_get_command_results`` instead."""
+        for i in range(len(self.processes)):
+            try:
+                self.send_command(i, cmd, *args)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+    def _shares(self, group : str) -> bool:
+        return group in self.shared_groups
 
     @property
     def batch_size(self) -> Optional[int]:
@@ -732,37 +804,31 @@ class AsyncVecEnv(Env[
             if self._reset_mask is None or bool(self._reset_mask[i])
         ]
         self._reset_mask = None
-        results = self._get_command_results(indices)
-        if self._shared is not None:
-            rows = None if len(indices) == len(self.processes) else indices
-            all_contexts = None if self.context_space is None else self._shared.read("context", rows)
-            all_obs = self._shared.read("obs", rows)
-            all_infos = data_stack(
-                [info for _, _, info in results],
-                self.backend,
-                self.device
-            )
-            return all_contexts, all_obs, all_infos
-
-        for context, obs, info in results:
+        for context, obs, info in self._get_command_results(indices):
             all_contexts.append(context)
             all_obs.append(obs)
             all_infos.append(info)
+        rows = None if len(indices) == len(self.processes) else indices
 
-        if self.context_space is not None:
+        if self.context_space is None:
+            all_contexts = None
+        elif self._shares("context"):
+            all_contexts = self._shared.read("context", rows)
+        else:
             all_contexts = sbu.concatenate(
                 self.context_space,
                 all_contexts,
                 axis=0,
             )
-        else:
-            all_contexts = None
 
-        all_obs = sbu.concatenate(
-            self.observation_space,
-            all_obs,
-            axis=0,
-        )
+        if self._shares("observation"):
+            all_obs = self._shared.read("observation", rows)
+        else:
+            all_obs = sbu.concatenate(
+                self.observation_space,
+                all_obs,
+                axis=0,
+            )
         all_infos = data_stack(
             all_infos,
             self.backend,
@@ -783,7 +849,17 @@ class AsyncVecEnv(Env[
         self,
         action : ActType
     ) -> None:
-        """Dispatch one action batch to all worker processes."""
+        """Dispatch one action batch to all worker processes.
+
+        With shared actions the whole batch is written into the shared buffers
+        at once and the workers receive a payload-free command.
+        """
+        if self._shares("action"):
+            self._shared.write("action", action)
+            self._shared.before_dispatch()
+            for i in range(len(self.processes)):
+                self.send_command(i, "step")
+            return
         actions = sbu.iterate(
             self.action_space,
             action
@@ -808,8 +884,8 @@ class AsyncVecEnv(Env[
             all_terminated.append(terminated)
             all_truncated.append(truncated)
             all_infos.append(info)
-        if self._shared is not None:
-            all_obs = self._shared.read("obs")
+        if self._shares("observation"):
+            all_obs = self._shared.read("observation")
         else:
             all_obs = sbu.concatenate(
                 self.observation_space,
@@ -870,6 +946,7 @@ class AsyncVecEnv(Env[
         if self._shared is not None:
             self._shared.close()
             self._shared = None
+        self.shared_groups = ()
         _LIVE_SHARED_ENVS.discard(self)
     
     def _raise_if_error(self, index: Optional[int] = None, error_data: Any = None):
