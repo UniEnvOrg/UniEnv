@@ -174,3 +174,21 @@ def test_view_over_numpy_source():
     out, meta = fs.get_at_with_metadata(np.array([4, 6]))
     assert_tree_equal(meta["slice_valid_mask"], np.array([[False, True], [True, True]]))
     assert_tree_equal(out["obs"][0], np.array([[8, 9], [8, 9]], dtype=np.float32))
+
+
+def test_episode_end_mask_on_immutable_jax_arrays():
+    # Regression: the episode-end mask assigned in place, which JAX arrays reject.
+    jnp = pytest.importorskip("jax.numpy")
+    from unienv_interface.backends.jax import JaxComputeBackend as JB
+    from unienv_interface.space import BinarySpace, BoxSpace, DictSpace
+    from tests_common.batch_helpers import ArrayBatch
+
+    space = DictSpace(JB, {"obs": BoxSpace(JB, -1e6, 1e6, jnp.float32, shape=(2,)),
+                           "episode_end": BinarySpace(JB, shape=())})
+    i = jnp.arange(10)
+    src = ArrayBatch(space, {"obs": jnp.stack([2 * i, 2 * i + 1], -1).astype(jnp.float32),
+                             "episode_end": (i % 4) == 3})
+    fs = FrameStackedBatch(src, prefetch_horizon=1, get_valid_mask_function=EPISODE_END_MASK)
+    out, meta = fs.get_at_with_metadata(jnp.array([4, 6]))
+    assert_tree_equal(meta["slice_valid_mask"], np.array([[False, True], [True, True]]))
+    assert_tree_equal(out["obs"][0], np.array([[8, 9], [8, 9]], dtype=np.float32))

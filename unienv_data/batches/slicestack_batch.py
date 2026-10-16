@@ -430,7 +430,7 @@ class SliceStackedBatch(BatchBase[
         
         # We roll to get the cumulative sum before the current timestep (the number of previous episodes to get the current episode delta id)
         episode_ends_cs_before = batch.backend.roll(episode_ends_cs, shift=1, axis=1)
-        episode_ends_cs_before[:, 0] = 0  # First element should be 0
+        episode_ends_cs_before = batch.backend.at(episode_ends_cs_before)[:, 0].set(0)  # First element should be 0
 
         episode_ends_at = episode_ends_cs_before[:, batch._idx_zero]
         return episode_ends_cs_before == episode_ends_at[:, None]
