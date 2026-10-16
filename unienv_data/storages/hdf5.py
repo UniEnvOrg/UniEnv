@@ -680,8 +680,21 @@ class HDF5Storage(SpaceStorage[
     def __len__(self):
         return self._len
     
+    def _normalize_array_index(self, index):
+        """Map negative entries of an integer index array to their positive positions.
+
+        The IO-reduction path turns sorted indices into slices, which silently
+        selects nothing when negative entries are mixed with positive ones.
+        """
+        if isinstance(index, np.ndarray) and index.dtype.kind == 'i' and index.size > 0 and np.any(index < 0):
+            index = np.where(index < 0, index + self._len, index)
+        return index
+
     def get(self, index):
         root = self._ensure_root()
+        index = self._normalize_array_index(index)
+        if isinstance(index, np.ndarray) and index.dtype.kind in {'i', 'u'} and index.size == 0:
+            index = slice(0, 0)
         if not is_fancy_index(index):
             return __class__.get_from(
                 root,
@@ -705,6 +718,7 @@ class HDF5Storage(SpaceStorage[
         if self._multiprocessing:
             raise RuntimeError("HDF5Storage does not support set in multiprocessing mode")
         root = self._ensure_root()
+        index = self._normalize_array_index(index)
         if not is_fancy_index(index):
             return __class__.set_to(
                 root,

@@ -199,3 +199,34 @@ def test_column_view_of_lazily_opened_storage_owns_its_handle(tmp_path, nested_s
     assert_tree_equal(reader.get(slice(None)), _nested_batch(4))
     clone.close()
     reader.close()
+
+
+def _rows(batch: dict, rows) -> dict:
+    rows = np.asarray(rows)
+    return {"obs": {k: v[rows] for k, v in batch["obs"].items()}, "reward": batch["reward"][rows]}
+
+
+@pytest.mark.parametrize("index,rows", [
+    (np.array([-1, 0]), [3, 0]),
+    (np.array([2, -4, 2]), [2, 0, 2]),
+    (np.array([-2]), [2]),
+    (np.array([True, False, False, True]), [0, 3]),
+    (np.array([], dtype=np.int64), []),
+], ids=["negative", "negative-duplicates", "single-negative", "bool-mask", "empty"])
+def test_get_with_array_indices(nested_storage, index, rows):
+    result = nested_storage.get(index)
+    expected = _rows(_nested_batch(4), np.array(rows, dtype=np.int64))
+    assert_tree_equal(result, expected)
+
+
+def test_set_with_negative_array_indices(nested_storage):
+    update = _nested_batch(2, start=100.0)
+    nested_storage.set(np.array([-1, -3]), update)
+    expected = _nested_batch(4)
+    for rows_src, row_dst in ((0, 3), (1, 1)):
+        expected["obs"]["pos"][row_dst] = update["obs"]["pos"][rows_src]
+        expected["obs"]["vel"][row_dst] = update["obs"]["vel"][rows_src]
+        expected["reward"][row_dst] = update["reward"][rows_src]
+    assert_tree_equal(nested_storage.get(slice(None)), expected)
+    nested_storage.set(np.array([], dtype=np.int64), _rows(update, np.array([], dtype=np.int64)))
+    assert_tree_equal(nested_storage.get(slice(None)), expected)
