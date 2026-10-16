@@ -67,7 +67,7 @@ class FuncSpaceDataQueue(
         initial_data : DataT,
         mask : Optional[BArrayType] = None,
     ) -> SpaceDataQueueState:
-        assert self.batch_size is None or mask is None, \
+        assert self.batch_size is not None or mask is None, \
             "Mask should not be provided if batch size is empty"
         index = (
             slice(None), mask
