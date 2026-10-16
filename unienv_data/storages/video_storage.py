@@ -566,9 +566,12 @@ class VideoStorage(EpisodeStorageBase[
         assert not self.has_open_segment, "A video segment is already open"
 
         normalized_start = int(start_index) if self.capacity is None else int(start_index) % self.capacity
+        # Create the writer first: it may open the encoder eagerly and raise (e.g. bad codec),
+        # which must not leave the storage with an open segment but no writer
+        writer = _VideoSegmentWriter(self)
         self._active_segment_start_index = normalized_start
         self._active_segment_index = normalized_start
-        self._active_segment_writer = _VideoSegmentWriter(self)
+        self._active_segment_writer = writer
 
     def append(self, frame):
         if not self.has_open_segment:
@@ -955,7 +958,11 @@ class _VideoSegmentWriter(SegmentWriter):
         self._held_frames : List[np.ndarray] = []
         if storage._min_clip_length_for_default_options <= 1:
             # Nothing to hold back: open now, so a bad codec / format fails right away.
-            self._open_encoder(None)
+            try:
+                self._open_encoder(None)
+            except Exception:
+                self.abort() # remove any partially written temp file
+                raise
 
     def _append(self, frame) -> None:
         storage = self.storage
