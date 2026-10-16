@@ -273,9 +273,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if not self.backend.is_backendarray(x):
-            raise ValueError(
-                f"Box.contains expects x to be a backend array, actual type: {type(x)}"
-            )
+            return False
 
         return bool(
             self.backend.can_cast(x, self.dtype)

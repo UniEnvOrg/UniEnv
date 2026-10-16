@@ -58,3 +58,11 @@ def test_infinite_bounds_with_default_integer_dtype(backend, device):
     assert int(space.low.min()) == int(info.min) and int(space.high.max()) == int(info.max)
     _, x = space.sample(_rng(0, backend, device))
     assert space.contains(x)
+
+
+@pytest.mark.parametrize("value", ["x", None, [0.5], 0.5, {"a": 1}])
+def test_contains_is_a_predicate_for_non_arrays(value):
+    from unienv_interface.space import BoxSpace
+    assert not DynamicBoxSpace(B, 0.0, 1.0, (1,), (3,), np.float32).contains(value)
+    assert not BoxSpace(B, 0.0, 1.0, np.float32, shape=(1,)).contains(value)
+    assert value not in BoxSpace(B, 0.0, 1.0, np.float32, shape=(1,))
