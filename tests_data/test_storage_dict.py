@@ -66,3 +66,31 @@ def test_custom_nested_separator_with_residual_key_round_trip(tmp_path, separato
     assert_tree_equal(loaded.get(1), _sample(2.0))
     assert loaded.get_column(["obs", "pos"]) is loaded.storage_map[f"obs{separator}pos"]
     loaded.close()
+
+
+def _flat_space() -> DictSpace:
+    return DictSpace(B, {
+        "a": BoxSpace(B, -10.0, 10.0, np.float32, shape=(2,)),
+        "b": BoxSpace(B, -10.0, 10.0, np.float32, shape=()),
+    })
+
+
+def test_close_closes_child_storages(tmp_path):
+    storage = DictStorage.create(_flat_space(), {"a": HDF5Storage, "b": HDF5Storage},
+                                 capacity=2, cache_path=str(tmp_path / "dict"))
+    children = list(storage.storage_map.values())
+    assert all(child.root is not None for child in children)
+    storage.close()
+    assert all(child.root is None for child in children)
+
+
+def test_garbage_collecting_parent_keeps_column_views_usable(tmp_path):
+    import gc
+    storage = DictStorage.create(_flat_space(), {"a": HDF5Storage, "b": HDF5Storage},
+                                 capacity=2, cache_path=str(tmp_path / "dict"))
+    storage.set(slice(None), {"a": np.ones((2, 2), np.float32), "b": np.array([1.0, 2.0], np.float32)})
+    column = storage.get_column(["b"])
+    del storage
+    gc.collect()
+    np.testing.assert_array_equal(column.get(slice(None)), np.array([1.0, 2.0], np.float32))
+    column.close()

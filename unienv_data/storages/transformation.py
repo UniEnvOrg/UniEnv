@@ -237,4 +237,12 @@ class TransformedStorage(SpaceStorage[
             json.dump(metadata, f)
 
     def close(self):
+        inner_storage = getattr(self, "inner_storage", None)
+        self.inner_storage = None
+        if inner_storage is not None:
+            inner_storage.close()
+
+    def __del__(self):
+        # Only drop the reference on garbage collection; the inner storage
+        # closes itself once it is no longer referenced anywhere else.
         self.inner_storage = None

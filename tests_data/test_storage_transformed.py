@@ -62,3 +62,25 @@ def test_set_flattened_batched_round_trip(dict_storage):
 
     dict_storage.set_flattened(3, np.array([7.0, 8.0, 9.0], dtype=np.float32))
     np.testing.assert_array_equal(dict_storage.get_flattened(3), np.array([7.0, 8.0, 9.0], dtype=np.float32))
+
+
+def test_close_closes_inner_storage(dict_storage):
+    inner = dict_storage.inner_storage
+    assert inner.root is not None
+    dict_storage.close()
+    assert inner.root is None
+
+
+def test_to_backend_storage_close_closes_inner_storage(tmp_path):
+    import torch
+    from unienv_data.storages.backend_compat import ToBackendOrDeviceStorage
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+
+    space = BoxSpace(PyTorchComputeBackend, -1.0, 1.0, torch.float32, shape=(2,), device="cpu")
+    storage = ToBackendOrDeviceStorage.create(
+        space, HDF5Storage, capacity=2, cache_path=str(tmp_path / "to_numpy"), backend=NumpyComputeBackend,
+    )
+    assert isinstance(storage, ToBackendOrDeviceStorage)
+    inner = storage.inner_storage
+    storage.close()
+    assert inner.root is None

@@ -443,4 +443,12 @@ class DictStorage(SpaceStorage[
             json.dump(metadata, f)
 
     def close(self):
+        storage_map = getattr(self, "storage_map", {})
+        self.storage_map = {}
+        for storage in storage_map.values():
+            storage.close()
+
+    def __del__(self):
+        # Only drop the references on garbage collection: children may still be
+        # in use through `get_column` views and close themselves once collected.
         self.storage_map = {}
