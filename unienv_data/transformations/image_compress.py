@@ -114,10 +114,13 @@ class ImageCompressTransformation(DataTransformation):
         Args:
             img_array: np.ndarray, uint8, shape (H, W, 3) RGB or (H, W, 1) grayscale
             max_bytes: maximum allowed size of JPEG file
-            min_quality: minimum JPEG quality before giving up
+            min_quality: minimum JPEG quality before giving up (capped at ``init_quality``)
 
         Returns:
             jpeg_bytes (bytes), final_quality (int)
+
+        Raises:
+            ValueError: if the image does not fit in ``max_bytes`` even at ``min_quality``.
         """
         # Handle grayscale (H, W, 1) → (H, W)
         if img_array.ndim == 3 and img_array.shape[-1] == 1:
@@ -127,17 +130,24 @@ class ImageCompressTransformation(DataTransformation):
         img = Image.fromarray(img_array, mode=mode)
 
         quality = self.init_quality
-        while quality >= min_quality:
-            buf = io.BytesIO()
-            img.save(buf, format=self.format, quality=quality)
-            image_bytes = buf.getvalue()
-            if len(image_bytes) <= max_bytes:
-                return image_bytes, quality
-            quality -= 10
+        min_quality = min(min_quality, quality)
+        try:
+            while True:
+                buf = io.BytesIO()
+                img.save(buf, format=self.format, quality=quality)
+                image_bytes = buf.getvalue()
+                if len(image_bytes) <= max_bytes:
+                    return image_bytes, quality
+                if quality <= min_quality:
+                    break
+                quality = max(quality - 10, min_quality)
+        finally:
+            img.close()
 
-        img.close()
-        # Return lowest quality attempt if still too large
-        return image_bytes, quality
+        raise ValueError(
+            f"Image of shape {img_array.shape} needs {len(image_bytes)} bytes as {self.format} even at quality {quality}, "
+            f"which exceeds the {max_bytes} byte budget; increase `max_size_bytes` (or lower `compression_ratio`)."
+        )
     
     def transform(self, source_space, data):
         self.validate_source_space(source_space)
