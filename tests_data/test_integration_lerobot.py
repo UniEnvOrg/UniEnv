@@ -248,3 +248,46 @@ def test_torch_backend_with_video(tmp_path):
     assert _state_ids(batch) == PICKS.tolist()
     _assert_frames(batch[IMAGE_KEY], PICKS)
     assert ds.single_space.contains(ds.get_at(3))
+
+
+# ---------- caching of data files and video readers ----------
+
+def _count_parquet_reads(monkeypatch):
+    import unienv_data.integrations.lerobot as lerobot_module
+    reads = []
+    real = lerobot_module.pq.read_table
+
+    def read_table(path, *args, **kwargs):
+        reads.append((str(path), kwargs.get("columns")))
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(lerobot_module.pq, "read_table", read_table)
+    return reads
+
+
+def test_v3_episodes_of_one_data_file_share_one_projected_read(tmp_path, monkeypatch):
+    # Episodes packed into one v3 data file used to re-read (and re-materialize) the whole
+    # file, every column included, once per episode.
+    path = write_v3(tmp_path, data_files=[[0, 1], [2]])
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB, include_features=["action"])
+    reads = _count_parquet_reads(monkeypatch)
+    batch = ds.get_at(PICKS)
+    np.testing.assert_array_equal(to_numpy(batch["action"]), np.stack([PICKS, -PICKS], -1).astype(np.float32))
+    data_reads = [r for r in reads if "/data/" in r[0]]
+    assert len(data_reads) == 2  # one per data file, not one per episode
+    assert all(sorted(cols) == ["action", "index"] for _, cols in data_reads)
+    # Episodes evicted from the episode LRU are served from the file cache.
+    ds._parquet_cache.clear()
+    assert to_numpy(ds.get_at(np.array([1, 3]))["action"])[:, 0].tolist() == [1.0, 3.0]
+    assert len([r for r in reads if "/data/" in r[0]]) == 2
+
+
+def test_parquet_file_cache_is_bounded(tmp_path):
+    ds = LeRobotAsUniEnvDataset.from_local(str(write_v2(tmp_path, with_video=False)), backend=NB)
+    ds._parquet_cache_max = 2
+    for e in range(3):
+        assert _state_ids(ds.get_episode(e)) == list(range(STARTS[e], STARTS[e] + EPISODE_LENGTHS[e]))
+    assert len(ds._parquet_file_cache) == 2
+    # The episode entry of the evicted file went with it.
+    assert list(ds._parquet_cache.keys()) == [1, 2]
+    ds.close()
+    assert len(ds._parquet_file_cache) == 0

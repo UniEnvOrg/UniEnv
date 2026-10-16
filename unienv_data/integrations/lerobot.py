@@ -291,7 +291,11 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         ] if decode_video else []
 
         # Simple Parquet cache: episode_index -> {col_name: np.ndarray | torch.Tensor}
+        # (the columns of the episode's whole data file, shared with `_parquet_file_cache`)
         self._parquet_cache: OrderedDict[int, Dict[str, Any]] = OrderedDict()
+        # Data file path -> its materialized tabular columns (LRU). v3.0 packs many episodes
+        # into one file; they share one read instead of one read per episode.
+        self._parquet_file_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         # Data file path -> global frame index of its first row (None if the file has no "index" column)
         self._data_file_first_index: Dict[str, Optional[int]] = {}
         # v3.0: episode_index -> video feature -> (chunk_index, file_index, from_timestamp, to_timestamp)
@@ -514,7 +518,26 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             file_index=ep_meta.data_file_index,
             chunk_index=ep_meta.data_chunk_index,
         )
-        table = pq.read_table(path, memory_map=True)
+        data = self._load_parquet_file(path)
+
+        # LRU eviction
+        if len(self._parquet_cache) >= self._parquet_cache_max:
+            self._parquet_cache.popitem(last=False)
+        self._parquet_cache[episode_index] = data
+
+        return data
+
+    def _load_parquet_file(self, path: str) -> Dict[str, Any]:
+        """Materialized tabular columns of a whole data file (cached per file, LRU)."""
+        data = self._parquet_file_cache.get(path)
+        if data is not None:
+            self._parquet_file_cache.move_to_end(path)
+            return data
+
+        # Only read the active tabular columns (plus "index", for the file's row offset).
+        wanted = set(self._tabular_features) | {"index"}
+        columns = [name for name in pq.read_schema(path).names if name in wanted]
+        table = pq.read_table(path, memory_map=True, columns=columns)
         if path not in self._data_file_first_index:
             self._data_file_first_index[path] = (
                 int(table.column("index")[0].as_py())
@@ -522,18 +545,19 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                 else None
             )
 
-        data: Dict[str, Any] = {}
+        data = {}
         for col_name in table.column_names:
             if col_name not in self._tabular_features:
                 continue
             feat_shape = self._schema.features[col_name].shape
             data[col_name] = self._materialize_tabular_column(table.column(col_name), feat_shape)
 
-        # LRU eviction
-        if len(self._parquet_cache) >= self._parquet_cache_max:
-            self._parquet_cache.popitem(last=False)
-        self._parquet_cache[episode_index] = data
-
+        if len(self._parquet_file_cache) >= self._parquet_cache_max:
+            _, evicted = self._parquet_file_cache.popitem(last=False)
+            # Keep at most `_parquet_cache_max` files alive: drop the episodes still holding it.
+            for ep in [ep for ep, cached in self._parquet_cache.items() if cached is evicted]:
+                del self._parquet_cache[ep]
+        self._parquet_file_cache[path] = data
         return data
 
     def _episode_row_offset(self, episode_index: int) -> int:
@@ -654,3 +678,4 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
 
     def close(self) -> None:
         self._parquet_cache.clear()
+        self._parquet_file_cache.clear()
