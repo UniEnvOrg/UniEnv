@@ -1,21 +1,32 @@
-"""Extra stub environments built on top of :mod:`tests_common.envs`."""
+"""Extra stub environments built on top of :mod:`tests_common.envs`.
+
+The shared stubs turn the unbatched ``steps`` counter into a numpy scalar on
+``step``, after which their own ``reset`` cannot assign into it (so an
+unbatched stub cannot be reset after stepping). The ``ArraySteps*`` variants
+keep it a 0-d array; use them whenever a test resets an unbatched stub after
+stepping it.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict
 
 import numpy as np
 
-from tests_common.envs import StubFuncEnv
+from tests_common.envs import StubEnv, StubFuncEnv
+
+
+class ArrayStepsStubEnv(StubEnv):
+    """:class:`StubEnv` that can be reset after stepping when unbatched."""
+
+    def step(self, action: np.ndarray):
+        out = super().step(action)
+        self.steps = np.asarray(self.steps)
+        return out
 
 
 class ArrayStepsStubFuncEnv(StubFuncEnv):
-    """:class:`StubFuncEnv` whose unbatched ``steps`` state stays a 0-d array after ``step``.
-
-    The shared stub turns ``steps`` into a numpy scalar on unbatched ``step``,
-    which its own ``reset`` then cannot assign into; this keeps it an array so
-    unbatched step -> reset sequences work.
-    """
+    """:class:`StubFuncEnv` that can be reset after stepping when unbatched."""
 
     def step(self, state: Dict[str, np.ndarray], action: np.ndarray):
         out = super().step(state, action)
