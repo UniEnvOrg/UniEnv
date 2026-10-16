@@ -56,7 +56,8 @@ class Codec:
                     return value
                 return {"t": "float", "v": "nan" if math.isnan(value) else ("inf" if value > 0 else "-inf")}
             if isinstance(value, np.generic):
-                return encode_value(np.asarray(value), depth + 1)
+                # Encoded as a 0-d array at the same depth (the decoder has no extra level)
+                return encode_value(np.asarray(value), depth)
             if isinstance(value, GraphInstance):
                 return {"t": "graph", "v": encode_value({k: getattr(value, k) for k in _GRAPH_FIELDS}, depth + 1)}
             if isinstance(value, np.ndarray) and value.dtype == object:
@@ -143,8 +144,13 @@ class Codec:
                 values = [decode_value(v, depth + 1) for v in node["v"]]
                 return tuple(values) if kind == "tuple" else values
             if kind == "dict":
+                if not isinstance(node["v"], list):
+                    raise CodecError("Invalid dictionary")
                 result = {}
-                for key, value in node["v"]:
+                for pair in node["v"]:
+                    if not isinstance(pair, list) or len(pair) != 2:
+                        raise CodecError("Invalid dictionary entry")
+                    key, value = pair
                     if not isinstance(key, str) or key in result:
                         raise CodecError("Invalid or duplicate dictionary key")
                     result[key] = decode_value(value, depth + 1)
@@ -158,6 +164,8 @@ class Codec:
             data = binary[start:offset]
             if kind == "bytes":
                 return bytes(data)
+            if not isinstance(node["dtype"], str):
+                raise CodecError("Invalid array dtype")
             dtype = np.dtype(node["dtype"])
             shape = node["shape"]
             if not _valid_dtype(dtype):
