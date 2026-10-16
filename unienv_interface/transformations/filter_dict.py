@@ -174,10 +174,21 @@ class DictExcludeKeyTransformation(DataTransformation):
         self._chained_keys : List[List[str]] = []
         for key in excluded_keys:
             self._chained_keys.append(key.split(self.nested_separator))
+
+    def _effective_chained_keys(self) -> List[List[str]]:
+        # A key below an excluded key is already removed with its parent; processing it
+        # after the parent (the set order is arbitrary) would report it as missing.
+        return [
+            chained_key for chained_key in self._chained_keys
+            if not any(
+                len(other) < len(chained_key) and chained_key[:len(other)] == other
+                for other in self._chained_keys
+            )
+        ]
         
     def get_target_space_from_source(self, source_space):
         new_space = source_space
-        for chained_key in self._chained_keys:
+        for chained_key in self._effective_chained_keys():
             try:
                 new_space = exclude_chained_key_in_dict(
                     new_space,
@@ -190,7 +201,7 @@ class DictExcludeKeyTransformation(DataTransformation):
     
     def transform(self, source_space, data):
         new_data = data
-        for chained_key in self._chained_keys:
+        for chained_key in self._effective_chained_keys():
             try:
                 new_data = exclude_chained_key_in_dict(
                     new_data,

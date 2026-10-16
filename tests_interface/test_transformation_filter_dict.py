@@ -77,3 +77,16 @@ def test_missing_keys(cls, arg):
     restored = json_to_transformation(transformation_to_json(t))
     assert isinstance(restored, cls) and restored.ignore_missing_keys
     assert restored.get_target_space_from_source(space) == target
+
+
+@pytest.mark.parametrize("keys", [["a", "a/x"], ["a/x", "a"], ["a/n", "a/n/p", "a"]])
+def test_exclude_parent_and_child_keys_in_any_order(keys):
+    # enabled/excluded keys are stored in a set, so the processing order must not matter
+    space = _space()
+    t = DictExcludeKeyTransformation(keys)
+    for chained in itertools.permutations(t._chained_keys):
+        t._chained_keys = list(chained)
+        target = t.get_target_space_from_source(space)
+        assert "a" not in target.keys() if "a" in keys else True
+        _, data = space.sample(B.random.random_number_generator(0))
+        assert target.contains(t.transform(space, data))
