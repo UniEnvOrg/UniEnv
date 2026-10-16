@@ -37,6 +37,9 @@ Calibration:
 - The `calibration` extra now requires `opencv-contrib-python>=4.7,<5`: OpenCV 5.0's Python bindings no longer provide `cv2.calibrateHandEye`, so `solve_hand_to_base` raises a clear `ImportError` there instead of an `AttributeError`.
 
 Storages, replay buffer and batches:
+- New `ReplayBuffer.open_segment_writer()` / `commit_segment()`: build several segments at once (e.g. one per env of a batched rollout) and append each at the tail as `extend()` would. `VideoStorage` writers encode frames as they arrive instead of staging them; other storages buffer in memory by default.
+- `VideoStorage` takes `encoder_options` (passed to the encoder, persisted in the metadata).
+- `VideoStorage` encodes 1-2 frame libx265 clips without B-frames: x265 derived their dts from uninitialised memory, so muxing intermittently failed with "pts/dts pair unsupported".
 - Fixed `ReplayBuffer.get_flattened_at*` ignoring the ring-buffer offset after wrap-around.
 - `HDF5Storage`: h5py kwargs, compression/chunks for non-dict spaces, unbounded creation, `dumps` to another path, column views (incl. closing the parent file), negative/empty index arrays.
 - `DictStorage` custom `nested_separator` and nested `*` keys; `TransformedStorage` flattened accessors; `ParquetStorage` boolean masks; string columns in raw HDF5/Parquet loaders; empty selections return empty batches; `create`/`load_from` honour subclasses; memory-mapped tensor views pickle correctly.

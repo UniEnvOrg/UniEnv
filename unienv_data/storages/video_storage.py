@@ -953,6 +953,9 @@ class _VideoSegmentWriter(SegmentWriter):
         self._container = None
         self._stream = None
         self._held_frames : List[np.ndarray] = []
+        if storage._min_clip_length_for_default_options <= 1:
+            # Nothing to hold back: open now, so a bad codec / format fails right away.
+            self._open_encoder(None)
 
     def _append(self, frame) -> None:
         storage = self.storage
