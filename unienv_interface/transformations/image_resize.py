@@ -44,7 +44,9 @@ class ImageResizeTransformation(DataTransformation):
             new_high,
             dtype=source_space.dtype,
             device=source_space.device,
-            shape=new_shape
+            shape=new_shape,
+            # Still the same image (kind, format, layout, source), only smaller
+            metadata=source_space.metadata,
         )
 
     def transform(self, source_space, data):

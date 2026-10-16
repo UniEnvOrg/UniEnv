@@ -63,6 +63,7 @@ class CropTransformation(DataTransformation):
             shape=source_space.shape,
             dtype=source_space.dtype,
             device=source_space.device,
+            metadata=source_space.metadata,
         )
 
     def transform(self, source_space, data):

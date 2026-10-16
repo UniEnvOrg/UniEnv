@@ -129,11 +129,11 @@ class LeafwiseTransformation(DataTransformation):
                 assert isinstance(space, DictSpace), f"Expected a DictSpace, got {type(space)}"
                 rsts = {key: build(sub_structure, space[key]) for key, sub_structure in structure.items()}
                 first = next(iter(rsts.values()), space)
-                return DictSpace(first.backend, rsts, device=first.device)
+                return DictSpace(first.backend, rsts, device=first.device, metadata=space.metadata)
             assert isinstance(space, TupleSpace), f"Expected a TupleSpace, got {type(space)}"
             rsts = tuple(build(sub_structure, space[i]) for i, sub_structure in enumerate(structure))
             first = rsts[0] if len(rsts) > 0 else space
-            return TupleSpace(first.backend, rsts, device=first.device)
+            return TupleSpace(first.backend, rsts, device=first.device, metadata=space.metadata)
         return build(self.transformations, source_space)
 
     def transform(self, source_space, data):
@@ -224,7 +224,8 @@ class IterativeTransformation(DataTransformation):
             return DictSpace(
                 backend,
                 rsts,
-                device=device
+                device=device,
+                metadata=source_space.metadata,
             )
         elif isinstance(source_space, TupleSpace):
             rsts = tuple(
@@ -236,7 +237,8 @@ class IterativeTransformation(DataTransformation):
             return TupleSpace(
                 backend,
                 rsts,
-                device=device
+                device=device,
+                metadata=source_space.metadata,
             )
         else:
             raise ValueError(f"Unsupported space type: {type(source_space)}")

@@ -85,10 +85,13 @@ class FlattenDictTransformation(DataTransformation):
     ) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
         if not isinstance(source_space, DictSpace):
             raise ValueError("Source space must be a DictSpace")
+        # Leaves keep their metadata and the outer dict keeps its own; the metadata of the
+        # inner dicts that get flattened away is dropped.
         return DictSpace(
             source_space.backend,
             flatten_nested_mapping(source_space.spaces, self.nested_separator),
             device=source_space.device,
+            metadata=source_space.metadata,
         )
 
     def transform(
@@ -142,10 +145,12 @@ class UnflattenDictTransformation(DataTransformation):
     ) -> DictSpace[BDeviceType, BDtypeType, BRNGType]:
         if not isinstance(source_space, DictSpace):
             raise ValueError("Source space must be a DictSpace")
+        # Leaves and the outer dict keep their metadata; the re-created inner dicts have none.
         return DictSpace(
             source_space.backend,
             unflatten_mapping(source_space.spaces, self.nested_separator),
             device=source_space.device,
+            metadata=source_space.metadata,
         )
 
     def transform(

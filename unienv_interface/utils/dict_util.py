@@ -33,7 +33,8 @@ def flatten_keys_in_mapping(
         result = DictSpace(
             d.backend,
             result,
-            d.device
+            d.device,
+            metadata=d.metadata,
         )
     return result
 
@@ -67,7 +68,8 @@ def unflatten_keys_in_mapping(
         result = DictSpace(
             d.backend,
             result,
-            d.device
+            d.device,
+            metadata=d.metadata,
         )
     return result
 
