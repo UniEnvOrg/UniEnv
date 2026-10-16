@@ -252,3 +252,82 @@ def test_episode_video_wrapper_keeps_single_frame_behavior(tmp_path):
     written_path = tmp_path / "episode_0_step_0.mp4"
     assert written_path.exists()
     assert written_path.stat().st_size > 0
+
+
+# ---------------------------------------------------------------------------
+# Behaviour over the shared StubEnv
+# ---------------------------------------------------------------------------
+from tests_common.envs import StubEnv  # noqa: E402
+
+
+class CountingRenderStackWrapper(EpisodeRenderStackWrapper):
+    def __init__(self, env, **kwargs):
+        super().__init__(env, **kwargs)
+        self.posted_episodes = []
+
+    def _post_episode(self) -> None:
+        self.posted_episodes.append(self._episode_frame_count())
+
+
+def test_render_stack_forwards_reset_mask():
+    env = StubEnv(batch_size=2)
+    wrapper = EpisodeRenderStackWrapper(env, rendered_index=0)
+    wrapper.reset(seed=0)
+    wrapper.step(np.zeros((2, 2), np.float32))
+    position_before = env.position.copy()
+    _, obs, _ = wrapper.reset(mask=np.array([False, True]), seed=3)
+    np.testing.assert_array_equal(env.reset_calls[-1]["mask"], [False, True])
+    assert obs["position"].shape == (1, 2)
+    np.testing.assert_array_equal(env.position[0], position_before[0])
+
+
+def test_close_does_not_post_an_already_posted_episode():
+    env = StubEnv(terminate_above=-10.0)  # terminates on the first step
+    wrapper = CountingRenderStackWrapper(env)
+    wrapper.reset(seed=0)
+    _, _, terminated, _, _ = wrapper.step(np.zeros(2, np.float32))
+    assert terminated
+    assert wrapper.posted_episodes == [2]
+    wrapper.close()
+    assert wrapper.posted_episodes == [2]
+    assert env.closed == 1
+
+
+def test_close_flushes_an_unfinished_episode():
+    env = StubEnv()
+    wrapper = CountingRenderStackWrapper(env)
+    wrapper.reset(seed=0)
+    wrapper.step(np.zeros(2, np.float32))
+    wrapper.close()
+    assert wrapper.posted_episodes == [2]
+
+
+def test_render_returns_cached_step_frame():
+    env = StubEnv()
+    wrapper = EpisodeRenderStackWrapper(env)
+    wrapper.reset(seed=0)
+    frame = wrapper.render()
+    assert frame is wrapper.render()
+    assert frame.shape == (4, 6, 3)
+    assert len(wrapper.episodic_frames) == 1
+
+
+@pytest.mark.slow
+def test_episode_video_wrapper_close_writes_each_episode_once(tmp_path, monkeypatch):
+    import moviepy.video.io.ImageSequenceClip as isc
+
+    env = StubEnv(terminate_above=-10.0)
+    wrapper = EpisodeVideoWrapper(env, store_dir=tmp_path / "videos", format="mp4")
+    written = []
+    original_write = isc.ImageSequenceClip.write_videofile
+
+    def counting_write(self, path, *args, **kwargs):
+        written.append(path)
+        return original_write(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(isc.ImageSequenceClip, "write_videofile", counting_write)
+    wrapper.reset(seed=0)
+    wrapper.step(np.zeros(2, np.float32))
+    wrapper.close()
+    assert len(written) == 1
+    assert (tmp_path / "videos" / "episode_0_step_0.mp4").exists()

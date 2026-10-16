@@ -229,7 +229,7 @@ class EpisodeRenderStackWrapper(
             self._has_post_episode = False
             self.video_episode_start_step = self.video_step_num
         
-        ret = self.env.reset(*args, seed=seed, **kwargs)
+        ret = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
         self._post_step_render()
         return ret
     
@@ -241,7 +241,9 @@ class EpisodeRenderStackWrapper(
         return self._step_frame
     
     def close(self):
-        self._post_episode()
+        if not self._has_post_episode:
+            self._post_episode()
+            self._has_post_episode = True
         super().close()
 
 class EpisodeVideoWrapper(
