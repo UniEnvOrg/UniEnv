@@ -142,3 +142,60 @@ def test_dumps_column_view_onto_its_own_file_is_rejected(nested_storage):
     with pytest.raises(ValueError):
         view.dumps(nested_storage.cache_filename)
     assert_tree_equal(nested_storage.get(slice(None)), _nested_batch(4))
+
+
+@pytest.mark.parametrize("keys", [["reward"], ["obs", "pos"]], ids=["top-leaf", "nested-leaf"])
+def test_leaf_column_view_reads_and_writes_parent(nested_storage, keys):
+    view = nested_storage.get_column(keys)
+    expected = _nested_batch(4)
+    for key in keys:
+        expected = expected[key]
+    assert len(view) == 4 and view.capacity == 4
+    np.testing.assert_array_equal(view.get(slice(None)), expected)
+    np.testing.assert_array_equal(view.get(2), expected[2])
+    new_value = np.full_like(expected[1], 42.0)
+    view.set(1, new_value)
+    parent_value = nested_storage.get(1)
+    for key in keys:
+        parent_value = parent_value[key]
+    np.testing.assert_array_equal(parent_value, new_value)
+
+
+def test_leaf_column_view_dumps_as_standalone_storage(tmp_path, nested_storage):
+    view = nested_storage.get_column(["obs", "vel"])
+    target = str(tmp_path / "vel.hdf5")
+    view.dumps(target)
+    loaded = HDF5Storage.load_from(target, _box((1,)), capacity=4)
+    np.testing.assert_array_equal(loaded.get(slice(None)), _nested_batch(4)["obs"]["vel"])
+    loaded.close()
+
+
+@pytest.mark.parametrize("how", ["close", "gc"])
+def test_releasing_column_view_keeps_parent_file_open(nested_storage, how):
+    view = nested_storage.get_column(["obs"])
+    view.get(0)
+    if how == "close":
+        view.close()
+    else:
+        del view
+        gc.collect()
+    assert_tree_equal(nested_storage.get(slice(None)), _nested_batch(4))
+    nested_storage.set(0, {"obs": {"pos": np.ones(2, np.float32), "vel": np.ones(1, np.float32)}, "reward": np.float32(5.0)})
+    assert nested_storage.get(0)["reward"] == 5.0
+
+
+def test_column_view_of_lazily_opened_storage_owns_its_handle(tmp_path, nested_storage):
+    import pickle
+
+    path = nested_storage.cache_filename
+    nested_storage.dumps(path)
+    reader = HDF5Storage.load_from(path, _nested_space(), capacity=4, read_only=True)
+    clone = pickle.loads(pickle.dumps(reader))
+    assert clone.root is None  # opened lazily
+    view = clone.get_column(["reward"])
+    np.testing.assert_array_equal(view.get(slice(None)), _nested_batch(4)["reward"])
+    view.close()
+    assert view.root is None
+    assert_tree_equal(reader.get(slice(None)), _nested_batch(4))
+    clone.close()
+    reader.close()

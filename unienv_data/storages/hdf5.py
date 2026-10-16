@@ -382,6 +382,8 @@ class HDF5Storage(SpaceStorage[
         root : h5py.Group,
         function : Callable[[h5py.Dataset], Any],
     ) -> Any:
+        if isinstance(root, h5py.Dataset):
+            return function(root)
         groups = []
         for key, item in root.items():
             if isinstance(item, h5py.Dataset):
@@ -400,6 +402,9 @@ class HDF5Storage(SpaceStorage[
         root : h5py.Group,
         function : Callable[[h5py.Dataset], None],
     ) -> None:
+        if isinstance(root, h5py.Dataset):
+            function(root)
+            return
         for key, item in root.items():
             if isinstance(item, h5py.Dataset):
                 function(item)
@@ -569,6 +574,7 @@ class HDF5Storage(SpaceStorage[
         full_name : Optional[str] = None,
         h5py_kwargs : Optional[Dict[str, Any]] = None,
         length : Optional[int] = None,
+        owns_root : bool = True,
     ):
         assert root is not None or filename is not None, \
             "Either root or filename must be provided"
@@ -588,6 +594,9 @@ class HDF5Storage(SpaceStorage[
             1
         )
         self.root = root
+        # Column views share their parent's open file and must not close it;
+        # a handle this instance opens itself (see `_ensure_root`) is always owned.
+        self._owns_root = owns_root
         self.capacity = capacity
         self._multiprocessing = multiprocessing
         self._h5py_kwargs = dict(h5py_kwargs or {})
@@ -642,6 +651,7 @@ class HDF5Storage(SpaceStorage[
             if self._full_name is not None:
                 root = root[self._full_name]
             self.root = root
+            self._owns_root = True
         return self.root
 
     def extend_length(self, length):
@@ -739,6 +749,7 @@ class HDF5Storage(SpaceStorage[
             full_name=sub_full_name,
             h5py_kwargs=self._h5py_kwargs,
             length=self._len,
+            owns_root=sub_root is None,
         )
 
     def dumps(self, path):
@@ -765,14 +776,16 @@ class HDF5Storage(SpaceStorage[
 
     def close(self):
         root = getattr(self, "root", None)
+        self.root = None
+        if root is None or not getattr(self, "_owns_root", True):
+            return
         try:
             if isinstance(root, h5py.File):
                 root.close()
-            elif root is not None:
+            else:
                 root.file.close()
         except Exception:
             pass
-        self.root = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
