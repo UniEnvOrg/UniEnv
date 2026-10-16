@@ -699,6 +699,57 @@ def _unbatch_spaces_batched(space: BatchedSpace):
     for i in range(space.batch_shape[0]):
         yield unbatched_space
 
+def _index_array(backend: ComputeBackend, array: BArrayType, index: ArrayAPIGetIndex) -> BArrayType:
+    """``array[index]``, keeping 0-d results as arrays (numpy returns scalars for them)."""
+    result = array[index]
+    if not backend.is_backendarray(result):
+        result = backend.asarray(result)
+    return result
+
+def _graph_pad_value(space: GraphSpace, feature_space: Optional[BoxSpace], array: BArrayType, pad_shape: tuple) -> BArrayType:
+    """Padding for graph features: 0 clipped into the feature bounds (so batches stay in the space)."""
+    pad = space.backend.zeros(pad_shape, dtype=array.dtype, device=space.backend.device(array))
+    if feature_space is not None:
+        pad = space.backend.clip(pad, feature_space._low, feature_space._high)
+    return pad
+
+def _graph_pad_axis(
+    space: GraphSpace, array: Optional[BArrayType], axis: int, size: int, feature_space: Optional[BoxSpace] = None
+) -> Optional[BArrayType]:
+    """Pad ``array`` along ``axis`` (the node or edge axis) up to ``size`` entries."""
+    if array is None or array.shape[axis] >= size:
+        return array
+    pad_shape = tuple(array.shape[:axis]) + (size - array.shape[axis],) + tuple(array.shape[axis + 1:])
+    return space.backend.concat([array, _graph_pad_value(space, feature_space, array, pad_shape)], axis=axis)
+
+def _graph_trim_axis(array: Optional[BArrayType], axis: int, size: int) -> Optional[BArrayType]:
+    if array is None or array.shape[axis] <= size:
+        return array
+    return array[(slice(None),) * axis + (slice(0, size),)]
+
+def _graph_padded_like(space: GraphSpace, items: GraphInstance, nodes: int, edges: int) -> GraphInstance:
+    """Pad the node/edge axes of a (possibly batched) instance to ``nodes``/``edges`` entries."""
+    node_axis = len(items.n_nodes.shape)
+    edge_axis = len(items.n_edges.shape) if items.n_edges is not None else node_axis
+    return GraphInstance(
+        n_nodes=items.n_nodes,
+        n_edges=items.n_edges,
+        nodes_features=_graph_pad_axis(space, items.nodes_features, node_axis, nodes, space.node_feature_space),
+        edges_features=_graph_pad_axis(space, items.edges_features, edge_axis, edges, space.edge_feature_space),
+        edges=_graph_pad_axis(space, items.edges, edge_axis, edges),
+    )
+
+def _graph_axis_sizes(items: GraphInstance) -> typing.Tuple[int, int]:
+    node_axis = len(items.n_nodes.shape)
+    edge_axis = len(items.n_edges.shape) if items.n_edges is not None else node_axis
+    nodes = max(
+        [items.nodes_features.shape[node_axis]] if items.nodes_features is not None else [0]
+    )
+    edges = max(
+        [a.shape[edge_axis] for a in (items.edges, items.edges_features) if a is not None] or [0]
+    )
+    return nodes, edges
+
 def iterate(space: Space, items: Any) -> Iterator:
     for i in range(batch_size_data(items)):
         yield get_at(space, items, i)
@@ -713,16 +764,29 @@ def get_at(space: Space, items: Any, index: ArrayAPIGetIndex) -> Any:
 @get_at.register(BinarySpace)
 @get_at.register(DynamicBoxSpace)
 def _get_at_common(space: typing.Union[BoxSpace, BinarySpace, DynamicBoxSpace], items: BArrayType, index: ArrayAPIGetIndex):
-    return items[index]
+    return _index_array(space.backend, items, index)
 
 @get_at.register(GraphSpace)
 def _get_at_graph(space: GraphSpace, items: GraphInstance, index: ArrayAPIGetIndex):
+    n_nodes = _index_array(space.backend, items.n_nodes, index)
+    n_edges = _index_array(space.backend, items.n_edges, index) if items.n_edges is not None else None
+    # Batches are padded to the largest graph; drop the padding the selection no longer needs
+    node_axis = len(n_nodes.shape)
+    max_nodes = int(space.backend.max(n_nodes)) if int(np.prod(n_nodes.shape)) > 0 else 0
+    nodes_features = None if items.nodes_features is None else _graph_trim_axis(items.nodes_features[index], node_axis, max_nodes)
+    edges_features = None if items.edges_features is None else items.edges_features[index]
+    edges = None if items.edges is None else items.edges[index]
+    if n_edges is not None:
+        edge_axis = len(n_edges.shape)
+        max_edges = int(space.backend.max(n_edges)) if int(np.prod(n_edges.shape)) > 0 else 0
+        edges_features = _graph_trim_axis(edges_features, edge_axis, max_edges)
+        edges = _graph_trim_axis(edges, edge_axis, max_edges)
     return GraphInstance(
-        n_nodes=items.n_nodes[index],
-        n_edges=items.n_edges[index] if items.n_edges is not None else None,
-        nodes_features=items.nodes_features[index] if items.nodes_features is not None else None,
-        edges_features=items.edges_features[index] if items.edges_features is not None else None,
-        edges=items.edges[index] if items.edges is not None else None,
+        n_nodes=n_nodes,
+        n_edges=n_edges,
+        nodes_features=nodes_features,
+        edges_features=edges_features,
+        edges=edges,
     )
 
 @get_at.register(DictSpace)
@@ -778,7 +842,12 @@ def _set_at_graph(
     index: ArrayAPISetIndex,
     value: GraphInstance,
 ) -> GraphInstance:
-    return GraphInstance(
+    # Bring the batch and the value to a common node/edge padding before assigning
+    items_nodes, items_edges = _graph_axis_sizes(items)
+    value_nodes, value_edges = _graph_axis_sizes(value)
+    items = _graph_padded_like(space, items, max(items_nodes, value_nodes), max(items_edges, value_edges))
+    value = _graph_padded_like(space, value, max(items_nodes, value_nodes), max(items_edges, value_edges))
+    result = GraphInstance(
         n_nodes=space.backend.at(items.n_nodes)[index].set(value.n_nodes),
         n_edges=(
             space.backend.at(items.n_edges)[index].set(value.n_edges)
@@ -801,6 +870,8 @@ def _set_at_graph(
             else None
         ),
     )
+    # Drop padding that is no longer needed (e.g. the largest graph was replaced)
+    return _get_at_graph(space, result, ...)
 
 @set_at.register(DictSpace)
 def _set_at_dict(
@@ -891,6 +962,12 @@ def _concatenate_dynamic_box(
 def _concatenate_graph(
     space: GraphSpace, items: Iterable[GraphInstance], axis: int = 0
 ) -> GraphInstance:
+    # Graphs of different sizes are padded to the largest one (batched GraphInstance layout)
+    items = list(items)
+    sizes = [_graph_axis_sizes(item) for item in items]
+    max_nodes = max((n for n, _ in sizes), default=0)
+    max_edges = max((e for _, e in sizes), default=0)
+    items = [_graph_padded_like(space, item, max_nodes, max_edges) for item in items]
     n_nodes = space.backend.stack([item.n_nodes for item in items], axis=axis)
     n_edges = (
         space.backend.stack([item.n_edges for item in items], axis=axis)

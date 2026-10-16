@@ -132,3 +132,13 @@ def test_batch_size():
     assert sbu.batch_size(DictSpace(B, {"a": BinarySpace(B, (4,))})) == 4
     graph = GraphSpace(B, BoxSpace(B, 0.0, 1.0, np.float32, shape=(1,)), max_nodes=3, batch_shape=(2,))
     assert sbu.batch_size(graph) == 2
+
+
+def test_get_at_keeps_zero_dim_arrays():
+    for single in (BoxSpace(B, 0.0, 1.0, np.float32, shape=()), BinarySpace(B, ())):
+        batched = sbu.batch_space(single, 3)
+        _, x = batched.sample(_rng())
+        for i, item in enumerate(sbu.iterate(batched, x)):
+            assert isinstance(item, np.ndarray) and item.shape == ()
+            assert single.contains(item)
+            assert single.contains(sbu.get_at(batched, x, i))

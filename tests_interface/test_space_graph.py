@@ -138,3 +138,51 @@ def test_single_node_graph_without_edges():
     # With edges, a single node cannot hold the required edge (self-loops excluded)
     with pytest.raises(AssertionError):
         GraphSpace(B, _node_space(), is_edge=True, max_nodes=1)
+
+
+@pytest.mark.parametrize("is_edge", [False, True])
+def test_batching_graphs_of_different_sizes(is_edge):
+    from unienv_interface.space.space_utils import batch_utils as sbu
+    # Node features bounded away from 0, so zero padding would be detected
+    space = GraphSpace(
+        B, BoxSpace(B, 1.0, 2.0, np.float32, shape=(2,)),
+        BoxSpace(B, 3.0, 4.0, np.float32, shape=(1,)) if is_edge else None,
+        is_edge=is_edge, min_nodes=1, max_nodes=6, max_edges=8 if is_edge else None,
+    )
+    rng = _rng(4)
+    items = []
+    while len({int(i.n_nodes) for i in items}) < 2 or len(items) < 3:
+        rng, x = space.sample(rng)
+        items.append(x)
+    batched = sbu.batch_space(space, len(items))
+    batch = sbu.concatenate(space, items)
+    assert batched.contains(batch)
+    for i, x in enumerate(items):
+        got = sbu.get_at(batched, batch, i)
+        assert space.contains(got)
+        assert_tree_equal(got, x)
+    # set_at with a graph larger / smaller than the current padding
+    rng, big = GraphSpace(B, space.node_feature_space, space.edge_feature_space, is_edge=is_edge,
+                          min_nodes=6, max_nodes=6, min_edges=8 if is_edge else 1,
+                          max_edges=8 if is_edge else None).sample(rng)
+    updated = sbu.set_at(batched, batch, 0, big)
+    assert batched.contains(updated)
+    assert_tree_equal(sbu.get_at(batched, updated, 0), big)
+    assert_tree_equal(sbu.get_at(batched, updated, 1), items[1])
+    small = items[int(np.argmin([int(i.n_nodes) for i in items]))]
+    updated = sbu.set_at(batched, updated, 0, small)
+    assert batched.contains(updated)
+    assert_tree_equal(sbu.get_at(batched, updated, 0), small)
+
+
+def test_set_at_replacing_the_largest_graph_shrinks_padding():
+    from unienv_interface.space.space_utils import batch_utils as sbu
+    space = GraphSpace(B, _node_space(), max_nodes=6)
+    small = GraphInstance(n_nodes=np.array(1), nodes_features=np.zeros((1, 2)))
+    big = GraphInstance(n_nodes=np.array(6), nodes_features=np.zeros((6, 2)))
+    batched = sbu.batch_space(space, 2)
+    batch = sbu.concatenate(space, [small, big])
+    assert batch.nodes_features.shape == (2, 6, 2)
+    updated = sbu.set_at(batched, batch, 1, small)
+    assert updated.nodes_features.shape == (2, 1, 2)
+    assert batched.contains(updated)
