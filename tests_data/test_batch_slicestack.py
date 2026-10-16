@@ -192,3 +192,14 @@ def test_episode_end_mask_on_immutable_jax_arrays():
     out, meta = fs.get_at_with_metadata(jnp.array([4, 6]))
     assert_tree_equal(meta["slice_valid_mask"], np.array([[False, True], [True, True]]))
     assert_tree_equal(out["obs"][0], np.array([[8, 9], [8, 9]], dtype=np.float32))
+
+
+@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/replay_buffer/replay_buffer.py:498 "
+                   "ReplayBuffer.get_flattened_at ignores the ring offset once the buffer wraps")
+def test_flattened_framestack_over_wrapped_replay_buffer():
+    from tests_common.batch_helpers import rb_data
+    rb = make_rb(5, capacity=5)
+    rb.extend(rb_data(2, start=5))  # wraps: logical index 0 is sample 2
+    fs = FrameStackedBatch(rb, prefetch_horizon=1)
+    idx = torch.tensor([0, 3])
+    assert_tree_equal(fs.get_flattened_at(idx), sfu.flatten_data(fs._batched_space, fs.get_at(idx), start_dim=2))
