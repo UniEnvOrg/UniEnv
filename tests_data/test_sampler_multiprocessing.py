@@ -80,7 +80,8 @@ def test_epoch_iter_is_a_permutation():
     sampler = _sampler(n=50, batch=8)
     try:
         batches = list(sampler.epoch_iter())
-        assert [len(b) for b in batches] == [8] * 6 + [2]
+        # Batches arrive in completion order, so the short batch is not necessarily last.
+        assert sorted(len(b) for b in batches) == [2] + [8] * 6
         assert sorted(torch.cat(batches).tolist()) == list(range(50))
         flat = list(sampler.epoch_flat_iter())
         assert sorted(torch.cat([f.reshape(-1) for f in flat]).tolist()) == list(range(50))
