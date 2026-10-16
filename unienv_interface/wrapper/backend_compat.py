@@ -78,6 +78,32 @@ class ToBackendOrDeviceWrapper(
             backend,
             device
         )
+        self._step_device = self._resolve_step_device()
+
+    def _resolve_step_device(self) -> Optional[WrapperBDeviceT]:
+        """
+        Device passed to the per-step conversions of the inner env's outputs.
+
+        NumPy data converted to another backend lands on that backend's default device.
+        When that already is the requested device, the per-leaf ``to_device`` calls made
+        on every step are no-ops, so they are skipped (``None``). Any other setup keeps
+        the explicit device move.
+        """
+        if (
+            self._device is None
+            or self._backend is None
+            or self._backend == self.env.backend
+            or self.env.backend.simplified_name != "numpy"
+        ):
+            return self.device
+        try:
+            probe = self._backend.from_other_backend(self.env.backend, self.env.backend.zeros(1))
+            moved = self._backend.to_device(probe, self._device)
+            if self._backend.device(probe) == self._backend.device(moved):
+                return None
+        except Exception:
+            pass
+        return self.device
 
     @property
     def backend(self) -> ComputeBackend[Any, WrapperBDeviceT, Any, WrapperBRngT]:
@@ -107,20 +133,21 @@ class ToBackendOrDeviceWrapper(
             action, backend=self.env.action_space.backend, device=self.env.action_space.device
         )
         c_obs, c_reward, c_terminated, c_truncated, c_info = self.env.step(o_action)
+        step_device = self._step_device
         obs = self.env.observation_space.data_to(
-            c_obs, backend=self.backend, device=self.observation_space.device
+            c_obs, backend=self.backend, device=None if step_device is None else self.observation_space.device
         )
         reward = data_to(
-            c_reward, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+            c_reward, source_backend=self.env.backend, target_backend=self.backend, target_device=step_device
         )
         terminated = data_to(
-            c_terminated, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+            c_terminated, source_backend=self.env.backend, target_backend=self.backend, target_device=step_device
         )
         truncated = data_to(
-            c_truncated, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+            c_truncated, source_backend=self.env.backend, target_backend=self.backend, target_device=step_device
         )
         info = data_to(
-            c_info, source_backend=self.env.backend, target_backend=self.backend, target_device=self.device
+            c_info, source_backend=self.env.backend, target_backend=self.backend, target_device=step_device
         )
         return obs, reward, terminated, truncated, info
     

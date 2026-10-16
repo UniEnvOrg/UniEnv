@@ -117,3 +117,57 @@ def test_data_to_handles_nested_containers():
     out = data_to(data, NumpyComputeBackend, NumpyComputeBackend)
     assert out["b"][1] == "text" and out["b"][2] == 3 and out["d"] is None
     assert isinstance(out["c"], tuple)
+
+
+def _tree_items(tree, prefix=""):
+    if isinstance(tree, dict):
+        for key, value in tree.items():
+            yield from _tree_items(value, f"{prefix}.{key}")
+    elif isinstance(tree, (list, tuple)):
+        for i, value in enumerate(tree):
+            yield from _tree_items(value, f"{prefix}[{i}]")
+    else:
+        yield prefix, tree
+
+
+@pytest.mark.parametrize("backend,device", _non_numpy_backend_params())
+@pytest.mark.parametrize("batch_size", [None, 3])
+def test_skipping_noop_device_moves_keeps_step_outputs(backend, device, batch_size):
+    fast = ToBackendOrDeviceWrapper(StubEnv(batch_size), backend=backend, device=device)
+    slow = ToBackendOrDeviceWrapper(StubEnv(batch_size), backend=backend, device=device)
+    slow._step_device = slow.device  # always move explicitly (previous behaviour)
+    probe = backend.from_other_backend(NumpyComputeBackend, np.zeros(1))
+    lands_on_target = backend.device(probe) == backend.device(backend.to_device(probe, device))
+    assert (fast._step_device is None) == lands_on_target
+    fast.reset(seed=2)
+    slow.reset(seed=2)
+    action = backend.from_numpy(np.full(fast.action_space.shape, 0.3, np.float32), device=device)
+    for _ in range(3):
+        fast_out = fast.step(action)
+        slow_out = slow.step(action)
+        fast_items, slow_items = list(_tree_items(fast_out)), list(_tree_items(slow_out))
+        assert [k for k, _ in fast_items] == [k for k, _ in slow_items]
+        for (path, a), (_, b) in zip(fast_items, slow_items):
+            assert type(a) is type(b), path
+            if backend.is_backendarray(a):
+                assert backend.device(a) == backend.device(b), path
+                assert a.dtype == b.dtype, path
+                np.testing.assert_array_equal(to_numpy(a), to_numpy(b), err_msg=path)
+            else:
+                assert a == b, path
+        assert fast.observation_space.contains(fast_out[0])
+
+
+def test_step_device_kept_for_non_numpy_source():
+    pytest.importorskip("torch")
+    jax = pytest.importorskip("jax")
+    from unienv_interface.backends.jax import JaxComputeBackend
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+    inner = ToBackendOrDeviceWrapper(StubEnv(), backend=PyTorchComputeBackend, device="cpu")
+    jax_device = jax.devices("cpu")[0]
+    outer = ToBackendOrDeviceWrapper(inner, backend=JaxComputeBackend, device=jax_device)
+    # only numpy sources are probed; torch -> jax keeps the explicit move
+    assert outer._step_device == jax_device
+    outer.reset(seed=0)
+    obs, *_ = outer.step(JaxComputeBackend.from_numpy(np.zeros(2, np.float32)))
+    assert JaxComputeBackend.device(obs["position"]) == jax_device
