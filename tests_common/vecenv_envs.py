@@ -154,3 +154,34 @@ class ArrayEnv(Env):
 
     def close(self) -> None:
         self.closed = True
+
+
+class UnsupportedSpaceEnv(ArrayEnv):
+    """numpy :class:`ArrayEnv` whose observation (or context) space contains a
+    space that shared-memory transfer cannot handle."""
+
+    def __init__(self, kind: str, where: str = "observation") -> None:
+        super().__init__("numpy")
+        from unienv_interface.backends.numpy import NumpyComputeBackend as B
+        from unienv_interface.space import BatchedSpace, DynamicBoxSpace, GraphSpace, TextSpace, UnionSpace
+        box = BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))
+        bad = {
+            "dynamic_box": lambda: DynamicBoxSpace(B, -1.0, 1.0, shape_low=(1,), shape_high=(4,), dtype=np.float32),
+            "text": lambda: TextSpace(B, max_length=8),
+            "batched": lambda: BatchedSpace(box, batch_shape=(2,)),
+            "union": lambda: UnionSpace(B, [box, BoxSpace(B, -1.0, 1.0, np.float32, shape=(3,))]),
+            "graph": lambda: GraphSpace(B, node_feature_space=box),
+        }[kind]()
+        if where == "observation":
+            self.observation_space = DictSpace(B, {"ok": box, "bad": bad})
+        else:
+            self.context_space = bad
+
+
+class EnvVarProbeEnv(ArrayEnv):
+    """:class:`ArrayEnv` that reports ``XLA_PYTHON_CLIENT_PREALLOCATE`` as seen by the worker."""
+
+    def reset(self, *, mask=None, seed: Optional[int] = None, **kwargs):
+        context, obs, info = super().reset(mask=mask, seed=seed, **kwargs)
+        info["xla_preallocate"] = str(os.environ.get("XLA_PYTHON_CLIENT_PREALLOCATE"))
+        return context, obs, info
