@@ -105,14 +105,17 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         else:
             _high = backend.astype(high, dtype)
         
-        _low = backend.abbreviate_array(
-            _low,
-            try_cast_scalar=False
-        )
-        _high = backend.abbreviate_array(
-            _high,
-            try_cast_scalar=False
-        )
+        # Empty arrays have nothing to abbreviate (and xbarray cannot abbreviate them)
+        if 0 not in tuple(_low.shape):
+            _low = backend.abbreviate_array(
+                _low,
+                try_cast_scalar=False
+            )
+        if 0 not in tuple(_high.shape):
+            _high = backend.abbreviate_array(
+                _high,
+                try_cast_scalar=False
+            )
         
         assert backend.all(_low <= _high), f"low is greater than high: low={_low}, high={_high}"
 

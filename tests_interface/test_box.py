@@ -172,3 +172,13 @@ def test_zero_size_box(backend, device, shape):
     assert space.shape == shape and tuple(space.low.shape) == shape
     _, x = space.sample(backend.random.random_number_generator(0, device=device))
     assert tuple(x.shape) == shape and space.contains(x)
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_zero_size_box_from_array_bounds(backend, device):
+    dtype = backend.__array_namespace_info__().dtypes()["float32"]
+    low = backend.zeros((2, 0), dtype=dtype, device=device)
+    space = BoxSpace(backend, low, low + 1, dtype, device=device)
+    assert space.shape == (2, 0)
+    _, x = space.sample(backend.random.random_number_generator(0, device=device))
+    assert space.contains(x)
