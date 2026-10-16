@@ -390,3 +390,32 @@ def test_video_readers_are_not_shared_with_forked_or_unpickled_copies(tmp_path):
     assert ds._video_reader_cache[next(iter(ds._video_reader_cache))] is parent_reader
     _assert_frames(ds.get_at(PICKS)[IMAGE_KEY], PICKS)
     ds.close()
+
+
+def test_feature_spaces_carry_metadata(tmp_path):
+    ds = LeRobotAsUniEnvDataset.from_local(str(write_v2(tmp_path)), backend=NB, video_backend="pyav")
+    space = ds.single_space
+    assert space[IMAGE_KEY].metadata == {
+        "kind": "image", "format": "rgb", "layout": "HWC", "fps": FPS, "source": IMAGE_KEY,
+    }
+    assert space["observation.state"].metadata == {"kind": "proprio"}
+    assert space["action"].metadata == {"kind": "action"}
+    assert space["next.done"].metadata == {}
+    assert space["episode_index"].metadata == {}
+    # The described layout is the one actually produced
+    assert to_numpy(ds.get_at(0)[IMAGE_KEY]).shape == (H, W, 3)
+
+
+def test_image_feature_metadata_describes_the_normalized_layout():
+    from unienv_data.integrations.lerobot import _feature_to_space
+    from unienv_data.third_party.lerobot import LeRobotFeature
+
+    for dtype in ("image", "video"):
+        # Stored channel-first, produced channel-last
+        feature = LeRobotFeature(name="observation.images.top", dtype=dtype, shape=(3, H, W))
+        space = _feature_to_space(feature, NB, fps=30)
+        assert space.shape == (H, W, 3)
+        assert space.metadata == {"kind": "image", "format": "rgb", "layout": "HWC", "fps": 30, "source": "observation.images.top"}
+    assert _feature_to_space(LeRobotFeature(name="action", dtype="float32", shape=(2,)), NB, fps=30).metadata == {"kind": "action"}
+    assert _feature_to_space(LeRobotFeature(name="observation.state", dtype="float64", shape=(2,)), NB).metadata == {"kind": "proprio"}
+    assert _feature_to_space(LeRobotFeature(name="reward", dtype="float32", shape=(1,)), NB).metadata == {}

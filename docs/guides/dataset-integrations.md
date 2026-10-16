@@ -31,6 +31,7 @@ Highlights:
 - reconstructs a `DictSpace` from dataset features
 - can include or exclude named features
 - can optionally decode video features
+- describes the features through [space metadata](../concepts/spaces-and-backends.md#space-metadata): image and video features carry `{"kind": "image", "format": "rgb", "layout": "HWC", "fps": <dataset fps>, "source": <feature key>}`, `observation.state` and `action` carry `kind` `"proprio"` / `"action"`
 
 This is the most direct path for bringing LeRobot-formatted robotics datasets into UniEnv-native tooling.
 
