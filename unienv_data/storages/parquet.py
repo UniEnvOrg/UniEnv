@@ -1034,7 +1034,6 @@ def _column_metadata_to_space(
             return TextSpace(
                 NumpyComputeBackend,
                 max_length=4096,
-                dtype=str,
                 device=None,
             )
         if NumpyComputeBackend.dtype_is_boolean(dtype):
@@ -1073,7 +1072,6 @@ def _field_to_space(field: pa.Field, shape: Tuple[int, ...]) -> ParquetSpaceType
         return TextSpace(
             NumpyComputeBackend,
             max_length=4096,
-            dtype=str,
             device=None,
         )
     elif pa.types.is_boolean(arrow_type):

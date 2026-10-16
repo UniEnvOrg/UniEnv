@@ -230,3 +230,70 @@ def test_set_with_negative_array_indices(nested_storage):
     assert_tree_equal(nested_storage.get(slice(None)), expected)
     nested_storage.set(np.array([], dtype=np.int64), _rows(update, np.array([], dtype=np.int64)))
     assert_tree_equal(nested_storage.get(slice(None)), expected)
+
+
+def _text_space() -> DictSpace:
+    from unienv_interface.space import BinarySpace, TextSpace
+    return DictSpace(B, {
+        "task": TextSpace(B, max_length=16),
+        "obs": _box((2,)),
+        "flags": BinarySpace(B, shape=(2,), dtype=np.bool_),
+        "step": BoxSpace(B, 0, 100, np.int64, shape=()),
+    })
+
+
+def _text_batch() -> dict:
+    return {
+        "task": np.array(["pick", "place", "push"], dtype=object),
+        "obs": np.arange(6, dtype=np.float32).reshape(3, 2),
+        "flags": np.array([[True, False], [False, False], [True, True]]),
+        "step": np.array([3, 4, 5], dtype=np.int64),
+    }
+
+
+def test_text_fields_round_trip(tmp_path):
+    path = str(tmp_path / "text.hdf5")
+    storage = HDF5Storage.create(_text_space(), capacity=3, cache_path=path)
+    storage.set(slice(None), _text_batch())
+    storage.set(1, {"task": "lift", "obs": np.zeros(2, np.float32), "flags": np.array([True, False]),
+                    "step": np.int64(9)})
+    expected = _text_batch()
+    expected["task"][1] = "lift"
+    expected["obs"][1] = 0
+    expected["flags"][1] = [True, False]
+    expected["step"][1] = 9
+    assert_tree_equal(storage.get(slice(None)), expected)
+    assert storage.get(1)["task"] == "lift"
+    storage.close()
+
+
+def test_load_replay_buffer_from_raw_hdf5_infers_space(tmp_path):
+    path = str(tmp_path / "raw.hdf5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset("task", data=np.array([b"pick", b"place", b"push"], dtype="S8"), maxshape=(None,))
+        f.create_dataset("note", data=np.array(["a", "bc", "def"], dtype=h5py.string_dtype()), maxshape=(None,))
+        f.create_dataset("obs", data=np.arange(6, dtype=np.float32).reshape(3, 2), maxshape=(None, 2))
+        f.create_dataset("flags", data=np.array([True, False, True]), maxshape=(None,))
+        f.create_dataset("_ignored", data=np.zeros(3))
+    rb = HDF5Storage.load_replay_buffer_from_raw_hdf5(path)
+    assert len(rb) == 3 and rb.capacity is None
+    space = rb.single_space
+    assert set(space.spaces) == {"task", "note", "obs", "flags"}
+    assert space["task"].max_length == 8
+    assert space["note"].max_length >= 3
+    row = rb.get_at(2)
+    assert row["task"] == "push" and row["note"] == "def"
+    np.testing.assert_array_equal(row["obs"], np.array([4.0, 5.0], np.float32))
+    assert bool(row["flags"]) is True
+    rb.storage.close()
+
+
+def test_load_replay_buffer_from_raw_hdf5_default_key(tmp_path):
+    path = str(tmp_path / "raw_box.hdf5")
+    with h5py.File(path, "w") as f:
+        f.create_dataset("data", data=np.arange(8, dtype=np.int32).reshape(4, 2), maxshape=(4, 2))
+    rb = HDF5Storage.load_replay_buffer_from_raw_hdf5(path)
+    assert rb.capacity == 4 and len(rb) == 4
+    assert isinstance(rb.single_space, BoxSpace)
+    np.testing.assert_array_equal(rb.get_at(slice(None)), np.arange(8, dtype=np.int32).reshape(4, 2))
+    rb.storage.close()

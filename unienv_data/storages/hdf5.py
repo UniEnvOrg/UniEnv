@@ -156,8 +156,8 @@ class HDF5Storage(SpaceStorage[
             if root.dtype.kind == 'O' or root.dtype.kind == 'S':
                 space = TextSpace(
                     NumpyComputeBackend,
-                    max_length=root.dtype.itemsize if root.dtype.itemsize is not None else 4096,
-                    dtype=str,
+                    # Fixed-length strings ('S') bound the length; variable-length ones ('O') do not.
+                    max_length=root.dtype.itemsize if root.dtype.kind == 'S' else 4096,
                     device=None,
                 )
             elif NumpyComputeBackend.dtype_is_boolean(root.dtype):
