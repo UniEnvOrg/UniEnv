@@ -170,9 +170,6 @@ def test_v3_multiple_data_files_use_file_local_rows(tmp_path):
     assert _state_ids(ds.get_at(PICKS)) == PICKS.tolist()
 
 
-@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/third_party/lerobot/index.py:173 "
-                   "_load_episodes_v3 only lists meta/episodes/*.parquet, but LeRobot v3 writes "
-                   "meta/episodes/chunk-XXX/file-XXX.parquet, so real v3 datasets load with 0 episodes")
 def test_v3_nested_episode_metadata_layout(tmp_path):
     path = write_v3(tmp_path, data_files=[[0, 1, 2]], nested_episodes=True)
     ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB)

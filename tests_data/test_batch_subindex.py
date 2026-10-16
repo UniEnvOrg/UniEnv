@@ -114,8 +114,6 @@ def test_mutability_follows_parent_and_bad_indices_rejected():
         SubIndexedBatch(rb, torch.tensor([0.5]))
 
 
-@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/replay_buffer/replay_buffer.py:498 "
-                   "ReplayBuffer.get_flattened_at ignores the ring offset once the buffer wraps")
 def test_flattened_view_over_wrapped_replay_buffer():
     rb = make_rb(5, capacity=5)
     rb.extend(rb_data(2, start=5))  # wraps: logical index 0 is sample 2

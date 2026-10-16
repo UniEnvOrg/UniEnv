@@ -132,9 +132,6 @@ def test_get_slice_and_get_column_views(flat_batch):
     np.testing.assert_array_equal(column.get_at(slice(None)), np.array([0.0, 10.0, 20.0, 30.0], np.float32))
 
 
-@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/batches/subindex_batch.py:71 SubIndexedBatch.get_at "
-                                       "forwards sub_indexes[idx] (a numpy/torch scalar, not an int) so the parent "
-                                       "treats a single index as batched")
 def test_get_slice_single_index_is_unbatched(flat_batch):
     sliced = flat_batch.get_slice(slice(1, 3))
     assert_tree_equal(sliced.get_at(0), _row(1.0))

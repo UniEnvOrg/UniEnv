@@ -194,8 +194,6 @@ def test_episode_end_mask_on_immutable_jax_arrays():
     assert_tree_equal(out["obs"][0], np.array([[8, 9], [8, 9]], dtype=np.float32))
 
 
-@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/replay_buffer/replay_buffer.py:498 "
-                   "ReplayBuffer.get_flattened_at ignores the ring offset once the buffer wraps")
 def test_flattened_framestack_over_wrapped_replay_buffer():
     from tests_common.batch_helpers import rb_data
     rb = make_rb(5, capacity=5)
