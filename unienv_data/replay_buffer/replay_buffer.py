@@ -175,6 +175,23 @@ def _physical_segments_to_logical_half_open(
     logical_segments.sort(key=lambda item: item[0])
     return logical_segments
 
+class _SharedCounter:
+    """Mutable integer holder with the same ``.value`` API as ``multiprocessing.Value``.
+
+    Used so that column views created by :meth:`ReplayBuffer.get_column` share
+    ``count`` / ``offset`` with their parent buffer in single-process mode.
+    """
+    __slots__ = ("value",)
+
+    def __init__(self, value: int):
+        self.value = int(value)
+
+    def __getstate__(self):
+        return self.value
+
+    def __setstate__(self, state):
+        self.value = int(state)
+
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Ring-buffer style batch storage built on top of a ``SpaceStorage``.
 
@@ -388,6 +405,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     ):
         """Wrap a storage object with replay-buffer indexing semantics."""
         self.storage = storage
+        self._column_parent : Optional["ReplayBuffer"] = None
         self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path
         self._multiprocessing = multiprocessing
@@ -427,6 +445,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             storage.single_instance_space,
             None
         )
+
+    def _require_not_column_view(self, operation: str) -> None:
+        if getattr(self, "_column_parent", None) is not None:
+            raise RuntimeError(
+                f"Cannot {operation} a column view of a ReplayBuffer; {operation} the parent buffer instead"
+            )
 
     def _lock_scope(self):
         if self._lock is not None:
@@ -619,6 +643,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self._active_segment_length += 1
         
     def extend(self, value):
+        self._require_not_column_view("extend")
         with self._lock_scope():
             B = sbu.batch_size_data(value)
             if B == 0:
@@ -667,6 +692,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._physical_segments.append((start_physical, (start_physical + B - 1) % self.capacity))
 
     def append(self, value):
+        self._require_not_column_view("append to")
         with self._lock_scope():
             old_count = self.count
             if self.capacity is None:
@@ -734,6 +760,9 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._active_segment_length = 0
 
     def get_segments(self):
+        column_parent = getattr(self, "_column_parent", None)
+        if column_parent is not None:
+            return column_parent.get_segments()
         with self._lock_scope():
             if self._maintain_segment_metadata:
                 return _physical_segments_to_logical_half_open(
@@ -755,22 +784,32 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     def get_column(self, nested_keys):
         if hasattr(self.storage, "get_column"):
             column_storage = self.storage.get_column(nested_keys)
-            return ReplayBuffer(
+            column = ReplayBuffer(
                 column_storage,
                 self.storage_path_relative + "_column_" + ".".join(nested_keys),
                 self.count,
                 self.offset,
                 cache_path=self.cache_path,
-                multiprocessing=self._multiprocessing,
-                maintain_segment_metadata=self._maintain_segment_metadata,
-                physical_segments=list(self._physical_segments) if self._maintain_segment_metadata else None,
-                active_segment_start_physical=self._active_segment_start_physical,
-                active_segment_length=self._active_segment_length,
+                multiprocessing=False,
             )
+            # The column is a live view: it shares the ring-buffer counters (and
+            # lock) with this buffer and reports this buffer's segments, so it
+            # stays consistent after further extends / wrap-around.
+            if isinstance(self._count_value, int):
+                self._count_value = _SharedCounter(self._count_value)
+                self._offset_value = _SharedCounter(self._offset_value)
+            column._count_value = self._count_value
+            column._offset_value = self._offset_value
+            column._lock = self._lock
+            column._multiprocessing = self._multiprocessing
+            column._maintain_segment_metadata = self._maintain_segment_metadata
+            column._column_parent = self
+            return column
         else:
             return super().get_column(nested_keys)
 
     def clear(self):
+        self._require_not_column_view("clear")
         with self._lock_scope():
             self.storage.clear()
             self.count = 0
