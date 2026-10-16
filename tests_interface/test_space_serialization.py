@@ -107,12 +107,10 @@ def test_default_dtype_spaces_roundtrip(backend_name: str) -> None:
     assert json_to_space(json.loads(json.dumps(space_to_json(space))), backend, None) == space
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "cross-scope: unienv_interface/backends/serialization.py:49-53 serialize_dtype compares against "
-    "jnp dtype objects, so jax's default python-type dtypes (float/int) raise 'Unknown dtype'"
-))
 def test_jax_default_float_dtype_serializes() -> None:
     pytest.importorskip("jax")
     from unienv_interface.backends.jax import JaxComputeBackend as J
-    space = BoxSpace(J, 0.0, 1.0, J.default_floating_dtype, shape=(2,))
-    assert json_to_space(space_to_json(space), J, None) == space
+    for dtype in (J.default_floating_dtype, J.default_integer_dtype):
+        space = BoxSpace(J, 0, 1, dtype, shape=(2,))
+        assert json_to_space(space_to_json(space), J, None) == space
+        assert space == BoxSpace(J, 0, 1, space.dtype, shape=(2,))

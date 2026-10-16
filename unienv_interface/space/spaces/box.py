@@ -56,6 +56,10 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype)
         ), f"Box dtype must be a real floating or integer type, actual dtype: {dtype}"
         self._dtype_is_float = backend.dtype_is_real_floating(dtype)
+        if dtype is int or dtype is float:
+            # Python scalar types (jax's default dtypes) -> the concrete dtype arrays get,
+            # so equality, serialization round-trips and data dtype checks agree
+            dtype = backend.empty((0,), dtype=dtype).dtype
 
         # determine shape if it isn't provided directly
         if shape is not None:

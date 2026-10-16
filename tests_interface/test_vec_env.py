@@ -132,10 +132,6 @@ def test_sync_rejects_batched_or_single_env():
         SyncVecEnv([lambda: StubEnv(2), lambda: StubEnv(2)])
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "cross-scope: unienv_interface/space/space_utils/batch_utils.py:526-535 "
-    "_batch_differing_spaces_box stacks the compact (broadcastable) low/high and builds the "
-    "BoxSpace without shape, so Box((2,)) spaces with scalar bounds batch to shape (N, 1)"))
 def test_sync_batches_differing_sub_env_spaces():
     vec = SyncVecEnv([lambda: StubEnv(action_high=1.0), lambda: StubEnv(action_high=2.0)])
     assert vec.action_space.shape == (2, 2)

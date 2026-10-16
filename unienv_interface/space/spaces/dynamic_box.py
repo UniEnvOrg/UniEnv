@@ -74,6 +74,10 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype)
         ), f"DynamicBox dtype must be a real floating or integer type, actual dtype: {dtype}"
         self._dtype_is_float = backend.dtype_is_real_floating(dtype)
+        if dtype is int or dtype is float:
+            # Python scalar types (jax's default dtypes) -> the concrete dtype arrays get,
+            # so equality, serialization round-trips and data dtype checks agree
+            dtype = backend.empty((0,), dtype=dtype).dtype
 
         assert len(shape_low) == len(shape_high), \
             f"shape_low and shape_high must have the same length, actual lengths: {len(shape_low)} and {len(shape_high)}"
