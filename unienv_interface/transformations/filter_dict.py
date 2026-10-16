@@ -58,10 +58,15 @@ def include_chained_key_in_dict(
             raise KeyError(f"Key '{first_key}' not found in the source dictionary.")
     
     first_value = d[first_key]
+    existing_value = target_d[first_key] if first_key in target_d.keys() else None
+    if len(chained_key) > 1 and existing_value is first_value:
+        # The whole sub-tree has already been included by a shorter key
+        return target_d
     target_d[first_key] = include_chained_key_in_dict(
         first_value,
         chained_key[1:],
-        target_d=None,
+        # Merge into the partial sub-tree built by sibling keys (e.g. 'a/x' then 'a/y')
+        target_d=existing_value,
         ignore_missing_keys=ignore_missing_keys
     )
     
