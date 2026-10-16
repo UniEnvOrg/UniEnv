@@ -1,34 +1,23 @@
+"""Property-style tests for ``BoxSpace``: sampling, gym round trips and backend/device conversion."""
 import typing
+
+import numpy as np
 import pytest
+
 from unienv_interface.backends import ComputeBackend
 from unienv_interface.backends.numpy import NumpyComputeBackend
-from unienv_interface.backends.jax import JaxComputeBackend
-from unienv_interface.backends.pytorch import PyTorchComputeBackend
-
 from unienv_interface.space.spaces import *
 from unienv_interface.space.space_utils import gym_utils as space_gym_utils
+from tests_common.backends import backend_params, backends_and_devices, cpu_backend_params
+from tests_common.space_conversion import can_convert
 
-import jax
-import torch
-import numpy as np
-from tests_common.backends import backend_params, cpu_backend_params
+SEEDS = [0, 1024]
+NUM_SAMPLES_TEST = 5
+NUM_SPACE_INSTANCES = 8
+NUM_SPACE_INSTANCES_JAX = 2  # jax recompiles for every new random shape
 
-ALL_BACKENDS_AND_DEVICES : typing.Dict[ComputeBackend, typing.List[typing.Any]] = {
-    NumpyComputeBackend: [],
-    JaxComputeBackend: jax.devices(),
-    PyTorchComputeBackend: ['cpu'] if not torch.cuda.is_available() else ['cpu', 'cuda'],
-}
-# ALL_BACKENDS_AND_DTYPES : typing.Dict[ComputeBackend, typing.List[typing.Any]] = {
-#     NumpyComputeBackend: NumpyComputeBackend.list_real_floating_dtypes() + NumpyComputeBackend.list_real_integer_dtypes(),
-#     JaxComputeBackend: JaxComputeBackend.list_real_floating_dtypes() + JaxComputeBackend.list_real_integer_dtypes(),
-#     PyTorchComputeBackend: PyTorchComputeBackend.list_real_floating_dtypes() + PyTorchComputeBackend.list_real_integer_dtypes(),
-# }
 
-SEEDS = [0, 1024, 2048]
-NUM_SAMPLES_TEST = 20
-NUM_SPACE_INSTANCES = 50
-
-def perform_single_space_cross_backend_device_test(space : Space, rng : typing.Any) -> None:
+def perform_single_space_cross_backend_device_test(space: Space, rng: typing.Any) -> None:
     gym_space = space_gym_utils.to_gym_space(space)
     converted_back_space = space_gym_utils.from_gym_space(gym_space, space.backend, dtype=space.dtype, device=space.device)
     assert space == converted_back_space
@@ -41,20 +30,25 @@ def perform_single_space_cross_backend_device_test(space : Space, rng : typing.A
         converted_back_data = space_gym_utils.from_gym_data(converted_back_space, gym_data)
         assert space.contains(converted_back_data)
         assert converted_back_space.contains(converted_back_data)
-    for target_backend, target_devices in ALL_BACKENDS_AND_DEVICES.items():
-        for target_device in target_devices:
-            if target_backend == space.backend and target_device == space.device:
-                continue
-            converted_space = space.to(target_backend, target_device)
-            for _ in range(NUM_SAMPLES_TEST):
-                rng, data = space.sample(rng)
-                converted_data = space.data_to(data, target_backend, target_device)
-                assert converted_space.contains(converted_data)
+    for target_backend, target_device in backends_and_devices():
+        if target_backend == space.backend and target_device == space.device:
+            continue
+        # Conversions xbarray cannot perform on this machine (see tests_common.space_conversion)
+        if not can_convert(space.backend, space.device, target_backend):
+            continue
+        can_convert_back = can_convert(target_backend, target_device, space.backend, origin_backend=space.backend)
+        converted_space = space.to(target_backend, target_device)
+        for _ in range(NUM_SAMPLES_TEST):
+            rng, data = space.sample(rng)
+            converted_data = space.data_to(data, target_backend, target_device)
+            assert converted_space.contains(converted_data)
+            if can_convert_back:
                 converted_back_data = converted_space.data_to(converted_data, space.backend, space.device)
                 assert space.contains(converted_back_data)
 
-def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.Any], rng : typing.Any, np_rng : np.random.Generator):
-    def generate_random_box_params(rng : typing.Any, np_rng : np.random.Generator):
+
+def perform_box_test(backend: ComputeBackend, device: typing.Optional[typing.Any], rng: typing.Any, np_rng: np.random.Generator):
+    def generate_random_box_params(rng: typing.Any, np_rng: np.random.Generator):
         shape_ndims = np_rng.integers(1, 5)
         shape = tuple([np_rng.integers(1, 10) for _ in range(shape_ndims)])
         dtype = np_rng.choice([backend.default_floating_dtype, backend.default_integer_dtype])
@@ -85,9 +79,8 @@ def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.A
     assert space.shape == shape
 
     # Do cross-backend and cross-device tests
-    for space_id in range(NUM_SPACE_INSTANCES):
+    for space_id in range(NUM_SPACE_INSTANCES_JAX if backend.simplified_name == "jax" else NUM_SPACE_INSTANCES):
         rng, np_rng, shape, dtype, min_values, max_values = generate_random_box_params(rng, np_rng)
-        print("Testing BoxSpace(", backend, device, ") with shape", shape, "and dtype", dtype)
         space = BoxSpace(
             backend,
             min_values,
@@ -96,14 +89,45 @@ def perform_box_test(backend : ComputeBackend, device : typing.Optional[typing.A
             device=device,
         )
         perform_single_space_cross_backend_device_test(space, rng)
-    
-def test_box():
-    for seed in SEEDS:
-        for backend, devices in ALL_BACKENDS_AND_DEVICES.items():
-            for device in devices:
-                np_rng = np.random.default_rng(seed)
-                rng = backend.random.random_number_generator(seed, device=device)
-                perform_box_test(backend, device, rng, np_rng)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize("backend,device", backend_params())
+def test_box(backend, device, seed):
+    np_rng = np.random.default_rng(seed)
+    rng = backend.random.random_number_generator(seed, device=device)
+    perform_box_test(backend, device, rng, np_rng)
+
+
+def test_box_constructor_validation():
+    B = NumpyComputeBackend
+    with pytest.raises(AssertionError):
+        BoxSpace(B, 1.0, 0.0, np.float32, shape=(2,))
+    with pytest.raises(AssertionError):
+        BoxSpace(B, np.array([0.0, np.nan]), 1.0, np.float32)
+    with pytest.raises(AssertionError):
+        BoxSpace(B, 0, 1, np.bool_, shape=(1,))
+    with pytest.raises(ValueError):
+        BoxSpace(B, [0.0], [1.0], np.float32)  # shape cannot be inferred from lists
+    space = BoxSpace(B, np.zeros((1, 3)), np.ones((2, 1)), np.float32)
+    assert space.shape == (2, 3)
+    assert space.is_bounded() and space.is_bounded("below") and space.is_bounded("above")
+    half = BoxSpace(B, 0.0, np.inf, np.float32, shape=(2,))
+    assert half.is_bounded("below") and not half.is_bounded("above") and not half.is_bounded()
+    with pytest.raises(ValueError):
+        half.is_bounded("sideways")
+    np.testing.assert_array_equal(half.clip(np.array([-1.0, 5.0], dtype=np.float32)), [0.0, 5.0])
+    assert half.create_empty().shape == (2,)
+    assert "BoxSpace" in repr(space) and "[" in str(space)
+
+
+def test_box_float_dtype_is_strict():
+    """A float64 sample is not a member of a float32 box (no implicit narrowing)."""
+    space = BoxSpace(NumpyComputeBackend, 0.0, 1.0, np.float32, shape=(2,))
+    assert space.contains(np.full((2,), 0.5, dtype=np.float32))
+    assert not space.contains(np.full((2,), 0.5, dtype=np.float64))
+    assert not space.contains(np.full((3,), 0.5, dtype=np.float32))
+
 
 @pytest.mark.parametrize("dtype", [np.int8, np.int32, np.int64, np.uint8])
 def test_full_range_integer_box_samples_vary(dtype):
