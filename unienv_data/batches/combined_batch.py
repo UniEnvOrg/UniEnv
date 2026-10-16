@@ -474,6 +474,7 @@ class CombinedBatch(BatchBase[
         self._build_index_cache()
     
     def close(self) -> None:
-        for batch in self.batches:
-            batch.close()
-        self.batches = []
+        """Release this view. The child batches are not owned by the view and stay open;
+        close them through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the children here would tear it down whenever a view is garbage-collected)."""
+        pass

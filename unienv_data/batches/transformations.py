@@ -141,5 +141,7 @@ class TransformedBatch(
         self.batch.extend(source_dat)
 
     def close(self):
-        self.batch.close()
-        self.transformation.close()
+        """Release this view. The wrapped batch (and the transformation) are not owned by the view and stay open;
+        close them through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the source here would tear it down whenever a view is garbage-collected)."""
+        pass

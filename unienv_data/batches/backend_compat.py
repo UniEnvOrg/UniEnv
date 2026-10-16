@@ -224,4 +224,7 @@ class ToBackendOrDeviceBatch(
         self.batch.remove_at(idx)
     
     def close(self):
-        self.batch.close()
+        """Release this view. The wrapped batch is not owned by the view and stays open;
+        close it through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the source here would tear it down whenever a view is garbage-collected)."""
+        pass
