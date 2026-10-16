@@ -322,6 +322,9 @@ class HDF5Storage(SpaceStorage[
                 ),
                 capacity=capacity,
                 initial_capacity=initial_capacity,
+                compression=compression,
+                compression_level=compression_level,
+                chunks=chunks,
             )
 
         initial_capacity = initial_capacity or capacity
@@ -500,7 +503,6 @@ class HDF5Storage(SpaceStorage[
             compression=compression,
             compression_level=compression_level,
             chunks=chunks,
-            **kwargs
         )
         return cls(
             single_instance_space,
