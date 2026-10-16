@@ -104,3 +104,10 @@ def test_wrapper_unwraps_its_state_for_render_and_close():
 def test_action_stack_requires_default_value():
     with pytest.raises(AssertionError):
         FuncFrameStackWrapper(StubFuncEnv(), action_stack_size=1)
+
+
+def test_close_before_initial_is_forwarded_without_state():
+    func_env = _RecordingFuncEnv()
+    env = FuncEnvBasedEnv(FuncFrameStackWrapper(func_env, obs_stack_size=1))
+    env.close()  # never reset
+    assert func_env.seen_states == [("close", None)]

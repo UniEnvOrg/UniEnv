@@ -156,8 +156,9 @@ class FuncFrameStackWrapper(
         )
         return new_state, self.map_observation(new_state, observation), reward, terminated, truncated, info
 
-    def close(self, state : FuncFrameStackWrapperState[StateType]) -> None:
-        self.func_env.close(state.env_state)
+    def close(self, state : Optional[FuncFrameStackWrapperState[StateType]]) -> None:
+        # FuncEnvBasedEnv closes with state None when the env was never reset.
+        self.func_env.close(None if state is None else state.env_state)
 
     def render_init(self, state, *, seed = None, render_mode = None, **kwargs):
         env_state, render_state, render_info = self.func_env.render_init(

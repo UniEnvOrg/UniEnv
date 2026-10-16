@@ -221,3 +221,8 @@ def test_func_world_env_with_signals_and_queries():
     np.testing.assert_allclose(reward, [-0.5, -0.5])
     np.testing.assert_array_equal(terminated, [False, False])
 
+
+def test_func_world_env_close_before_initial_is_noop():
+    world = SimFuncWorld(0.01)
+    env = FuncEnvBasedEnv(FuncWorldEnv(world, CounterFuncNode(world)))
+    env.close()  # never reset: no state to release

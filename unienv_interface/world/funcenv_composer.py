@@ -344,6 +344,9 @@ class FuncWorldEnv(FuncEnv[
 
 	def close(self, state: WorldFuncEnvState) -> None:
 		"""Close the node tree first, then the underlying world."""
+		if state is None:
+			# Never initialized (e.g. FuncEnvBasedEnv closed before its first reset).
+			return
 		world_state = self.node.close(state.world_state, state.node_state)
 		self.world.close(world_state)
 
