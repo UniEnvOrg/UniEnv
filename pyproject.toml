@@ -22,6 +22,9 @@ calibration = [
 ]
 dev = [
     "pytest",
+    "pytest-timeout",
+    "pytest-cov",
+    "hypothesis",
     "opencv-contrib-python>=4.7",
     "websockets>=15,<16",
     "gymnasium>=0.29.0",
@@ -52,3 +55,11 @@ Changelog = "https://github.com/UniEnvOrg/UniEnv/blob/main/CHANGELOG.md"
 [tool.setuptools.packages.find]
 include = ["*"]
 exclude = ["training*", "tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_interface", "tests_data", "tests_utils"]
+timeout = 300
+markers = [
+    "slow: long-running tests (video encoding, multiprocessing); deselect with -m 'not slow'",
+    "gpu: tests that need a CUDA device",
+]
