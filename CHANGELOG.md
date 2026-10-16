@@ -2,8 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.0.1b14 (2026-10-16)
 
+- Fixed `UnBatchifyWrapper` construction: `sbu.unbatch_spaces` takes only the space, so the extra batch-size argument made `UnBatchifyWrapper(env)` raise `TypeError`.
 - Hardened `unienv_utils.calibration` after review: `solve_camera_relative` now rejects outlier paired observations with tianji's MAD-based gating (new `reject_outliers` / `min_inliers` parameters; `PairResult` reports `n_inliers` and `inlier_mask`, and residuals are computed over the inliers); the hand-eye low-diversity warning no longer misses rotations about the same axis in opposite directions; calibration JSON writes unavailable residual values as `null` and refuses non-finite numbers (`allow_nan=False`).
 - Added `root_node` support to `CombinedWorldNode`, `FlatCombinedWorldNode`, `CombinedFuncWorldNode` and `FlatCombinedFuncWorldNode`. A `root_node` is passed separately (same world, not listed in `nodes`) and its data merges at the top level of the aggregated context/observation/action dicts instead of nesting under its own name:
   - Sole-root contributor per channel follows the existing `direct_return` rule (`True`: the root's own space/data passes through unwrapped, any space type; `False`: wrapped under the reserved key `ROOT_NODE_KEY = ""`). Mixed root + named children requires a `DictSpace` root space whose keys merge next to the child entries; a root key equal to a child node name raises `ValueError`.
