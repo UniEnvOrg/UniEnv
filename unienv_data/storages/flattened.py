@@ -19,6 +19,16 @@ class FlattenedStorage(SpaceStorage[
     BDtypeType,
     BRNGType,
 ]):
+    """
+    Stores every sample flattened into one 1D `BoxSpace` row of an inner storage (e.g. `PytorchTensorStorage`),
+    so a read or write is one row operation on a single array.
+
+    The flat row has one common dtype, promoted from all leaves: mixing uint8 camera images with float32 keys
+    stores the images as float32 (4x the memory / disk of uint8, e.g. 1.97 GB instead of 0.49 GB for 10k
+    128x128x3 frames) and converts every image on every read and write. Keep images in their own storage
+    instead, e.g. a `DictStorage` with a `PytorchTensorStorage` (or `VideoStorage`) per image key, and flatten
+    only the low-dimensional keys.
+    """
     # ========== Class Attributes ==========
     @classmethod
     def create(

@@ -226,6 +226,6 @@ def test_column_view_counters_survive_pickling(tmp_path):
     rb.extend({"a": np.arange(4, dtype=np.float32)})
     column = rb.get_column(["a"])
     rb.dumps(rb.cache_path)
-    state = pickle.loads(pickle.dumps(rb._count_value))
-    assert state.value == 3
+    state = pickle.loads(pickle.dumps(rb._ring_state))
+    assert state.read() == (3, 0)
     np.testing.assert_array_equal(column.get_at(slice(None)), np.array([1.0, 2.0, 3.0], np.float32))

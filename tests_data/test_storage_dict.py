@@ -94,3 +94,55 @@ def test_garbage_collecting_parent_keeps_column_views_usable(tmp_path):
     gc.collect()
     np.testing.assert_array_equal(column.get(slice(None)), np.array([1.0, 2.0], np.float32))
     column.close()
+
+
+def _video_and_lowdim_space() -> DictSpace:
+    return DictSpace(B, {
+        "image": BoxSpace(B, 0, 255, np.uint8, shape=(8, 8, 3)),
+        "reward": BoxSpace(B, -100.0, 100.0, np.float32, shape=()),
+    })
+
+
+def _video_and_lowdim_batch(start: int, n: int) -> dict:
+    values = np.arange(start, start + n)
+    return {
+        "image": np.broadcast_to((values * 7 % 256).astype(np.uint8)[:, None, None, None], (n, 8, 8, 3)).copy(),
+        "reward": values.astype(np.float32),
+    }
+
+
+@pytest.mark.parametrize("capacity", [None, 4])
+def test_append_to_video_child_mixed_with_write_through_child(tmp_path, capacity):
+    """
+    A VideoStorage child holds appended frames back until the segment ends while an HDF5 child writes
+    through, so the children report different pending-segment lengths; appending more than once used to
+    trip DictStorage's "inconsistent pending-segment lengths" assertion.
+    """
+    from unienv_data.replay_buffer import ReplayBuffer
+    from unienv_data.storages.video_storage import VideoStorage
+    from tests_common.storage_video import LOSSLESS_RGB_KWARGS
+
+    rb = ReplayBuffer.create(
+        DictStorage, _video_and_lowdim_space(),
+        storage_cls_map={"image": VideoStorage, "*": HDF5Storage},
+        key_kwargs={"image": dict(LOSSLESS_RGB_KWARGS)},
+        cache_path=str(tmp_path / "rb"), capacity=capacity,
+    )
+    data = _video_and_lowdim_batch(0, 7)
+    for i in range(3):
+        rb.append({key: value[i] for key, value in data.items()})
+        # The buffered (video) child decides how much of the open segment is still pending
+        assert rb.storage.pending_segment_length == i + 1
+    rb.mark_segment_end()
+    assert rb.storage.pending_segment_length == 0
+    assert_tree_equal(rb.get_at(slice(None)), _video_and_lowdim_batch(0, 3))
+
+    # One long segment: with a fixed capacity the buffer has to close it once it holds `capacity` samples
+    for i in range(3, 7):
+        rb.append({key: value[i] for key, value in data.items()})
+    rb.mark_segment_end()
+    expected_start = 0 if capacity is None else 7 - capacity
+    assert_tree_equal(rb.get_at(slice(None)), _video_and_lowdim_batch(expected_start, 7 - expected_start))
+    storage = rb.storage
+    rb.close()
+    storage.close()

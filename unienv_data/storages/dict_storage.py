@@ -323,9 +323,11 @@ class DictStorage(SpaceStorage[
 
     @property
     def pending_segment_length(self) -> int:
-        lengths = {storage.pending_segment_length for storage in self.storage_map.values()}
-        assert len(lengths) <= 1, f"DictStorage children have inconsistent pending-segment lengths: {lengths}"
-        return next(iter(lengths)) if lengths else 0
+        # Children that write appended samples through report 0, while buffering children (e.g. VideoStorage)
+        # report the samples they still hold back, so a mixed map legitimately disagrees. The largest value is
+        # what callers need: it is the number of appended samples not yet committed by every child (the
+        # ReplayBuffer compares it with the capacity to decide when an over-long segment must be closed).
+        return max((storage.pending_segment_length for storage in self.storage_map.values()), default=0)
 
     def mark_segment_start(self, start_index: int) -> None:
         for storage in self.storage_map.values():

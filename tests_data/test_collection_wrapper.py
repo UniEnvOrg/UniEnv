@@ -2496,3 +2496,30 @@ def test_swap_allow_mid_episode(tmp_path):
     assert wrapper.replay_buffers == [rb_new]
     # Old buffer still has open segment (not finalized)
     assert rb_old.storage.has_open_segment
+
+
+def test_batched_shared_extend_builds_batched_space_only_when_validating(tmp_path, monkeypatch):
+    """B > 1 shared mode used to build `batch_space(rb.single_space, B)` on every step, even without validation."""
+    from unienv_data.replay_buffer import collection_wrapper as collection_wrapper_module
+
+    calls = []
+    original_batch_space = collection_wrapper_module.sbu.batch_space
+
+    def counting_batch_space(space, n):
+        calls.append(n)
+        return original_batch_space(space, n)
+
+    B = 3
+    action = np.zeros((B, 2), dtype=np.float32)
+    for validate in (False, True):
+        env = DummyBatchedEnvN(batch_size=B, obs_dim=3, act_dim=2)
+        rb = _make_rb(tmp_path / f"rb_{validate}", ["obs", "action", "reward", "terminated", "next_obs"])
+        wrapper = ReplayBufferCollectionWrapper(env, rb, replay_mode="shared", validate_transition=validate)
+        wrapper.reset()
+        calls.clear()
+        monkeypatch.setattr(collection_wrapper_module.sbu, "batch_space", counting_batch_space)
+        for _ in range(4):
+            wrapper.step(action)
+        monkeypatch.undo()
+        assert len(rb) == B * 4
+        assert (calls.count(B) > 0) == validate

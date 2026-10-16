@@ -1,6 +1,5 @@
 from importlib import metadata
 from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type
-from concurrent.futures import ThreadPoolExecutor
 
 from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
@@ -8,6 +7,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.utils.symbol_util import *
 
 from unienv_data.base import SpaceStorage, BatchT, IndexableType
+from ._io_pool import map_io
 
 import os
 import glob
@@ -542,21 +542,20 @@ class EpisodeStorageBase(SpaceStorage[
         result = result_space.create_empty()
 
         if len(all_filename_offsets) > 1:
-            data_futures = []
-            with ThreadPoolExecutor(max_workers=len(all_filename_offsets)) as executor:
-                for filename, file_offset, batch_indexes in all_filename_offsets:
-                    file_len = self._get_file_length(filename)
-                    data_futures.append(executor.submit(self.get_from_file, filename, file_offset, file_len))
-                    # data = self.get_from_file(filename, file_offset, file_len)
-            
-                for data_future, (filename, file_offset, batch_indexes) in zip(data_futures, all_filename_offsets):
-                    data = data_future.result()
-                    result = sbu.set_at(
-                        result_space,
-                        result,
-                        batch_indexes,
-                        data
-                    )
+            # Decode the files on the shared, bounded IO pool (instead of a fresh executor with one thread per
+            # file on every call)
+            jobs = [
+                (filename, file_offset, self._get_file_length(filename))
+                for filename, file_offset, batch_indexes in all_filename_offsets
+            ]
+            all_data = map_io(lambda job: self.get_from_file(*job), jobs, min_parallel=2)
+            for data, (filename, file_offset, batch_indexes) in zip(all_data, all_filename_offsets):
+                result = sbu.set_at(
+                    result_space,
+                    result,
+                    batch_indexes,
+                    data
+                )
         else:
             filename, file_offset, batch_indexes = all_filename_offsets[0]
             file_len = self._get_file_length(filename)

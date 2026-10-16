@@ -463,8 +463,9 @@ class ReplayBufferCollectionWrapper(
             # In B > 1 shared-extend mode all builders (callable, default,
             # and DataTransformation) produce batched transitions, so
             # validate against the *batched* replay-buffer space.
-            target_space = sbu.batch_space(rb.single_space, B)
-            self._validate(transition, target_space)
+            if self._validate_transition_flag:
+                # Building the batched space costs ~250 us per step (BoxSpace bound checks): only when validating
+                self._validate(transition, sbu.batch_space(rb.single_space, B))
             rb.extend(transition)
 
             # B > 1 shared mode: flat transition replay, no segment semantics.
