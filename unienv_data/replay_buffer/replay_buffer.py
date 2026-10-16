@@ -175,22 +175,86 @@ def _physical_segments_to_logical_half_open(
     logical_segments.sort(key=lambda item: item[0])
     return logical_segments
 
-class _SharedCounter:
-    """Mutable integer holder with the same ``.value`` API as ``multiprocessing.Value``.
+class _LocalRingState:
+    """``(count, offset)`` of a single-process ReplayBuffer.
 
-    Used so that column views created by :meth:`ReplayBuffer.get_column` share
-    ``count`` / ``offset`` with their parent buffer in single-process mode.
+    A separate object (rather than two ints on the buffer) so that column views created by
+    :meth:`ReplayBuffer.get_column` share the counters of their parent buffer.
     """
-    __slots__ = ("value",)
+    __slots__ = ("count", "offset")
 
-    def __init__(self, value: int):
-        self.value = int(value)
+    def __init__(self, count: int, offset: int):
+        self.count = int(count)
+        self.offset = int(offset)
+
+    def read(self) -> Tuple[int, int]:
+        return self.count, self.offset
+
+    def write(self, count: int, offset: int) -> None:
+        self.count = int(count)
+        self.offset = int(offset)
 
     def __getstate__(self):
-        return self.value
+        return (self.count, self.offset)
 
     def __setstate__(self, state):
-        self.value = int(state)
+        self.count, self.offset = int(state[0]), int(state[1])
+
+class _SharedRingState:
+    """``(count, offset)`` of a multiprocessing ReplayBuffer, shared by every process using the buffer.
+
+    Both values are packed into one 64-bit word of shared memory (``offset * (capacity + 1) + count``).
+    Writers store it once, while holding the buffer's writer lock; readers load it once, without any lock.
+    An aligned 64-bit load / store is a single atomic access on the 64-bit platforms CPython supports, so a
+    reader always sees a pair that some writer published - never the new offset with the old count, which
+    with two separate counters made reads during wrap-around map indices with a mismatched pair.
+    Where packing is not possible (a 32-bit platform, or a capacity too large to pack) readers take the lock.
+    """
+    #: Largest capacity whose (count, offset) pair fits into one signed 64-bit word.
+    MAX_PACKED_CAPACITY = (1 << 31) - 1
+
+    def __init__(self, count: int, offset: int, capacity: Optional[int], lock):
+        self._base = None if capacity is None else int(capacity) + 1
+        self._lock = lock
+        self._lock_free = ctypes.sizeof(ctypes.c_void_p) >= 8 and (
+            capacity is None or int(capacity) <= self.MAX_PACKED_CAPACITY
+        )
+        # `RawValue`: no per-value lock (the buffer's writer lock serializes writers); 8-byte aligned in the mp heap
+        self._word = mp.RawValue(ctypes.c_int64, 0)
+        self.write(count, offset)
+
+    def _pack(self, count: int, offset: int) -> int:
+        if self._base is None:
+            assert offset == 0, "Offset must be 0 when capacity is None"
+            return count
+        return offset * self._base + count
+
+    def _unpack(self, word: int) -> Tuple[int, int]:
+        if self._base is None:
+            return word, 0
+        offset, count = divmod(word, self._base)
+        return count, offset
+
+    def read(self) -> Tuple[int, int]:
+        if self._lock_free:
+            return self._unpack(self._word.value)
+        with self._lock:
+            return self._unpack(self._word.value)
+
+    @property
+    def count(self) -> int:
+        if self._lock_free:
+            word = self._word.value  # one load: the count alone needs no consistent pair
+            return word if self._base is None else word % self._base
+        return self.read()[0]
+
+    @property
+    def offset(self) -> int:
+        return self.read()[1]
+
+    def write(self, count: int, offset: int) -> None:
+        # Callers hold the writer lock
+        self._word.value = self._pack(int(count), int(offset))
 
 class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Ring-buffer style batch storage built on top of a ``SpaceStorage``.
@@ -198,6 +262,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
     The buffer exposes the standard ``BatchBase`` interface while handling
     round-robin overwrite semantics, persistence metadata, and optional
     multiprocessing-safe counters.
+
+    With ``multiprocessing=True`` writers serialize on a shared lock and publish ``count`` and ``offset``
+    together; readers in other processes take no lock and always map indices with a consistent pair.
+    A read that races with a write can still return rows that the write is overwriting (the oldest samples
+    of a full buffer), as with any lock-free ring buffer.
     """
     # =========== Class Attributes ==========
     @staticmethod
@@ -376,10 +445,11 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             os.makedirs(path, exist_ok=True)
             storage_path = os.path.join(path, self.storage_path_relative)
             self.storage.dumps(storage_path)
+            count, offset = self._ring_state.read()
             metadata = {
                 "type": __class__.__name__,
-                "count": self.count,
-                "offset": self.offset,
+                "count": count,
+                "offset": offset,
                 "capacity": self.storage.capacity,
                 "storage_cls": get_full_class_name(type(self.storage)),
                 "storage_path_relative": self.storage_path_relative,
@@ -419,13 +489,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
         if multiprocessing and storage.is_mutable:
             assert storage.is_multiprocessing_safe, "Storage is not multiprocessing safe"
-            self._lock = mp.RLock()
-            self._count_value = mp.Value(ctypes.c_long, int(count))
-            self._offset_value = mp.Value(ctypes.c_long, int(offset))
+            # A lock from a fork context cannot be handed to spawn / forkserver processes, while a spawn-context
+            # lock works with every start method (fork children simply inherit it)
+            self._lock = mp.get_context("spawn").RLock()
+            self._ring_state = _SharedRingState(count, offset, storage.capacity, self._lock)
         else:
             self._lock = None
-            self._count_value = int(count)
-            self._offset_value = int(offset)
+            self._ring_state = _LocalRingState(count, offset)
 
         self._physical_segments = (
             _normalize_physical_segments(physical_segments, capacity=self.capacity)
@@ -471,25 +541,26 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     @property
     def count(self) -> int:
-        return self._count_value.value if not isinstance(self._count_value, int) else self._count_value
+        return self._ring_state.count
 
     @count.setter
     def count(self, value: int) -> None:
-        if not isinstance(self._count_value, int):
-            self._count_value.value = int(value)
-        else:
-            self._count_value = int(value)
+        with self._lock_scope():
+            self._ring_state.write(value, self._ring_state.read()[1])
     
     @property
     def offset(self) -> int:
-        return self._offset_value.value if not isinstance(self._offset_value, int) else self._offset_value
+        return self._ring_state.offset
 
     @offset.setter
     def offset(self, value: int) -> None:
-        if not isinstance(self._offset_value, int):
-            self._offset_value.value = int(value)
-        else:
-            self._offset_value = int(value)
+        with self._lock_scope():
+            self._ring_state.write(self._ring_state.read()[0], value)
+
+    def _logical_to_physical_index(self, idx: Union[IndexableType, BArrayType]) -> Union[int, BArrayType]:
+        # One snapshot of (count, offset): reading them separately races with a writer in another process
+        count, offset = self._ring_state.read()
+        return index_with_offset(self.backend, idx, count, offset, self.device)
 
     @property
     def capacity(self) -> Optional[int]:
@@ -520,13 +591,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         if hasattr(self.storage, "get_flattened"):
-            data = self.storage.get_flattened(index_with_offset(
-                self.backend,
-                idx,
-                self.count,
-                self.offset,
-                self.device
-            ))
+            data = self.storage.get_flattened(self._logical_to_physical_index(idx))
             return data, None
 
         data, metadata = self.get_at_with_metadata(idx)
@@ -540,26 +605,14 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx):
-        data_index = index_with_offset(
-            self.backend,
-            idx,
-            self.count,
-            self.offset,
-            self.device
-        )
+        data_index = self._logical_to_physical_index(idx)
         data = self.storage.get(data_index)
         return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
         if hasattr(self.storage, "set_flattened"):
             self.storage.set_flattened(
-                index_with_offset(
-                    self.backend,
-                    idx,
-                    self.count,
-                    self.offset,
-                    self.device
-                ), 
+                self._logical_to_physical_index(idx), 
                 value
             )
             return
@@ -571,13 +624,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.set_at(idx, value)
 
     def set_at(self, idx, value):
-        self.storage.set(index_with_offset(
-            self.backend,
-            idx,
-            self.count,
-            self.offset,
-            self.device
-        ), value)
+        self.storage.set(self._logical_to_physical_index(idx), value)
 
     def extend_flattened(
         self,
@@ -655,14 +702,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             ):
                 raise RuntimeError("Cannot extend while an append-built segment is open; call mark_segment_end() first")
 
-            old_count = self.count
-            old_offset = self.offset
+            old_count, old_offset = self._ring_state.read()
 
             if self.capacity is None:
-                assert self.offset == 0, "Offset must be 0 when capacity is None"
+                assert old_offset == 0, "Offset must be 0 when capacity is None"
                 self.storage.extend_length(B)
-                self.storage.set(slice(self.count, self.count + B), value)
-                self.count = old_count + B
+                self.storage.set(slice(old_count, old_count + B), value)
+                self._ring_state.write(old_count + B, 0)
                 if self._maintain_segment_metadata:
                     self._physical_segments.append((old_count, old_count + B - 1))
                 return
@@ -670,8 +716,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             # We have a fixed capacity, only keep the last `capacity` elements
             if B >= self.capacity:
                 self.storage.set(Ellipsis, sbu.get_at(self._batched_space, value, slice(-self.capacity, None)))
-                self.count = self.capacity
-                self.offset = 0
+                self._ring_state.write(self.capacity, 0)
                 if self._maintain_segment_metadata:
                     self._physical_segments = [(0, self.capacity - 1)]
                 self._active_segment_start_physical = None
@@ -679,21 +724,19 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 return
             
             # Otherwise, perform round-robin writes
-            start_physical = (self.offset + self.count) % self.capacity
+            start_physical = (old_offset + old_count) % self.capacity
             indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
             self._account_round_robin_write(start_physical, B)
 
     def _account_round_robin_write(self, start_physical: int, B: int) -> None:
         """Update count / offset / segment metadata after `B` (<= capacity) samples were written at the tail."""
-        old_count = self.count
-        old_offset = self.offset
+        old_count, old_offset = self._ring_state.read()
         outflow = max(0, old_count + B - self.capacity)
         if outflow > 0 and self._maintain_segment_metadata:
             self._remove_physical_range_from_metadata(old_offset, outflow)
-        if outflow > 0:
-            self.offset = (old_offset + outflow) % self.capacity
-        self.count = min(old_count + B, self.capacity)
+        # Publish count and offset together (see `_SharedRingState`)
+        self._ring_state.write(min(old_count + B, self.capacity), (old_offset + outflow) % self.capacity)
         if self._maintain_segment_metadata:
             self._physical_segments.append((start_physical, (start_physical + B - 1) % self.capacity))
 
@@ -721,15 +764,15 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             ):
                 raise RuntimeError("Cannot commit a segment while an append-built segment is open; call mark_segment_end() first")
 
+            old_count, old_offset = self._ring_state.read()
             if self.capacity is None:
-                old_count = self.count
                 self.storage.extend_length(B)
                 try:
                     writer.commit(old_count)
                 except Exception:
                     self.storage.shrink_length(B)
                     raise
-                self.count = old_count + B
+                self._ring_state.write(old_count + B, 0)
                 if self._maintain_segment_metadata:
                     self._physical_segments.append((old_count, old_count + B - 1))
                 return
@@ -737,16 +780,16 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             if B > self.capacity:
                 writer.abort()
                 raise ValueError(f"Cannot commit a {B}-sample segment into a replay buffer of capacity {self.capacity}")
-            start_physical = (self.offset + self.count) % self.capacity
+            start_physical = (old_offset + old_count) % self.capacity
             writer.commit(start_physical)
             self._account_round_robin_write(start_physical, B)
 
     def append(self, value):
         self._require_not_column_view("append to")
         with self._lock_scope():
-            old_count = self.count
+            old_count, old_offset = self._ring_state.read()
             if self.capacity is None:
-                physical_index = self.count
+                physical_index = old_count
                 self.storage.extend_length(1)
                 opened_segment = False
                 try:
@@ -764,12 +807,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                             except Exception:
                                 pass
                     raise
-                self.count = old_count + 1
+                self._ring_state.write(old_count + 1, 0)
                 if self._maintain_segment_metadata:
                     self._append_to_active_segment(physical_index)
                 return
 
-            physical_index = (self.offset + self.count) % self.capacity
+            physical_index = (old_offset + old_count) % self.capacity
             if self.storage.has_open_segment and self.storage.pending_segment_length >= self.capacity:
                 self.storage.mark_segment_end()
 
@@ -789,10 +832,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
             outflow = max(0, old_count + 1 - self.capacity)
             if outflow > 0 and self._maintain_segment_metadata:
-                self._remove_physical_range_from_metadata(self.offset, outflow)
-            if outflow > 0:
-                self.offset = (self.offset + outflow) % self.capacity
-            self.count = min(old_count + 1, self.capacity)
+                self._remove_physical_range_from_metadata(old_offset, outflow)
+            self._ring_state.write(min(old_count + 1, self.capacity), (old_offset + outflow) % self.capacity)
             if self._maintain_segment_metadata:
                 self._append_to_active_segment(physical_index)
 
@@ -814,11 +855,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         if column_parent is not None:
             return column_parent.get_segments()
         with self._lock_scope():
+            count, offset = self._ring_state.read()
             if self._maintain_segment_metadata:
                 return _physical_segments_to_logical_half_open(
                     self._physical_segments,
-                    offset=self.offset,
-                    count=self.count,
+                    offset=offset,
+                    count=count,
                     capacity=self.capacity,
                 )
             storage_segments = self.storage.get_segments()
@@ -826,30 +868,27 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 return None
             return _physical_segments_to_logical_half_open(
                 _normalize_physical_segments(storage_segments, capacity=self.capacity),
-                offset=self.offset,
-                count=self.count,
+                offset=offset,
+                count=count,
                 capacity=self.capacity,
             )
 
     def get_column(self, nested_keys):
         if hasattr(self.storage, "get_column"):
             column_storage = self.storage.get_column(nested_keys)
+            count, offset = self._ring_state.read()
             column = ReplayBuffer(
                 column_storage,
                 self.storage_path_relative + "_column_" + ".".join(nested_keys),
-                self.count,
-                self.offset,
+                count,
+                offset,
                 cache_path=self.cache_path,
                 multiprocessing=False,
             )
             # The column is a live view: it shares the ring-buffer counters (and
             # lock) with this buffer and reports this buffer's segments, so it
             # stays consistent after further extends / wrap-around.
-            if isinstance(self._count_value, int):
-                self._count_value = _SharedCounter(self._count_value)
-                self._offset_value = _SharedCounter(self._offset_value)
-            column._count_value = self._count_value
-            column._offset_value = self._offset_value
+            column._ring_state = self._ring_state
             column._lock = self._lock
             column._multiprocessing = self._multiprocessing
             column._maintain_segment_metadata = self._maintain_segment_metadata
@@ -862,8 +901,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self._require_not_column_view("clear")
         with self._lock_scope():
             self.storage.clear()
-            self.count = 0
-            self.offset = 0
+            self._ring_state.write(0, 0)
             self._physical_segments = []
             self._active_segment_start_physical = None
             self._active_segment_length = 0
