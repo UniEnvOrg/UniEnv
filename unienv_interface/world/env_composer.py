@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, Tuple, Union, SupportsFloat, Sequence, I
 
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
+from unienv_interface.space.space_utils import batch_utils as sbu
 
 from .world import World
 from .node import WorldNode
@@ -183,10 +184,24 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
         for p in self._get_priority_order('after_reload'):
             self.node.after_reload(priority=p, mask=mask)
 
+        context, obs, info = self._read_reset_result(mask)
+        self._first_reset = False
+        return context, obs, info
+
+    def _read_reset_result(
+        self,
+        mask: Optional[BArrayType] = None,
+    ) -> Tuple[ContextType, ObsType, Dict[str, Any]]:
+        """Read context / observation / info after a reset; with ``mask`` only the
+        selected rows of the context and observation are returned (``Env.reset`` contract)."""
         context = self.node.get_context() if self.node.context_space is not None else None
         obs = self.node.get_observation() if self.node.observation_space is not None else None
         info = self.node.get_info() or {}
-        self._first_reset = False
+        if mask is not None:
+            if context is not None:
+                context = sbu.get_at(self.node.context_space, context, mask)
+            if obs is not None:
+                obs = sbu.get_at(self.node.observation_space, obs, mask)
         return context, obs, info
 
     def reset(
@@ -216,10 +231,7 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
             self.node.after_reset(priority=p, mask=mask)
 
         # 5. Read final state
-        context = self.node.get_context() if self.node.context_space is not None else None
-        obs = self.node.get_observation() if self.node.observation_space is not None else None
-        info = self.node.get_info() or {}
-        return context, obs, info
+        return self._read_reset_result(mask)
 
     def step(
         self, action: ActType
