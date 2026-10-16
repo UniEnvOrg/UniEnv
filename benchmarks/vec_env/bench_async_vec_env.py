@@ -1,14 +1,18 @@
-"""Throughput of ``AsyncVecEnv`` observation transfer: pipe vs shared memory.
+"""Throughput of ``AsyncVecEnv`` transfer: pipe vs shared memory.
 
 The environment does no work: it returns a preallocated observation, so the
-numbers measure the transport (pickling / copying / synchronisation) only.
+numbers measure the transport (pickling / copying / synchronisation) of the
+observations and of the (2,) float32 actions only. ``pipe`` passes
+``shared_memory=False``; the ``shared-*`` modes use the default shared memory
+(observations, contexts and actions, ``copy=True`` / ``copy=False``).
 
 Usage (from the repository root)::
 
     python benchmarks/vec_env/bench_async_vec_env.py                 # everything
     python benchmarks/vec_env/bench_async_vec_env.py --num-envs 8 --obs image --backends numpy
-    python benchmarks/vec_env/bench_async_vec_env.py --modes pipe    # also runs on versions
-                                                                     # without shared_memory
+
+To compare with an older version, run this script with that version on the
+``PYTHONPATH`` (it only needs the ``shared_memory`` / ``copy`` arguments).
 
 Every configuration uses the ``spawn`` start method. Each configuration is run
 ``--repeats`` times with the modes interleaved (rotating their order) and the
@@ -76,9 +80,9 @@ class TransportBenchEnv(Env):
 
 
 def bench(backend: str, device: Optional[str], obs: str, num_envs: int, mode: str, steps: int, warmup: int) -> float:
-    kwargs = {"ctx": mp.get_context("spawn")}
+    kwargs = {"ctx": mp.get_context("spawn"), "shared_memory": mode != "pipe"}
     if mode != "pipe":
-        kwargs.update(shared_memory=True, copy=(mode == "shared-copy"))
+        kwargs["copy"] = mode == "shared-copy"
     env = AsyncVecEnv([lambda: TransportBenchEnv(backend, device, obs) for _ in range(num_envs)], **kwargs)
     try:
         env.reset(seed=0)
