@@ -814,6 +814,11 @@ def _get_at_batched(space: BatchedSpace, items: np.ndarray, index: ArrayAPIGetIn
         index = space.backend.to_numpy(index)
     return items[index]
 
+# ``set_at`` assigns in place without going through ``array_api_extra.at`` only for these
+# (``at`` rejects values from other array libraries and special-cases jax indices).
+_NUMPY_INPLACE_VALUE_TYPES = (np.ndarray, np.generic, int, float, bool, complex)
+_NUMPY_INPLACE_INDEX_TYPES = (int, np.integer, slice, tuple, list, np.ndarray)
+
 @singledispatch
 def set_at(
     space: Space, items: Any, index: ArrayAPISetIndex, value: Any
@@ -830,6 +835,15 @@ def _set_at_common(
     index: ArrayAPISetIndex,
     value: typing.Union[BArrayType, float, int],
 ) -> BArrayType:
+    if (
+        type(items) is np.ndarray and items.flags.writeable
+        and isinstance(value, _NUMPY_INPLACE_VALUE_TYPES)
+        and (isinstance(index, _NUMPY_INPLACE_INDEX_TYPES) or index is Ellipsis)
+    ):
+        # What ``at(items)[index].set(value)`` does for a writeable numpy array and a
+        # numpy/Python value (an in-place ``__setitem__``), minus the dispatch overhead.
+        items[index] = value
+        return items
     return space.backend.at(items)[index].set(value)
 
 @set_at.register(DynamicBoxSpace)

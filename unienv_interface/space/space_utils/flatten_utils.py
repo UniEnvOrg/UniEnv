@@ -1,3 +1,4 @@
+import math
 import typing
 from copy import deepcopy
 from functools import singledispatch
@@ -21,6 +22,17 @@ def _dict_items(space: DictSpace) -> typing.List[typing.Tuple[Any, Space]]:
     except TypeError:
         return list(space.spaces.items())
 
+def _flat_part_index(start_dim : int, start : int, end : int) -> typing.Tuple[Any, ...]:
+    """Basic index selecting ``[start, end)`` along axis ``start_dim`` (the flat axis).
+
+    Slicing gives a view instead of the copy an index-array ``take`` makes; the
+    leaf ``unflatten_data`` implementations copy (``astype``), so the results
+    still never alias the flat input.
+    """
+    if start_dim >= 0:
+        return (slice(None),) * start_dim + (slice(start, end),)
+    return (Ellipsis, slice(start, end)) + (slice(None),) * (-start_dim - 1)
+
 def is_flattenable(space: Space, start_dim : int = 0) -> bool:
     return flat_dim(space, start_dim) is not None
 
@@ -33,13 +45,13 @@ def flat_dim(space : Space, start_dim : int = 0) -> Optional[int]:
 def _flat_dim_common(space: typing.Union[BoxSpace, BinarySpace], start_dim : int = 0) -> int:
     if start_dim < -len(space.shape) or start_dim > len(space.shape):
         return None
-    return int(np.prod(space.shape[start_dim:]))
+    return math.prod(space.shape[start_dim:])
 
 @flat_dim.register(DynamicBoxSpace)
 def _flat_dim_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> Optional[int]:
     if start_dim < -len(space.shape_high) or start_dim > len(space.shape_high):
         return None
-    return int(np.prod(space.shape_high[start_dim:]))
+    return math.prod(space.shape_high[start_dim:])
 
 @flat_dim.register(DictSpace)
 def _flat_dim_dict(space: DictSpace, start_dim : int = 0) -> Optional[int]:
@@ -265,8 +277,7 @@ def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> An
     start = 0
     for key, subspace in _dict_items(space):
         end = start + flat_dim(subspace, start_dim)
-        part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.device(data))
-        part_data = space.backend.take(data, part_idx, axis=start_dim)
+        part_data = data[_flat_part_index(start_dim, start, end)]
         result[key] = unflatten_data(subspace, part_data, start_dim)
         start = end
     return result
@@ -310,8 +321,7 @@ def _unflatten_data_tuple(space: TupleSpace, data: BArrayType, start_dim : int =
     start = 0
     for subspace in space.spaces:
         end = start + flat_dim(subspace, start_dim)
-        part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.device(data))
-        part_data = space.backend.take(data, part_idx, axis=start_dim)
+        part_data = data[_flat_part_index(start_dim, start, end)]
         result.append(unflatten_data(subspace, part_data, start_dim))
         start = end
     return tuple(result)
