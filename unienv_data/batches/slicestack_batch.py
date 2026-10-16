@@ -124,6 +124,9 @@ class SliceStackedBatch(BatchBase[
         if self.backend.dtype_is_boolean(index.dtype):
             assert index.shape[0] == len(self.batch), f"Index shape {index.shape} does not match batch size {len(self.batch)}"
             index = self.backend.nonzero(index)[0] # (T, )
+        else:
+            # Negative indices address samples from the end, as in every other batch.
+            index = self.backend.where(index < 0, index + len(self.batch), index)
 
         index = index[:, None] + self.fixed_offset[None, :] # (B, T)
         index = self.backend.clip(index, 0, len(self.batch) - 1)

@@ -161,6 +161,13 @@ def test_valid_mask_from_metadata():
     assert_tree_equal(meta["slice_valid_mask"], np.array([[False, True]]))
 
 
+def test_negative_indices_address_from_the_end():
+    rb = make_rb(10)
+    fs = FrameStackedBatch(rb, prefetch_horizon=1)
+    assert_tree_equal(fs.get_at(torch.tensor([-1, -2])), fs.get_at(torch.tensor([9, 8])))
+    assert_tree_equal(fs.get_at(-1), fs.get_at(9))
+
+
 def test_view_over_numpy_source():
     src = numpy_array_batch(10, with_metadata=False)
     fs = FrameStackedBatch(src, prefetch_horizon=1, get_valid_mask_function=EPISODE_END_MASK)
