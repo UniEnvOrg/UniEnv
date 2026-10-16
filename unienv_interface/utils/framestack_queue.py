@@ -3,7 +3,7 @@ import numpy as np
 import copy
 import dataclasses
 
-from unienv_interface.space import Space
+from unienv_interface.space import Space, BoxSpace, BinarySpace, DictSpace, TupleSpace
 from unienv_interface.space import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
@@ -11,6 +11,43 @@ DataT = TypeVar('DataT')
 
 # Backends whose arrays are immutable, so ``sbu.set_at`` already returns new buffers.
 _IMMUTABLE_BACKENDS = ("jax",)
+# Backends whose arrays support ``empty_like`` + in-place slice assignment (fast path).
+_FAST_PATH_BACKENDS = ("numpy", "pytorch")
+
+_LEAF = "leaf"
+
+def _fast_plan(space : Space) -> Optional[Any]:
+    """
+    Nested plan (``_LEAF`` / dict / tuple) mirroring ``space`` when every leaf is a plain
+    Box / Binary space using the generic array ``set_at``; ``None`` otherwise.
+    """
+    if type(space) is DictSpace:
+        plans = {key: _fast_plan(subspace) for key, subspace in space.spaces.items()}
+        return None if any(plan is None for plan in plans.values()) else plans
+    if type(space) is TupleSpace:
+        plans = tuple(_fast_plan(subspace) for subspace in space.spaces)
+        return None if any(plan is None for plan in plans) else plans
+    if isinstance(space, (BoxSpace, BinarySpace)) and sbu.set_at.dispatch(type(space)) is sbu.set_at.dispatch(BoxSpace):
+        return _LEAF
+    return None
+
+def _shift_append(plan : Any, stacked : Any, value : Any) -> Any:
+    """``roll(stacked, -1, axis=0)`` then ``[-1] = value``, written into one fresh buffer."""
+    if plan == _LEAF: # compare by value: the plan may come back from a pickle
+        out = np.empty_like(stacked) if isinstance(stacked, np.ndarray) else stacked.new_empty(stacked.shape)
+        out[:-1] = stacked[1:]
+        out[-1] = value
+        return out
+    if isinstance(plan, dict):
+        return {key: _shift_append(subplan, stacked[key], value[key]) for key, subplan in plan.items()}
+    return tuple(_shift_append(subplan, stacked[i], value[i]) for i, subplan in enumerate(plan))
+
+def _swap_first_two_dims(plan : Any, data : Any) -> Any:
+    if plan == _LEAF: # compare by value: the plan may come back from a pickle
+        return data.swapaxes(0, 1) if isinstance(data, np.ndarray) else data.transpose(0, 1)
+    if isinstance(plan, dict):
+        return {key: _swap_first_two_dims(subplan, data[key]) for key, subplan in plan.items()}
+    return tuple(_swap_first_two_dims(subplan, data[i]) for i, subplan in enumerate(plan))
 
 @dataclasses.dataclass(frozen=True)
 class SpaceDataQueueState(Generic[DataT]):
@@ -38,6 +75,9 @@ class FuncSpaceDataQueue(
         ) if batch_size is not None else self.stacked_space # (B, L, ...) or (L, ...)
         self._maxlen = maxlen
         self._batch_size = batch_size
+        # numpy / torch with plain Box / Binary leaves: ``add`` and ``get_output_data``
+        # skip the generic roll + ``at[].set`` and the space-dispatched transposes.
+        self._fast_plan = _fast_plan(space) if space.backend.simplified_name in _FAST_PATH_BACKENDS else None
 
     @property
     def maxlen(self) -> int:
@@ -103,6 +143,8 @@ class FuncSpaceDataQueue(
         )
 
     def add(self, state : SpaceDataQueueState, data : DataT) -> SpaceDataQueueState:
+        if self._fast_plan is not None:
+            return state.replace(data=_shift_append(self._fast_plan, state.data, data))
         new_data = self.backend.map_fn_over_arrays(
             state.data,
             lambda x: self.backend.roll(x, shift=-1, axis=0),
@@ -118,6 +160,8 @@ class FuncSpaceDataQueue(
     def get_output_data(self, state : SpaceDataQueueState) -> DataT:
         if self.batch_size is None:
             return state.data
+        elif self._fast_plan is not None:
+            return _swap_first_two_dims(self._fast_plan, state.data) # (L, B, ...) -> (B, L, ...)
         else:
             return sbu.swap_batch_dims_in_data(
                 self.backend,
