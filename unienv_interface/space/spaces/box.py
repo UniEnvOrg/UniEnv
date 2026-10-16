@@ -45,7 +45,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     reassigned), so values derived from the bounds are computed lazily and
     cached on the instance; caches are dropped when pickling.
     """
-    _CACHE_ATTRS = ("_low_b", "_high_b")
+    _CACHE_ATTRS = ("_low_b", "_high_b", "_contains_plan")
 
     def __init__(
         self,
@@ -250,6 +250,28 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 self._high_b = high
         return high
 
+    def _bounds_traced(self) -> bool:
+        """Whether the bounds only exist inside a jax trace (the box was built inside ``jax.jit``)."""
+        return _is_jax_tracer(self._low) or _is_jax_tracer(self._high)
+
+    def _bounds_numpy(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """The stored (abbreviated) bounds as numpy arrays, for building cached plans.
+
+        Returns ``None`` if they cannot be represented in numpy (e.g. torch bfloat16).
+        """
+        try:
+            return np.asarray(self.backend.to_numpy(self._low)), np.asarray(self.backend.to_numpy(self._high))
+        except Exception:
+            return None
+
+    def _scalar_bounds(self, bounds : Tuple[np.ndarray, np.ndarray]) -> Optional[Tuple[Union[int, float], Union[int, float]]]:
+        """Python-scalar ``(low, high)`` if every coordinate shares the same bounds, else ``None``."""
+        low, high = bounds
+        if low.size != 1 or high.size != 1:
+            return None
+        cast = float if self._dtype_is_float else int
+        return cast(low.reshape(-1)[0]), cast(high.reshape(-1)[0])
+
     def to(
         self, 
         backend : Optional[ComputeBackend] = None,
@@ -371,16 +393,55 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             device=self.device
         )
 
+    def _build_contains_plan(self) -> Optional[tuple]:
+        """How ``contains`` checks the values (``None``: generic check, don't cache).
+
+        * ``("minmax", low, high, full_range)``: all coordinates share the Python-scalar
+          bounds ``low``/``high``; ``full_range`` marks an integer box spanning its
+          whole dtype.
+        * ``("generic",)``: elementwise comparison against the bounds.
+        """
+        if self._bounds_traced():
+            return None
+        bounds = self._bounds_numpy()
+        if bounds is None:
+            return ("generic",)
+        scalar_bounds = self._scalar_bounds(bounds)
+        if scalar_bounds is None:
+            return ("generic",)
+        low, high = scalar_bounds
+        full_range = False
+        if not self._dtype_is_float:
+            info = np.iinfo(bounds[0].dtype)
+            full_range = low == int(info.min) and high == int(info.max)
+        return ("minmax", low, high, full_range)
+
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if not self.backend.is_backendarray(x):
             return False
+        if not (self.backend.can_cast(x, self.dtype) and tuple(x.shape) == self.shape):
+            return False
 
+        plan = self._contains_plan
+        if plan is None:
+            plan = self._build_contains_plan()
+            if plan is not None:
+                self._contains_plan = plan
+        if plan is not None and plan[0] == "minmax":
+            _, low, high, full_range = plan
+            if full_range and x.dtype == self._low.dtype:
+                # Every value of the (materialised) box dtype lies inside a full-range box
+                return True
+            if 0 in self.shape:
+                return True
+            # One reduction each instead of two elementwise compares + all(); the
+            # extremes are compared as exact Python scalars, and NaN fails both.
+            cast = float if self._dtype_is_float else int
+            return cast(self.backend.min(x)) >= low and cast(self.backend.max(x)) <= high
         return bool(
-            self.backend.can_cast(x, self.dtype)
-            and x.shape == self.shape
-            and self.backend.all(x >= self.low)
-            and self.backend.all(x <= self.high)
+            self.backend.all(x >= self._low)
+            and self.backend.all(x <= self._high)
         )
     
     def clip(self, x: BArrayType) -> BArrayType:

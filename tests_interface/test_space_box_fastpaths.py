@@ -198,3 +198,100 @@ def test_box_low_inside_jit_does_not_leak_tracers():
     # Values computed inside the trace must not have been cached
     np.testing.assert_allclose(np.asarray(space.low + 0), -np.ones(3))
     assert not isinstance(space.low, jax.core.Tracer)
+
+
+def _with_plan(space: BoxSpace, attr: str, plan) -> BoxSpace:
+    """A copy of ``space`` (fresh caches) whose cached plan ``attr`` is forced to ``plan``."""
+    clone = copy.copy(space)
+    setattr(clone, attr, plan)
+    return clone
+
+
+def _contains_cases(backend, device):
+    """(space, candidate) pairs covering every contains plan and the dtype/NaN corner cases."""
+    asarr = lambda x, dt=None: backend.from_numpy(np.asarray(x, dtype=dt), device=device)
+    f32 = backend.float32
+    cases = []
+    box = BoxSpace(backend, -3.14, 3.14, f32, device=device, shape=(2, 3))
+    low = float(_np(backend, box._low).reshape(-1)[0])
+    for values in (
+        np.zeros((2, 3)), np.full((2, 3), low), np.full((2, 3), -low),
+        np.full((2, 3), 3.2), np.full((2, 3), -3.2), [[0, 0, 0], [0, np.nan, 0]],
+        [[0, 0, 0], [0, np.inf, 0]], np.full((2, 3), -np.inf),
+    ):
+        cases.append((box, asarr(values, np.float32)))
+    cases.append((box, asarr(np.zeros(6), np.float32)))  # wrong shape
+    cases.append((box, asarr(np.zeros((2, 3)), np.int8)))  # int castable to float32
+    # float16 just below the float32 low bound: rounding the bound to float16 would accept it
+    f16_low = np.float16(low)
+    if float(f16_low) < low:
+        cases.append((box, asarr(np.full((2, 3), f16_low), np.float16)))
+    if backend.__name__ != "JaxComputeBackend":  # jax without x64 has no float64 arrays
+        cases.append((box, asarr(np.zeros((2, 3)), np.float64)))
+    cases.append((BoxSpace(backend, -1.0, 1.0, f32, device=device, shape=()), asarr(0.5, np.float32)))
+    cases.append((BoxSpace(backend, -1.0, 1.0, f32, device=device, shape=()), asarr(1.5, np.float32)))
+    cases.append((BoxSpace(backend, -1.0, 1.0, f32, device=device, shape=(0, 3)), asarr(np.zeros((0, 3)), np.float32)))
+    # array bounds
+    arr_box = BoxSpace(backend, asarr([-1.0, 0.0, 2.0], np.float32), asarr([1.0, 0.5, 3.0], np.float32), f32, device=device)
+    for values in ([0, 0.25, 2.5], [0, 0.75, 2.5], [-1, 0, 2], [0, np.nan, 2.5]):
+        cases.append((arr_box, asarr(values, np.float32)))
+    # integer boxes
+    img = BoxSpace(backend, 0, 255, backend.uint8, device=device, shape=(4, 3))
+    cases.append((img, asarr(np.arange(12).reshape(4, 3) * 20, np.uint8)))
+    cases.append((img, asarr(np.full((4, 3), 7), np.int8)))
+    cases.append((img, asarr(np.full((4, 3), True), np.bool_)))
+    cases.append((img, asarr(np.full((4, 3), 2), np.int32)))  # lenient can_cast on torch: values decide
+    cases.append((img, asarr(np.full((4, 3), 300), np.int32)))
+    int_box = BoxSpace(backend, -5, 10, backend.int32, device=device, shape=(3,))
+    for values in ([-5, 0, 10], [-6, 0, 0], [0, 0, 11]):
+        cases.append((int_box, asarr(values, np.int32)))
+    cases.append((int_box, asarr([0, 1, 0], np.bool_)))
+    full_i8 = BoxSpace(backend, -np.inf, np.inf, backend.int8, device=device, shape=(2,))
+    cases.append((full_i8, asarr([-128, 127], np.int8)))
+    cases.append((full_i8, asarr([-128, 127], np.int16)))
+    cases.append((full_i8, asarr([-129, 127], np.int16)))
+    cases.append((full_i8, asarr([1, 2], np.float32)))
+    return cases
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_contains_plans_match_generic_contains(backend, device):
+    for space, x in _contains_cases(backend, device):
+        generic = _with_plan(space, "_contains_plan", ("generic",))
+        expected = generic.contains(x)
+        assert space.contains(x) == expected, (space, x)
+        assert space.contains(x) == expected  # cached plan
+        assert type(space.contains(x)) is bool
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_contains_plan_selection(backend, device):
+    f32 = backend.float32
+    assert BoxSpace(backend, -1.0, 1.0, f32, device=device, shape=(3,))._build_contains_plan()[0] == "minmax"
+    assert BoxSpace(backend, 0, 255, backend.uint8, device=device, shape=(3,))._build_contains_plan() == ("minmax", 0, 255, True)
+    assert BoxSpace(backend, 0, 9, backend.uint8, device=device, shape=(3,))._build_contains_plan() == ("minmax", 0, 9, False)
+    arr = backend.from_numpy(np.array([0.0, 1.0], np.float32), device=device)
+    assert BoxSpace(backend, arr, 2.0, f32, device=device)._build_contains_plan() == ("generic",)
+    space = BoxSpace(backend, -1.0, 1.0, f32, device=device, shape=(3,))
+    assert space._contains_plan is None
+    space.contains(space.low)
+    assert space._contains_plan is not None
+    assert "_contains_plan" not in copy.copy(space).__getstate__()
+
+
+def test_contains_on_box_built_inside_jit_is_not_cached():
+    """A box built inside a trace holds tracer bounds: plans must not be cached from them."""
+    jax = pytest.importorskip("jax")
+    import jax.numpy as jnp
+    from unienv_interface.backends.jax import JaxComputeBackend as B
+    seen = {}
+
+    def f(x):
+        space = BoxSpace(B, -1.0, 1.0, B.float32, shape=(3,))
+        seen["plan"] = space._build_contains_plan()
+        seen["space"] = space
+        return space.clip(x)
+
+    np.testing.assert_allclose(np.asarray(jax.jit(f)(jnp.full(3, 2.0))), np.ones(3))
+    assert seen["plan"] is None
+    assert seen["space"]._contains_plan is None
