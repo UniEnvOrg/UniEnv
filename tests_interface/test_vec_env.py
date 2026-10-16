@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
-from unienv_interface.env_base.vec_env import data_stack
+from unienv_interface.env_base.vec_env import SyncVecEnv, data_stack
+from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
+from tests_common.trees import assert_tree_equal
 
 
 # ---------------------------------------------------------------------------
@@ -49,3 +51,90 @@ def test_data_stack_mismatched_info_keys_are_kept_per_env():
     infos = [{"a": 1}, {"b": 2}]
     out = data_stack(infos, B)
     assert out == [{"a": 1}, {"b": 2}]
+
+
+# ---------------------------------------------------------------------------
+# SyncVecEnv
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sync_env():
+    env = SyncVecEnv([StubEnv for _ in range(3)])
+    yield env
+    env.close()
+
+
+def test_sync_spaces_are_batched(sync_env):
+    assert sync_env.batch_size == 3
+    assert sync_env.action_space.shape == (3, 2)
+    assert sync_env.observation_space["position"].shape == (3, 2)
+    assert sync_env.context_space.shape == (3, 2)
+    assert sync_env.render_fps == StubEnv.render_fps
+    assert sync_env.render_mode == "rgb_array"
+    assert sync_env.metadata == StubEnv.metadata
+    assert sync_env.backend is B and sync_env.device is None
+
+
+def test_sync_reset_forwards_per_env_seeds(sync_env):
+    context, obs, info = sync_env.reset(seed=10)
+    for i, env in enumerate(sync_env.envs):
+        assert env.reset_calls[-1]["seed"] == 10 + i
+        np.testing.assert_array_equal(obs["position"][i], StubEnv().reset(seed=10 + i)[1]["position"])
+    np.testing.assert_array_equal(context[:, 0], [10, 11, 12])
+    np.testing.assert_array_equal(info["step"], [0, 0, 0])
+    # same seed -> same result; unseeded reset does not reuse the seed
+    _, obs2, _ = sync_env.reset(seed=10)
+    assert_tree_equal(obs2, obs)
+    sync_env.reset()
+    assert all(env.reset_calls[-1]["seed"] is None for env in sync_env.envs)
+
+
+def test_sync_step_and_masked_reset(sync_env):
+    sync_env.reset(seed=0)
+    action = np.full((3, 2), 0.5, np.float32)
+    obs, reward, terminated, truncated, info = sync_env.step(action)
+    assert sync_env.observation_space.contains(obs)
+    assert reward.shape == terminated.shape == truncated.shape == (3,)
+    assert terminated.dtype == bool and truncated.dtype == bool
+    np.testing.assert_array_equal(info["step"], [1, 1, 1])
+    for i, env in enumerate(sync_env.envs):
+        np.testing.assert_allclose(env.last_action, action[i])
+
+    mask = np.array([False, True, False])
+    context, masked_obs, info = sync_env.reset(mask=mask, seed=7)
+    assert masked_obs["position"].shape == (1, 2)
+    np.testing.assert_array_equal(context, [[8.0, 8.0]])  # global index 1 -> seed 7 + 1
+    assert [len(env.reset_calls) for env in sync_env.envs] == [1, 2, 1]
+    np.testing.assert_array_equal(info["step"], [0])
+    merged = sync_env.update_observation_post_reset(obs, masked_obs, mask)
+    assert sync_env.observation_space.contains(merged)
+    np.testing.assert_array_equal(merged["position"][0], obs["position"][0])
+    np.testing.assert_array_equal(merged["position"][1], masked_obs["position"][0])
+
+
+def test_sync_render_and_close():
+    envs = [StubEnv() for _ in range(2)]
+    vec = SyncVecEnv([lambda e=e: e for e in envs])
+    vec.reset(seed=0)
+    frames = vec.render()
+    assert len(frames) == 2 and frames[0].shape == (4, 6, 3)
+    with vec:
+        pass
+    assert [e.closed for e in envs] == [1, 1]
+
+
+def test_sync_rejects_batched_or_single_env():
+    with pytest.raises(AssertionError):
+        SyncVecEnv([StubEnv])
+    with pytest.raises(AssertionError):
+        SyncVecEnv([lambda: StubEnv(2), lambda: StubEnv(2)])
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "cross-scope: unienv_interface/space/space_utils/batch_utils.py:526-535 "
+    "_batch_differing_spaces_box stacks the compact (broadcastable) low/high and builds the "
+    "BoxSpace without shape, so Box((2,)) spaces with scalar bounds batch to shape (N, 1)"))
+def test_sync_batches_differing_sub_env_spaces():
+    vec = SyncVecEnv([lambda: StubEnv(action_high=1.0), lambda: StubEnv(action_high=2.0)])
+    assert vec.action_space.shape == (2, 2)
+    np.testing.assert_allclose(vec.action_space.high, [[1.0, 1.0], [2.0, 2.0]])

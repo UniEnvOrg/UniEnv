@@ -64,10 +64,32 @@ def data_stack(
         for value in data
     ]
 
+def _batch_env_spaces(
+    spaces : Sequence[Optional[Space]],
+    device : Optional[BDeviceType] = None,
+) -> Optional[Space]:
+    """Batch the per-environment spaces (``None`` if the envs have no such space)."""
+    first = spaces[0]
+    if first is None:
+        return None
+    if all(space == first for space in spaces[1:]):
+        return sbu.batch_space(first, len(spaces))
+    return sbu.batch_differing_spaces(spaces, device=device)
+
+def _sub_env_seed(seed : Optional[int], index : int) -> Optional[int]:
+    """Seed used for sub-environment ``index`` when the vectorized env is reset with ``seed``."""
+    return None if seed is None else seed + index
+
 class SyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
-    """Run multiple non-batched environments synchronously in one process."""
+    """Run multiple non-batched environments synchronously in one process.
+
+    Seeding: ``reset(seed=s)`` reseeds ``rng`` with ``s`` and resets
+    sub-environment ``i`` with seed ``s + i`` (``i`` is the index in the
+    full batch, also when only a masked subset is reset), so every
+    sub-environment gets a distinct, reproducible seed.
+    """
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -89,15 +111,15 @@ class SyncVecEnv(Env[
             # assert env.observation_space == first_env.observation_space, "All envs must have the same observation_space"
             # assert env.context_space == first_env.context_space, "All envs must have the same context_space"
 
-        self.action_space = sbu.batch_differing_spaces(
+        self.action_space = _batch_env_spaces(
             [env.action_space for env in self.envs],
             device=first_env.device,
         )
-        self.observation_space = sbu.batch_differing_spaces(
+        self.observation_space = _batch_env_spaces(
             [env.observation_space for env in self.envs],
             device=first_env.device,
         )
-        self.context_space = None if first_env.context_space is None else sbu.batch_differing_spaces(
+        self.context_space = _batch_env_spaces(
             [env.context_space for env in self.envs],
             device=first_env.device,
         )
@@ -150,7 +172,7 @@ class SyncVecEnv(Env[
         for i, env in enumerate(self.envs):
             env_reset = True if mask is None else bool(mask[i])
             if env_reset:
-                context, obs, info = env.reset(*args, **kwargs)
+                context, obs, info = env.reset(*args, seed=_sub_env_seed(seed, i), **kwargs)
                 all_contexts.append(context)
                 all_obs.append(obs)
                 all_infos.append(info)
