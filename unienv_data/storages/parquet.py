@@ -605,15 +605,8 @@ class ParquetStorage(SpaceStorage[
             # Empty result
             return self._empty_result(self.single_instance_space)
 
-        # Determine total output size
-        if is_single:
-            total_size = 1
-        elif index is Ellipsis:
-            total_size = self._len
-        elif isinstance(index, slice):
-            total_size = len(range(*index.indices(self._len)))
-        else:
-            total_size = np.asarray(index).ravel().size
+        # Determine total output size (a boolean mask selects fewer rows than its length)
+        total_size = sum(len(output_positions) for _, output_positions in mapping.values())
 
         # Collect results from each piece
         col_results: Dict[str, List] = {name: [None] * total_size for name, _, _ in self._column_specs}
@@ -1041,7 +1034,6 @@ def _column_metadata_to_space(
             return TextSpace(
                 NumpyComputeBackend,
                 max_length=4096,
-                dtype=str,
                 device=None,
             )
         if NumpyComputeBackend.dtype_is_boolean(dtype):
@@ -1080,7 +1072,6 @@ def _field_to_space(field: pa.Field, shape: Tuple[int, ...]) -> ParquetSpaceType
         return TextSpace(
             NumpyComputeBackend,
             max_length=4096,
-            dtype=str,
             device=None,
         )
     elif pa.types.is_boolean(arrow_type):

@@ -52,11 +52,12 @@ class TransformedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **_inner_storage_kwargs
         )
-        return TransformedStorage(
+        return cls(
             single_instance_space,
             data_transformation,
             inner_storage,
             inner_storage_path,
+            cache_filename=cache_path,
         )
 
     @classmethod
@@ -74,8 +75,8 @@ class TransformedStorage(SpaceStorage[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         # Try to load transformation from JSON (new format), fall back to pickle (legacy format)
         if "data_transformation" in metadata:
@@ -105,11 +106,12 @@ class TransformedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **kwargs
         )
-        return TransformedStorage(
+        return cls(
             single_instance_space,
             data_transform,
             inner_storage,
             inner_storage_path,
+            cache_filename=path,
         )
 
     # ========== Instance Implementations ==========
@@ -127,6 +129,7 @@ class TransformedStorage(SpaceStorage[
             BRNGType,
         ],
         inner_storage_path : Union[str, os.PathLike],
+        cache_filename : Optional[Union[str, os.PathLike]] = None,
     ):
         super().__init__(single_instance_space)
         transformed_space = data_transformation.get_target_space_from_source(single_instance_space)
@@ -144,6 +147,11 @@ class TransformedStorage(SpaceStorage[
         self.inner_storage_path = inner_storage_path
         self.data_transformation = data_transformation
         self.inv_data_transformation = data_transformation.direction_inverse(single_instance_space)
+        self._cache_filename = cache_filename
+
+    @property
+    def cache_filename(self) -> Optional[Union[str, os.PathLike]]:
+        return self._cache_filename if self.inner_storage.cache_filename is not None else None
         
     @property
     def capacity(self) -> Optional[int]:
@@ -195,7 +203,7 @@ class TransformedStorage(SpaceStorage[
         if isinstance(index, int):
             return sfu.flatten_data(self.single_instance_space, dat)
         else:
-            return sfu.flatten_data(self.single_instance_space, dat, start_dim=1)
+            return sfu.flatten_data(self._batched_instance_space, dat, start_dim=1)
 
     def get(self, index):
         result = self.inner_storage.get(index)
@@ -209,7 +217,7 @@ class TransformedStorage(SpaceStorage[
         if isinstance(index, int):
             set_value = sfu.unflatten_data(self.single_instance_space, value)
         else:
-            set_value = sfu.unflatten_data(self._batched_instance_space, value)
+            set_value = sfu.unflatten_data(self._batched_instance_space, value, start_dim=1)
         self.set(index, set_value)
 
     def set(self, index, value):
@@ -237,4 +245,12 @@ class TransformedStorage(SpaceStorage[
             json.dump(metadata, f)
 
     def close(self):
+        inner_storage = getattr(self, "inner_storage", None)
+        self.inner_storage = None
+        if inner_storage is not None:
+            inner_storage.close()
+
+    def __del__(self):
+        # Only drop the reference on garbage collection; the inner storage
+        # closes itself once it is no longer referenced anywhere else.
         self.inner_storage = None

@@ -136,6 +136,8 @@ class MemoryMappedTensor(torch.Tensor):
 
     _filename: str | Path = None
     _handler: _FileHandler = None
+    # unienv: remembers `from_filename(..., readonly=True)` so that pickling keeps the mapping private.
+    _readonly: bool = False
     _clear: bool
     index: Any
     parent_shape: torch.Size
@@ -841,6 +843,7 @@ class MemoryMappedTensor(torch.Tensor):
         out = cls(tensor)
         out.filename = filename
         out._handler = None
+        out._readonly = bool(readonly)
         out.index = index
         out.parent_shape = shape
         return out
@@ -915,6 +918,7 @@ class MemoryMappedTensor(torch.Tensor):
                 "filename": self._filename,
                 "dtype": self.dtype,
                 "shape": self.parent_shape,
+                "readonly": getattr(self, "_readonly", False),
                 "index": self.index,
             }
         else:
@@ -932,10 +936,13 @@ class MemoryMappedTensor(torch.Tensor):
                 self.index,
             )
         elif getattr(self, "_filename", None) is not None:
+            # unienv: `from_filename` takes `readonly` before `index`; passing the index
+            # positionally in its place rebuilt views as the full (writable) tensor.
             return type(self).from_filename, (
                 self._filename,
                 self.dtype,
                 self.parent_shape,
+                getattr(self, "_readonly", False),
                 self.index,
             )
         else:
@@ -979,6 +986,7 @@ class MemoryMappedTensor(torch.Tensor):
         tensor = MemoryMappedTensor(tensor)
         tensor._handler = getattr(self, "_handler", None)
         tensor.filename = getattr(self, "_filename", None)
+        tensor._readonly = getattr(self, "_readonly", False)
         tensor.index = item
         tensor.parent_shape = getattr(self, "parent_shape", None)
         return tensor

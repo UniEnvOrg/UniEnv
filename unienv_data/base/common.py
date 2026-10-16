@@ -99,6 +99,10 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         self, idx : Union[IndexableType, BArrayType]
     ) -> Tuple[BArrayType, Optional[Dict[str, Any]]]:
         """Fetch flattened samples together with optional per-sample metadata."""
+        if type(self).get_at_with_metadata is BatchBase.get_at_with_metadata:
+            # Neither metadata accessor is overridden: there is no metadata to return
+            # (calling get_at_with_metadata here would recurse back into this method).
+            return self.get_flattened_at(idx), None
         unflattened_data, metadata = self.get_at_with_metadata(idx)
         if isinstance(idx, int):
             return space_flatten_utils.flatten_data(self.single_space, unflattened_data), metadata
@@ -130,6 +134,9 @@ class BatchBase(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType, BR
         self, idx : Union[IndexableType, BArrayType]
     ) -> Tuple[BatchT, Optional[Dict[str, Any]]]:
         """Fetch structured samples together with optional metadata."""
+        if type(self).get_flattened_at_with_metadata is BatchBase.get_flattened_at_with_metadata:
+            # Neither metadata accessor is overridden: there is no metadata to return.
+            return self.get_at(idx), None
         flattened_data, metadata = self.get_flattened_at_with_metadata(idx)
         if isinstance(idx, int):
             return space_flatten_utils.unflatten_data(self.single_space, flattened_data), metadata

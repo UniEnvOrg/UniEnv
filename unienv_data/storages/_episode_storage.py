@@ -296,6 +296,8 @@ class EpisodeStorageBase(SpaceStorage[
                 index = (index + (self.capacity if self.capacity is not None else self.length)) % (self.capacity if self.capacity is not None else self.length)
 
         batch_size = index.shape[0] if self.backend.is_backendarray(index) else 1
+        if batch_size == 0:
+            return (0, [])
 
         if isinstance(index, int):
             self._ensure_file_range_lookup_cache()
@@ -530,6 +532,12 @@ class EpisodeStorageBase(SpaceStorage[
 
     def get(self, index):
         batch_size, all_filename_offsets = self.convert_read_index_to_filenames_and_offsets(index)
+        if batch_size == 0:
+            return sbu.get_at(
+                self._batched_single_space,
+                self._batched_single_space.create_empty(),
+                slice(0, 0),
+            )
         result_space = sbu.batch_space(self.single_instance_space, batch_size)
         result = result_space.create_empty()
 
@@ -591,6 +599,8 @@ class EpisodeStorageBase(SpaceStorage[
                 index = (index + (self.capacity if self.capacity is not None else self.length)) % (self.capacity if self.capacity is not None else self.length)
 
         assert self.backend.is_backendarray(index) and self.backend.dtype_is_real_integer(index.dtype) and len(index.shape) == 1, "Index must be a 1D array of integers"
+        if index.shape[0] == 0:
+            return
         sorted_indexes_arg = self.backend.argsort(index)
         sorted_indexes = index[sorted_indexes_arg]
         diff_sorted = sorted_indexes[1:] - sorted_indexes[:-1]
@@ -646,7 +656,7 @@ class EpisodeStorageBase(SpaceStorage[
             self._add_file_range(second_start_index, first_end_index)
     
     def dumps(self, path):
-        assert os.path.samefile(path, self.cache_filename), \
+        assert os.path.exists(path) and os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         self._save_file_range_cache()
 

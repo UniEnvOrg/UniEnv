@@ -192,9 +192,25 @@ class PyAvVideoReader:
 
                 return
         else:
-            next_frame = next(self._frame_iterator)
+            # Approximate mode trusts the stream's pts / frame-rate metadata and does not
+            # pick the nearest frame on overshoot, but it still has to decode forward from
+            # the keyframe the demuxer landed on (which can be many frames before the target).
+            last_frame = None
+            last_frame_index = None
+            while True:
+                try:
+                    next_frame = next(self._frame_iterator)
+                except (av.error.EOFError, StopIteration):
+                    if last_frame is None:
+                        raise RuntimeError(f"Reached end of video while seeking to frame index {frame_index}")
+                    next_frame, landed_frame_index = last_frame, last_frame_index
+                    break
+                landed_frame_index = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else frame_index
+                if landed_frame_index >= frame_index:
+                    break
+                last_frame, last_frame_index = next_frame, landed_frame_index
             self._frame_buffer.append(next_frame)
-            self._pointer_position = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else frame_index
+            self._pointer_position = landed_frame_index
 
     def tell(self) -> int:
         return self._pointer_position
@@ -278,9 +294,11 @@ class PyAvVideoReader:
                 # Reorder from sorted order back to original order
                 all_frames_np = all_frames_np[reserve_index]
             else:
-                # Create a set for O(1) lookup and a mapping from frame index to position in sorted_index
-                sorted_index_set = set(sorted_index)
-                frame_to_sorted_pos = {int(frame_idx): pos for pos, frame_idx in enumerate(sorted_index)}
+                # Map each requested frame index to all of its positions in sorted_index
+                # (an index may be requested more than once).
+                frame_to_sorted_pos : Dict[int, List[int]] = {}
+                for pos, frame_idx in enumerate(sorted_index):
+                    frame_to_sorted_pos.setdefault(int(frame_idx), []).append(pos)
                 
                 # Pre-allocate array to store frames in sorted order
                 all_frames_list = [None] * len(sorted_index)
@@ -291,9 +309,9 @@ class PyAvVideoReader:
                         frame_np = next(self)
                     except StopIteration:
                         frame_np = past_frame_np
-                    if frame_i in sorted_index_set:
-                        # Store at the position corresponding to sorted_index order
-                        all_frames_list[frame_to_sorted_pos[frame_i]] = frame_np
+                    # Store at every position corresponding to sorted_index order
+                    for pos in frame_to_sorted_pos.get(frame_i, ()):
+                        all_frames_list[pos] = frame_np
                     past_frame_np = frame_np
                 all_frames_np = np.stack(all_frames_list, axis=0)
                 # Reorder from sorted order back to original order
@@ -417,7 +435,7 @@ class VideoStorage(EpisodeStorageBase[
             raise ValueError("cache_path must be provided for ImageStorage.create")
         assert not os.path.exists(cache_path), f"Cache path {cache_path} already exists"
         os.makedirs(cache_path, exist_ok=True)
-        return VideoStorage(
+        return cls(
             single_instance_space,
             cache_filename=cache_path,
             seek_mode=seek_mode,
@@ -464,8 +482,8 @@ class VideoStorage(EpisodeStorageBase[
 
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         if codec == "auto":
             codec_base = metadata.get("codec_base", None)
@@ -483,7 +501,7 @@ class VideoStorage(EpisodeStorageBase[
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
         length = metadata["length"]
 
-        return VideoStorage(
+        return cls(
             single_instance_space,
             cache_filename=path,
             seek_mode=seek_mode,
@@ -702,12 +720,31 @@ class VideoStorage(EpisodeStorageBase[
             raise RuntimeError("Cannot read from VideoStorage while a segment is open; finalize or abort it first")
         return super().get(index)
 
+    # Auto-selected codec per requested `base` (None = any codec family).
+    _auto_codec_cache : Dict[Optional[str], str] = {}
+
+    @staticmethod
+    def _encoder_available(codec_name : str) -> bool:
+        """Whether `codec_name` resolves to an encoder in the linked FFmpeg build.
+
+        `codecs_available` also lists decoder-only entries (e.g. `vp8_qsv`), which
+        cannot be used to write video files.
+        """
+        if codec_name not in codecs_available:
+            return False
+        try:
+            av.codec.Codec(codec_name, "w")
+        except Exception:
+            return False
+        return True
+
     @staticmethod
     def get_auto_codec(
         base : Optional[str] = None
     ) -> str:
-        if hasattr(__class__, "_auto_codec"):
-            return __class__._auto_codec
+        cache = __class__._auto_codec_cache
+        if base in cache:
+            return cache[base]
         
         # --- PyAV Implementation ---
         preferred_codecs = ["av1", "hevc", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
@@ -717,24 +754,28 @@ class VideoStorage(EpisodeStorageBase[
         # preferred_codecs = ["hevc", "av1", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
         # preferred_suffixes = ["_nvenc"]
         
-        target_codec = None
-        for codec in preferred_codecs:
-            for suffix in preferred_suffixes:
-                full_codec_name = codec + suffix
-                if full_codec_name in codecs_available:
-                    target_codec = full_codec_name
-                    break
+        # Codec preference comes first, hardware suffix preference second:
+        # the first available hardware encoder in that order wins.
+        target_codec = next(
+            (
+                codec + suffix
+                for codec in preferred_codecs
+                for suffix in preferred_suffixes
+                if __class__._encoder_available(codec + suffix)
+            ),
+            None,
+        )
 
         if target_codec is None:
-            for codec in preferred_codecs:
-                if codec in codecs_available:
-                    target_codec = codec
-                    break
+            target_codec = next(
+                (codec for codec in preferred_codecs if __class__._encoder_available(codec)),
+                None,
+            )
         
         if target_codec is None:
             raise RuntimeError("No suitable video codec found in available codecs.")
 
-        __class__._auto_codec = target_codec
+        cache[base] = target_codec
         return target_codec
 
     def __init__(
@@ -767,7 +808,8 @@ class VideoStorage(EpisodeStorageBase[
         self.codec = self.get_auto_codec() if codec == 'auto' else codec
         
         if decode_backend == 'auto':
-            if importlib.util.find_spec("torchcodec"):
+            # TorchCodecVideoReader only decodes rgb24; other buffer formats (e.g. gray16le depth) need PyAV.
+            if buffer_pixel_format == 'rgb24' and importlib.util.find_spec("torchcodec"):
                 decode_backend = 'torchcodec'
             else:
                 decode_backend = 'pyav'
@@ -892,7 +934,7 @@ class VideoStorage(EpisodeStorageBase[
     def dumps(self, path):
         if self.has_open_segment:
             raise RuntimeError("Cannot dump VideoStorage while a segment is open; finalize or abort it first")
-        assert os.path.samefile(path, self.cache_filename), \
+        assert os.path.exists(path) and os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         metadata = {
             "storage_type": __class__.__name__,
