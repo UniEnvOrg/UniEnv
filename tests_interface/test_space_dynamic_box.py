@@ -36,3 +36,15 @@ def test_small_integer_range_hits_both_ends():
         assert space.contains(x)
         values.update(x.tolist())
     assert values == {-2, -1, 0, 1}
+
+
+@pytest.mark.parametrize("low,high", [(0.0, 5.0), (-np.inf, np.inf), (0, 5.0)])
+def test_float_scalar_bounds_with_integer_dtype(low, high):
+    space = DynamicBoxSpace(B, low, high, (1,), (3,), np.int64)
+    rng = _rng()
+    for _ in range(5):
+        rng, x = space.sample(rng)
+        assert x.dtype == np.int64 and space.contains(x)
+    if np.isinf(low):
+        assert int(space.low.min()) == np.iinfo(np.int64).min
+        assert int(space.high.max()) == np.iinfo(np.int64).max

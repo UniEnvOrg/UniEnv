@@ -105,7 +105,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             dttype_iinfo = backend.iinfo(dtype)
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
-            if isinstance(low, int):
+            if isinstance(low, (int, float)):
                 if low == backend.inf or low == -backend.inf:
                     _low = dtype_min if low == -backend.inf else dtype_max
                 else:
@@ -113,7 +113,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 _low = backend.full([1] * len(shape_low), _low, dtype=dtype, device=device)
             else:
                 _low = backend.astype(low, dtype)
-            if isinstance(high, int):
+            if isinstance(high, (int, float)):
                 if high == backend.inf or high == -backend.inf:
                     _high = dtype_max if high == backend.inf else dtype_min
                 else:
