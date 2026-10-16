@@ -165,6 +165,16 @@ class PytorchTensorStorage(SpaceStorage[
         assert self.is_mutable, "Storage is not mutable"
         self.data[index] = value
 
+    def append(self, value : torch.Tensor) -> None:
+        # Write the sample straight into its row: the generic `SpaceStorage.append` first stacks it into a
+        # (1, ...) batch, an extra copy (and, for image-sized rows, an extra parallel torch op)
+        if not self.has_open_segment or self._active_segment_index is None:
+            raise RuntimeError(f"Cannot append to {type(self).__name__} without an open segment")
+        assert self.is_mutable, "Storage is not mutable"
+        current_index = self._active_segment_index
+        self.data[current_index] = value
+        self._active_segment_index = (current_index + 1) % self.capacity
+
     def clear(self) -> None:
         assert self.is_mutable, "Storage is not mutable"
         self.abort_segment()
