@@ -8,6 +8,7 @@ import multiprocessing as mp
 from multiprocessing.connection import Connection as MPConnection
 from multiprocessing.context import BaseContext as MPContext
 from queue import Empty as QueueEmpty
+import traceback
 
 def data_stack(
     data : Any,
@@ -271,8 +272,9 @@ def _async_worker_fn(
 ) -> None:
     parent_pipe.close()
     del parent_pipe
-    env = env_fn()
+    env = None
     try:
+        env = env_fn()
         while True:
             cmd, args, kwargs = pipe.recv()
             if cmd == "reset":
@@ -287,16 +289,28 @@ def _async_worker_fn(
             elif cmd == "close":
                 break
     except (KeyboardInterrupt, Exception) as e:
-        pipe.send(None, False)
+        # Queue the exception before answering so the parent can pick it up,
+        # and send a textual description in case the exception is not picklable.
         error_queue.put((index, e))
+        try:
+            pipe.send(((type(e).__name__, str(e), traceback.format_exc()), False))
+        except Exception:
+            pass
     finally:
-        env.close()
+        if env is not None:
+            env.close()
         pipe.close()
 
 class AsyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
 ]):
-    """Run multiple non-batched environments in separate worker processes."""
+    """Run multiple non-batched environments in separate worker processes.
+
+    Seeding follows :class:`SyncVecEnv`: ``reset(seed=s)`` resets worker ``i``
+    with seed ``s + i``. If a worker raises, the exception is re-raised in the
+    parent as a ``RuntimeError`` (chained to the worker's exception) and that
+    worker process exits.
+    """
     def __init__(
         self,
         env_fn : Iterable[Callable[[], Env[
@@ -370,10 +384,25 @@ class AsyncVecEnv(Env[
 
     def get_command_result(self, index: int):
         """Receive one worker result and surface worker-side exceptions."""
-        data, success = self.command_pipes[index].recv()
+        data, success = self._recv(index)
         if not success:
-            self._raise_if_error()
+            self._raise_if_error(index, data)
         return data
+
+    def _recv(self, index: int) -> Tuple[Any, bool]:
+        try:
+            return self.command_pipes[index].recv()
+        except EOFError:
+            return ("EOFError", "worker process exited unexpectedly", ""), False
+
+    def _get_command_results(self, indices: Iterable[int]) -> List[Any]:
+        """Receive the results of several workers, raising the first worker error
+        only after every pending result was received (so the pipes stay in sync)."""
+        results = [(i, *self._recv(i)) for i in indices]
+        for i, data, success in results:
+            if not success:
+                self._raise_if_error(i, data)
+        return [data for _, data, _ in results]
 
     def reset(
         self,
@@ -404,7 +433,7 @@ class AsyncVecEnv(Env[
         for i in range(len(self.processes)):
             env_reset = True if mask is None else bool(mask[i])
             if env_reset:
-                self.send_command(i, "reset", *args, **kwargs)
+                self.send_command(i, "reset", *args, seed=_sub_env_seed(seed, i), **kwargs)
     
     def reset_wait(
         self,
@@ -413,13 +442,15 @@ class AsyncVecEnv(Env[
         all_contexts = []
         all_obs = []
         all_infos = []
-        for i in range(len(self.processes)):
-            env_reset = True if self._reset_mask is None else bool(self._reset_mask[i])
-            if env_reset:
-                context, obs, info = self.get_command_result(i)
-                all_contexts.append(context)
-                all_obs.append(obs)
-                all_infos.append(info)
+        indices = [
+            i for i in range(len(self.processes))
+            if self._reset_mask is None or bool(self._reset_mask[i])
+        ]
+        self._reset_mask = None
+        for context, obs, info in self._get_command_results(indices):
+            all_contexts.append(context)
+            all_obs.append(obs)
+            all_infos.append(info)
 
         if self.context_space is not None:
             all_contexts = sbu.concatenate(
@@ -441,7 +472,6 @@ class AsyncVecEnv(Env[
             self.device
         )
 
-        self._reset_mask = None
         return all_contexts, all_obs, all_infos
     
     def step(
@@ -473,8 +503,7 @@ class AsyncVecEnv(Env[
         all_terminated = []
         all_truncated = []
         all_infos = []
-        for i in range(len(self.processes)):
-            obs, reward, terminated, truncated, info = self.get_command_result(i)
+        for obs, reward, terminated, truncated, info in self._get_command_results(range(len(self.processes))):
             all_obs.append(obs)
             all_rewards.append(reward)
             all_terminated.append(terminated)
@@ -507,6 +536,16 @@ class AsyncVecEnv(Env[
         )
         return all_obs, all_rewards, all_terminated, all_truncated, all_infos
 
+    def render(self) -> Sequence[RenderFrame] | None:
+        """Collect render outputs from every worker that returns a frame."""
+        for i in range(len(self.processes)):
+            self.send_command(i, "render")
+        frames = [
+            frame for frame in self._get_command_results(range(len(self.processes)))
+            if frame is not None
+        ]
+        return frames if len(frames) > 0 else None
+
     def close(self):
         """Shut down all worker processes and communication pipes."""
         for i in range(len(self.processes)):
@@ -515,17 +554,32 @@ class AsyncVecEnv(Env[
             except Exception:
                 pass
         for process in self.processes:
-            process.join()
+            process.join(timeout=30)
+            if process.is_alive():
+                process.terminate()
+                process.join()
             process.close()
         for pipe in self.command_pipes:
             pipe.close()
         self.command_pipes = []
         self.processes = []
     
-    def _raise_if_error(self):
-        """Raise the next worker exception captured in the error queue."""
+    def _raise_if_error(self, index: Optional[int] = None, error_data: Any = None):
+        """Raise the worker exception captured in the error queue.
+
+        ``error_data`` is the ``(type name, message, traceback)`` description sent
+        by the worker, used when the exception itself cannot be retrieved.
+        """
+        description = ""
+        if error_data is not None:
+            name, message, tb = error_data
+            description = f": {name}: {message}\n{tb}"
         try:
-            index, e = self.error_queue.get(block=False)
+            # The worker queues the exception before reporting failure, but the
+            # queue's feeder thread may still be flushing it.
+            error_index, e = self.error_queue.get(timeout=5.0)
         except QueueEmpty:
-            raise RuntimeError("Unknown error in AsyncVecEnv worker without any error message.")
-        raise RuntimeError("Error in AsyncVecEnv worker {}".format(index)) from e
+            if index is None and error_data is None:
+                raise RuntimeError("Unknown error in AsyncVecEnv worker without any error message.")
+            raise RuntimeError("Error in AsyncVecEnv worker {}{}".format(index, description))
+        raise RuntimeError("Error in AsyncVecEnv worker {}{}".format(error_index, description)) from e

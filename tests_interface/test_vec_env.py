@@ -1,10 +1,12 @@
 """Tests for ``SyncVecEnv`` / ``AsyncVecEnv`` and ``data_stack``."""
 
+import multiprocessing as mp
+
 import numpy as np
 import pytest
 
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
-from unienv_interface.env_base.vec_env import SyncVecEnv, data_stack
+from unienv_interface.env_base.vec_env import AsyncVecEnv, SyncVecEnv, data_stack
 from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
 from tests_common.trees import assert_tree_equal
 
@@ -138,3 +140,64 @@ def test_sync_batches_differing_sub_env_spaces():
     vec = SyncVecEnv([lambda: StubEnv(action_high=1.0), lambda: StubEnv(action_high=2.0)])
     assert vec.action_space.shape == (2, 2)
     np.testing.assert_allclose(vec.action_space.high, [[1.0, 1.0], [2.0, 2.0]])
+
+
+# ---------------------------------------------------------------------------
+# AsyncVecEnv
+# ---------------------------------------------------------------------------
+
+class _FailingStepEnv(StubEnv):
+    def step(self, action):
+        raise ValueError("boom in worker")
+
+
+class _StringInfoEnv(StubEnv):
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        info["status"] = "ok"
+        return obs, reward, terminated, truncated, info
+
+
+@pytest.fixture(params=["fork", "spawn"])
+def mp_context(request):
+    if request.param not in mp.get_all_start_methods():
+        pytest.skip(f"{request.param} not available")
+    return mp.get_context(request.param)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_matches_sync(mp_context):
+    sync = SyncVecEnv([_StringInfoEnv for _ in range(3)])
+    async_env = AsyncVecEnv([_StringInfoEnv for _ in range(3)], ctx=mp_context)
+    try:
+        assert async_env.batch_size == 3
+        assert async_env.action_space == sync.action_space
+        assert async_env.observation_space == sync.observation_space
+        assert async_env.context_space == sync.context_space
+        assert_tree_equal(async_env.reset(seed=3), sync.reset(seed=3))
+        action = np.full((3, 2), 0.25, np.float32)
+        for _ in range(2):
+            assert_tree_equal(async_env.step(action), sync.step(action))
+        mask = np.array([True, False, True])
+        assert_tree_equal(async_env.reset(mask=mask, seed=9), sync.reset(mask=mask, seed=9))
+        assert_tree_equal(async_env.step(action), sync.step(action))
+        frames = async_env.render()
+        assert_tree_equal(frames, sync.render())
+    finally:
+        async_env.close()
+        sync.close()
+    assert async_env.processes == []
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(120)
+def test_async_surfaces_worker_errors():
+    async_env = AsyncVecEnv([_FailingStepEnv for _ in range(2)], ctx=mp.get_context("fork"))
+    try:
+        async_env.reset(seed=0)
+        with pytest.raises(RuntimeError, match="worker") as excinfo:
+            async_env.step(np.zeros((2, 2), np.float32))
+        assert "boom in worker" in repr(excinfo.value.__cause__) + str(excinfo.value)
+    finally:
+        async_env.close()
