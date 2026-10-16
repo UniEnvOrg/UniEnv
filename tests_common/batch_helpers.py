@@ -106,6 +106,14 @@ class ArrayBatch(BatchBase):
     def set_at(self, idx, value):
         self.data = sbu.set_at(self._space(self.single_space), self.data, self._index(idx), value)
 
+    def remove_at(self, idx):
+        keep = np.ones(len(self), dtype=bool)
+        keep[self.backend.to_numpy(idx) if self.backend.is_backendarray(idx) else idx] = False
+        keep = self.backend.from_numpy(keep)
+        self.data = sbu.get_at(self._space(self.single_space), self.data, keep)
+        if self.metadata is not None:
+            self.metadata = sbu.get_at(self._space(self.single_metadata_space), self.metadata, keep)
+
     def extend(self, value):
         n = sbu.batch_size_data(value)
         self.data = sbu.concatenate(self._space(self.single_space), [self.data, value])
