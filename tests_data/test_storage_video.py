@@ -75,3 +75,16 @@ def test_reset_helper_clears_cache(fake_encoders):
     reset_video_codec_cache()
     fake_encoders.discard("hevc_qsv")
     assert VideoStorage.get_auto_codec() == "h264_nvenc"
+
+
+@pytest.mark.parametrize("index", [
+    np.array([2, 0, 2]),
+    np.array([1, 1, 1, 1, 1, 1]),
+    np.array([9, 0, 9, 0, 3, 3, 7, 7]),
+], ids=["dup-sparse-path", "all-same-dense-path", "dup-dense-path"])
+def test_get_with_duplicate_indices(tmp_path, index):
+    frames = _frames(10)
+    storage = VideoStorage.create(_rgb_space(), capacity=10, cache_path=str(tmp_path / "v"), **LOSSLESS_RGB_KWARGS)
+    storage.set(slice(None), frames)
+    np.testing.assert_array_equal(storage.get(index), frames[index])
+    storage.close()

@@ -278,9 +278,11 @@ class PyAvVideoReader:
                 # Reorder from sorted order back to original order
                 all_frames_np = all_frames_np[reserve_index]
             else:
-                # Create a set for O(1) lookup and a mapping from frame index to position in sorted_index
-                sorted_index_set = set(sorted_index)
-                frame_to_sorted_pos = {int(frame_idx): pos for pos, frame_idx in enumerate(sorted_index)}
+                # Map each requested frame index to all of its positions in sorted_index
+                # (an index may be requested more than once).
+                frame_to_sorted_pos : Dict[int, List[int]] = {}
+                for pos, frame_idx in enumerate(sorted_index):
+                    frame_to_sorted_pos.setdefault(int(frame_idx), []).append(pos)
                 
                 # Pre-allocate array to store frames in sorted order
                 all_frames_list = [None] * len(sorted_index)
@@ -291,9 +293,9 @@ class PyAvVideoReader:
                         frame_np = next(self)
                     except StopIteration:
                         frame_np = past_frame_np
-                    if frame_i in sorted_index_set:
-                        # Store at the position corresponding to sorted_index order
-                        all_frames_list[frame_to_sorted_pos[frame_i]] = frame_np
+                    # Store at every position corresponding to sorted_index order
+                    for pos in frame_to_sorted_pos.get(frame_i, ()):
+                        all_frames_list[pos] = frame_np
                     past_frame_np = frame_np
                 all_frames_np = np.stack(all_frames_list, axis=0)
                 # Reorder from sorted order back to original order
