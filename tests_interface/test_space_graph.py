@@ -129,3 +129,12 @@ def test_gym_data_roundtrip(with_edge_features):
             assert space.contains(back)
             assert_tree_equal(back.nodes_features, x.nodes_features)
             assert_tree_equal(back.edges, x.edges, check_dtype=False)
+
+
+def test_single_node_graph_without_edges():
+    space = GraphSpace(B, _node_space(), max_nodes=1)
+    _, x = space.sample(_rng())
+    assert int(x.n_nodes) == 1 and space.contains(x)
+    # With edges, a single node cannot hold the required edge (self-loops excluded)
+    with pytest.raises(AssertionError):
+        GraphSpace(B, _node_space(), is_edge=True, max_nodes=1)

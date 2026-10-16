@@ -66,7 +66,8 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         assert max_edges is None or min_edges <= max_edges, f"Expects the minimum number of edges to be at most the maximum number of edges, actual values: {min_edges} > {max_edges}"
         assert max_edges is None or max_edges >= min_edges, f"Expects the maximum number of edges to be at least the minimum number of edges, actual values: {max_edges} < {min_edges}"
         max_possible_edges = max_nodes * (max_nodes - 1) if max_nodes is not None else None
-        if max_possible_edges is not None:
+        # Edge-count limits only constrain spaces that carry edges
+        if is_edge and max_possible_edges is not None:
             assert min_edges <= max_possible_edges, f"Expects the minimum number of edges to be at most {max_possible_edges}, actual value: {min_edges}"
             assert max_edges is None or max_edges <= max_possible_edges, f"Expects the maximum number of edges to be at most {max_possible_edges}, actual value: {max_edges}"
         
