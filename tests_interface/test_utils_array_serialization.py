@@ -65,3 +65,12 @@ def test_legacy_payload_without_dtype_still_loads():
     backend, out = deserialize_scalar_or_array_value(payload)
     assert backend is NumpyComputeBackend
     np.testing.assert_array_equal(out, [1.0, 2.0])
+
+
+@pytest.mark.parametrize("value", [np.float32(1.5), np.float64(-2.0), np.int64(4), np.bool_(True)])
+def test_numpy_scalars_serialize_as_python_scalars(value):
+    backend, payload = serialize_scalar_or_array_value(value)
+    assert backend is None and payload["scalar"] is True
+    json.dumps(payload)
+    _, out = deserialize_scalar_or_array_value(payload)
+    assert out == value.item()

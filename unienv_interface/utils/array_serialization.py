@@ -24,6 +24,9 @@ def serialize_scalar_or_array_value(
     """
     if value is None:
         return None, None
+    if isinstance(value, np.generic):
+        # numpy scalars (e.g. np.float32(1.0)) are not backend arrays
+        value = value.item()
     if isinstance(value, (int, float)):
         return None, {"scalar": True, "value": value, "backend": None}
 
