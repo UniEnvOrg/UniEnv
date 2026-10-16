@@ -36,7 +36,7 @@ class CropTransformation(DataTransformation):
             if len(new_low.shape) < len(source_space.shape):
                 new_low = source_space.backend.reshape(
                     new_low,
-                    (-1,) * (len(source_space.shape) - len(new_low.shape)) + new_low.shape
+                    (1,) * (len(source_space.shape) - len(new_low.shape)) + tuple(new_low.shape)
                 )
             new_low = source_space.backend.astype(new_low, source_space.dtype)
             if source_space.device is not None:
@@ -46,7 +46,7 @@ class CropTransformation(DataTransformation):
             if len(new_high.shape) < len(source_space.shape):
                 new_high = source_space.backend.reshape(
                     new_high,
-                    (-1,) * (len(source_space.shape) - len(new_high.shape)) + new_high.shape
+                    (1,) * (len(source_space.shape) - len(new_high.shape)) + tuple(new_high.shape)
                 )
             new_high = source_space.backend.astype(new_high, source_space.dtype)
             if source_space.device is not None:
