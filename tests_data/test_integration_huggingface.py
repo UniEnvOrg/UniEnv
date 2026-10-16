@@ -81,3 +81,24 @@ def test_flattened_access(wrapped):
     flat = ds.get_flattened_at(idx)
     assert_tree_equal(flat, sfu.flatten_data(ds._batched_space, ds.get_at(idx), start_dim=1))
     assert_tree_equal(ds.get_flattened_at(2), sfu.flatten_data(ds.single_space, ds.get_at(2)))
+
+
+def test_get_column(wrapped):
+    # Regression: get_column returned rows like {"obs": ...} while advertising the column's space.
+    ds, backend = wrapped
+    col = ds.get_column(["obs"])
+    assert col.single_space == ds.single_space["obs"]
+    idx = backend.asarray(np.array([2, 7]))
+    out = col.get_at(idx)
+    assert col._batched_space.contains(out) or tuple(out.shape) == (2, 2)
+    assert_tree_equal(to_numpy(out), _expected(np.array([2, 7]))["obs"])
+    assert_tree_equal(to_numpy(col.get_at(3)), np.array([3, -3], dtype=np.float32))
+
+
+def test_get_column_dotted_name(backend, device):
+    if backend is not NB:
+        pytest.skip("backend independent")
+    hf = datasets.Dataset.from_dict({"observation.state": [[1.0], [2.0]], "action": [[0.0], [1.0]]})
+    ds = HFAsUniEnvDataset.create(hf, NB)
+    col = ds.get_column(["observation", "state"])
+    assert_tree_equal(col.get_at(np.array([1])), np.array([[2.0]]), check_dtype=False)
