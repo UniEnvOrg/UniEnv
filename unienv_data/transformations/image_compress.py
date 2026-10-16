@@ -39,6 +39,19 @@ CONSERVATIVE_HEADER_BYTES = {
     "JPEG": 1024,
 }
 
+_TORCHVISION_DECODE_JPEG = None  # resolved on first use: (decode_jpeg, ImageReadMode), or False
+
+def _torchvision_decode_jpeg():
+    """``(torchvision.io.decode_jpeg, ImageReadMode)`` if torchvision is usable, else None."""
+    global _TORCHVISION_DECODE_JPEG
+    if _TORCHVISION_DECODE_JPEG is None:
+        try:
+            from torchvision.io import decode_jpeg, ImageReadMode
+            _TORCHVISION_DECODE_JPEG = (decode_jpeg, ImageReadMode)
+        except Exception:  # not installed, or built against another torch
+            _TORCHVISION_DECODE_JPEG = False
+    return _TORCHVISION_DECODE_JPEG or None
+
 class ImageCompressTransformation(DataTransformation):
     has_inverse = True
 
@@ -318,13 +331,7 @@ class ImageDecompressTransformation(DataTransformation):
         img.close()
         return img_array
     
-    def transform(self, source_space, data):
-        self.validate_source_space(source_space)
-        data_numpy = source_space.backend.to_numpy(data)
-        flat_data_numpy = data_numpy.reshape(-1, data_numpy.shape[-1])
-        image_shape = (self.target_height, self.target_width)
-        if self.target_channels is not None:
-            image_shape = image_shape + (self.target_channels,)
+    def _decode_with_pil(self, flat_data_numpy : np.ndarray, image_shape) -> np.ndarray:
         flat_decompressed_image = np.zeros((flat_data_numpy.shape[0], *image_shape), dtype=np.uint8)
         for i in range(flat_data_numpy.shape[0]):
             byte_array : np.ndarray = flat_data_numpy[i]
@@ -336,6 +343,56 @@ class ImageDecompressTransformation(DataTransformation):
                 # Grayscale JPEGs decode to (H, W); restore the channel axis.
                 decoded = decoded[..., None]
             flat_decompressed_image[i] = decoded
+        return flat_decompressed_image
+
+    def _decode_jpeg_batch(self, flat_data_numpy : np.ndarray, image_shape) -> Optional[np.ndarray]:
+        """
+        Decode every row at once with ``torchvision.io.decode_jpeg`` (libjpeg-turbo: the same
+        pixels as PIL for these JPEGs, without PIL's per-image overhead). Returns None when
+        that does not apply (torchvision missing, a ``mode`` conversion requested, non-JPEG
+        data, or images PIL would decode into another layout, e.g. CMYK); the caller then
+        decodes with PIL, which also reports errors as before.
+        """
+        if self.mode is not None or self.format not in (None, "JPEG") or flat_data_numpy.shape[0] == 0:
+            return None
+        tv = _torchvision_decode_jpeg()
+        if tv is None:
+            return None
+        decode_jpeg, ImageReadMode = tv
+        if flat_data_numpy.shape[1] < 2 or not np.all(flat_data_numpy[:, :2] == np.array([0xFF, 0xD8], dtype=np.uint8)):
+            return None  # not all JPEG (start-of-image marker)
+        import torch
+        if not flat_data_numpy.flags.writeable or not flat_data_numpy.flags.c_contiguous:
+            flat_data_numpy = np.array(flat_data_numpy, order="C")
+        try:
+            decoded = decode_jpeg([torch.from_numpy(row) for row in flat_data_numpy], mode=ImageReadMode.UNCHANGED)
+        except Exception:
+            return None
+        out = np.empty((flat_data_numpy.shape[0], *image_shape), dtype=np.uint8)
+        for i, image in enumerate(decoded):  # (C, H, W)
+            channels = image.shape[0]
+            if tuple(image.shape[1:]) != tuple(image_shape[:2]) or channels not in (1, 3):
+                return None
+            image = image.permute(1, 2, 0).numpy()
+            if len(image_shape) == 2:
+                if channels != 1:
+                    return None
+                image = image[..., 0]
+            elif channels != 1 and channels != image_shape[2]:
+                return None
+            out[i] = image  # a grayscale image fills every channel, as with PIL
+        return out
+
+    def transform(self, source_space, data):
+        self.validate_source_space(source_space)
+        data_numpy = source_space.backend.to_numpy(data)
+        flat_data_numpy = data_numpy.reshape(-1, data_numpy.shape[-1])
+        image_shape = (self.target_height, self.target_width)
+        if self.target_channels is not None:
+            image_shape = image_shape + (self.target_channels,)
+        flat_decompressed_image = self._decode_jpeg_batch(flat_data_numpy, image_shape)
+        if flat_decompressed_image is None:
+            flat_decompressed_image = self._decode_with_pil(flat_data_numpy, image_shape)
         if self.target_channels is None:
             decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width))
         else:
