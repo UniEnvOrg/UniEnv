@@ -363,6 +363,9 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                             device=cached_values.device if hasattr(cached_values, "device") else "cpu"
                         )]
                         target = result[feat_name]
+                        if values.ndim == 1 and target.ndim > 1:
+                            # Scalar features (shape [1]) are stored as primitive columns.
+                            values = values.reshape(-1, *target.shape[1:])
                         if values.device != target.device:
                             values = values.to(target.device)
                         output_index_tensor = output_index_tensor_cpu.to(device=target.device)

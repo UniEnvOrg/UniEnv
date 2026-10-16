@@ -238,3 +238,16 @@ def test_parquet_cache_is_bounded(tmp_path):
     assert list(ds._parquet_cache.keys()) == [2, 1]
     ds.close()
     assert len(ds._parquet_cache) == 0
+
+
+@pytest.mark.slow
+def test_torch_backend_with_video(tmp_path):
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+    path = write_v3(tmp_path, data_files=[[0, 1], [2]], video_files=[[0], [1, 2]])
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=TB, device="cpu", video_backend="pyav")
+    batch = ds.get_at(torch.tensor(PICKS))
+    assert isinstance(batch[IMAGE_KEY], torch.Tensor) and batch[IMAGE_KEY].dtype == torch.uint8
+    assert _state_ids(batch) == PICKS.tolist()
+    _assert_frames(batch[IMAGE_KEY], PICKS)
+    assert ds.single_space.contains(ds.get_at(3))
