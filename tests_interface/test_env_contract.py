@@ -39,8 +39,8 @@ from unienv_interface.wrapper.transformation import TransformWrapper
 from tests_common import env_contract
 from tests_common.backends import cpu_backend_params
 from tests_common.env_gym import TinyGymEnv
-from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
-from tests_common.env_stubs import ArrayStepsStubFuncEnv as StubFuncEnv
+from tests_common.envs import StubEnv
+from tests_common.envs import StubFuncEnv
 from tests_common.env_worlds import CounterFuncNode, CounterNode, SimFuncWorld, SimWorld
 
 ZERO = np.zeros(2, np.float32)

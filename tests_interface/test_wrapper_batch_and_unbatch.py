@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from unienv_interface.wrapper import BatchifyWrapper, UnBatchifyWrapper
-from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
+from tests_common.envs import StubEnv
 from tests_common.trees import assert_tree_equal
 
 

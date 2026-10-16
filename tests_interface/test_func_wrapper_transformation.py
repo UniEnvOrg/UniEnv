@@ -10,7 +10,7 @@ from unienv_interface.space import BoxSpace
 from unienv_interface.transformations.batch_and_unbatch import BatchifyTransformation
 from unienv_interface.transformations.filter_dict import DictIncludeKeyTransformation
 from unienv_interface.transformations.rescale import RescaleTransformation
-from tests_common.env_stubs import ArrayStepsStubFuncEnv as StubFuncEnv
+from tests_common.envs import StubFuncEnv
 
 
 @pytest.mark.parametrize("batch_size", [None, 3])

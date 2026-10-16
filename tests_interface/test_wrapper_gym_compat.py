@@ -11,7 +11,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.space import BoxSpace, DictSpace
 from unienv_interface.wrapper.gym_compat import FromGymnasiumEnv, ToGymnasiumEnv
 from tests_common.env_gym import TinyGymEnv
-from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
+from tests_common.envs import StubEnv
 
 
 class NoContextStubEnv(StubEnv):

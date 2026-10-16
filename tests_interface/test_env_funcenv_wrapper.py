@@ -5,7 +5,7 @@ import pytest
 
 from unienv_interface.env_base.funcenv import FuncEnvBasedEnv
 from unienv_interface.env_base.funcenv_wrapper import FuncEnvWrapper
-from tests_common.env_stubs import ArrayStepsStubFuncEnv as StubFuncEnv
+from tests_common.envs import StubFuncEnv
 
 
 class _Plain(FuncEnvWrapper):

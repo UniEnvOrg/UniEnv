@@ -7,7 +7,7 @@ import pytest
 
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.env_base.vec_env import AsyncVecEnv, SyncVecEnv, data_stack
-from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
+from tests_common.envs import StubEnv
 from tests_common.trees import assert_tree_equal
 
 

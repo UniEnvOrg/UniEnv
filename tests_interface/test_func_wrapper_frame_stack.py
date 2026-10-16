@@ -5,7 +5,7 @@ import pytest
 
 from unienv_interface.env_base.funcenv import FuncEnvBasedEnv
 from unienv_interface.func_wrapper import FuncFrameStackWrapper, FuncFrameStackWrapperState
-from tests_common.env_stubs import ArrayStepsStubFuncEnv as StubFuncEnv
+from tests_common.envs import StubFuncEnv
 
 ZERO_ACTION = np.zeros(2, np.float32)
 

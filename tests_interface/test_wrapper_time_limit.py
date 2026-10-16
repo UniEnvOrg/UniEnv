@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from unienv_interface.wrapper import TimeLimitWrapper
-from tests_common.env_stubs import ArrayStepsStubEnv as StubEnv
+from tests_common.envs import StubEnv
 
 
 def test_unbatched_truncates_exactly_at_limit():

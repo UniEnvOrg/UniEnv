@@ -89,7 +89,7 @@ class StubEnv(Env):
         self.last_action = action.copy()
         self.position = self.position + action
         self.velocity = action.copy()
-        self.steps = self.steps + 1
+        self.steps = np.asarray(self.steps + 1)
         reward = -np.abs(self.position).sum(axis=-1)
         terminated = np.all(self.position > self.terminate_above, axis=-1)
         if self.batch_size is None:
@@ -156,7 +156,7 @@ class StubFuncEnv(FuncEnv):
         action = np.asarray(action, dtype=np.float32)
         position = state["position"] + action
         new_state = {"position": position, "velocity": action.copy(), "goal": state["goal"].copy(),
-                     "steps": state["steps"] + 1}
+                     "steps": np.asarray(state["steps"] + 1)}
         reward = -np.abs(position).sum(axis=-1)
         terminated = np.all(position > self.terminate_above, axis=-1)
         if self.batch_size is None:
