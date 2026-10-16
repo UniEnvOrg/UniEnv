@@ -15,6 +15,20 @@ def _is_jax_tracer(value : Any) -> bool:
     jax = sys.modules.get("jax")  # no jax imported -> there cannot be any tracer
     return jax is not None and isinstance(value, jax.core.Tracer)
 
+def _holds_jax_tracer(value : Any) -> bool:
+    """Return whether a space (recursively, through its attributes and containers) holds a jax tracer."""
+    if "jax" not in sys.modules:
+        return False
+    if _is_jax_tracer(value):
+        return True
+    if isinstance(value, Space):
+        return any(_holds_jax_tracer(v) for v in value.__dict__.values())
+    if isinstance(value, Mapping):
+        return any(_holds_jax_tracer(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_holds_jax_tracer(v) for v in value)
+    return False
+
 SpaceDataT = TypeVar("SpaceDataT", covariant=True)
 _SpaceBDeviceT = TypeVar("_SpaceBDeviceT", covariant=True)
 _SpaceBDTypeT = TypeVar("_SpaceBDTypeT", covariant=True)
@@ -26,7 +40,27 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
     operations needed by the rest of UniEnv: validation, sampling, empty value
     creation, serialization-friendly representation, and backend/device
     conversion for both the space definition and its data.
+
+    In-place changes to a space (reassigning one of its attributes, or e.g.
+    ``DictSpace.__setitem__``) increment the global ``Space._mutation_epoch``.
+    Caches keyed on a space's identity (e.g. in ``ChainedTransformation``)
+    include this counter, so mutating a space can never make them stale.
+    ``BoxSpace`` is immutable after construction and is not tracked.
     """
+    _mutation_epoch : int = 0
+    # Attributes that are lazily filled caches rather than part of the space definition
+    _UNTRACKED_ATTRS : frozenset = frozenset()
+
+    @staticmethod
+    def _notify_mutation() -> None:
+        """Record that some space was changed in place (invalidates dependent caches)."""
+        Space._mutation_epoch += 1
+
+    def __setattr__(self, name : str, value : Any) -> None:
+        if name in self.__dict__ and name not in self._UNTRACKED_ATTRS:
+            Space._notify_mutation()
+        object.__setattr__(self, name, value)
+
     def __init__(
         self,
         backend : ComputeBackend[ArrayAPIArray, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT],
@@ -34,10 +68,15 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         device : Optional[_SpaceBDeviceT] = None,
         dtype: Optional[_SpaceBDTypeT] = None,
     ):
-        self.backend = backend
-        self._shape = None if shape is None else tuple(shape)
-        self.dtype = dtype
-        self._device = device
+        # Written to ``__dict__`` directly: on a fresh space these are not mutations, and
+        # this keeps the tracking ``__setattr__`` off the construction path.
+        attrs = self.__dict__
+        if "backend" in attrs:  # re-initialised in place
+            Space._notify_mutation()
+        attrs["backend"] = backend
+        attrs["_shape"] = None if shape is None else tuple(shape)
+        attrs["dtype"] = dtype
+        attrs["_device"] = device
 
     @property
     def device(self) -> Optional[_SpaceBDeviceT]:

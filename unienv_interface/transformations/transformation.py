@@ -18,8 +18,21 @@ class DataTransformation(abc.ABC):
     Transformations are used by wrappers, storages, and batch views to adapt
     data while keeping enough metadata to derive the target space and, when
     supported, reconstruct the inverse transform.
+
+    Reassigning an attribute of a transformation increments the global
+    ``DataTransformation._config_epoch`` (attributes whose name ends with
+    ``_cache`` are exempt), so caches derived from a transformation's
+    configuration (e.g. ``ChainedTransformation``'s intermediate spaces) are
+    rebuilt. Containers and arrays held by a transformation should be replaced,
+    not mutated in place, once it has been used.
     """
     has_inverse: bool = False
+    _config_epoch: int = 0
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self.__dict__ and not name.endswith("_cache"):
+            DataTransformation._config_epoch += 1
+        super().__setattr__(name, value)
     
     @abc.abstractmethod
     def get_target_space_from_source(

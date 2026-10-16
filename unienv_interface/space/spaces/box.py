@@ -136,6 +136,8 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     cached on the instance; caches are dropped when pickling.
     """
     _CACHE_ATTRS = ("_low_b", "_high_b", "_contains_plan", "_sample_plan")
+    # Immutable: skip ``Space``'s mutation tracking, which would slow down construction
+    __setattr__ = object.__setattr__
 
     def __init__(
         self,

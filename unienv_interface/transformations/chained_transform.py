@@ -2,6 +2,7 @@ from typing import Union, Any, Optional, Iterable, List, Callable, Dict
 
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space import Space, DictSpace
+from unienv_interface.space.space import _holds_jax_tracer
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.transformations import serialization_utils as tsu
 
@@ -32,13 +33,50 @@ class ChainedTransformation(DataTransformation):
         source_space,
         data
     ):
-        new_space = source_space
         new_data = data
-        for transformation in self.transformations:
-            next_space = transformation.get_target_space_from_source(new_space)
-            new_data = transformation.transform(new_space, new_data)
-            new_space = next_space
+        for transformation, space in zip(self.transformations, self._intermediate_source_spaces(source_space)):
+            new_data = transformation.transform(space, new_data)
         return new_data
+
+    def _intermediate_source_spaces(self, source_space : Space) -> List[Space]:
+        """The source space each transformation of the chain sees, cached on the instance.
+
+        ``transform`` is called with the same source space every step, and
+        rebuilding the intermediate spaces (space construction and validation)
+        dominated its cost. The cache is keyed on the identity of the source
+        space and of the transformations, plus the global space-mutation and
+        transformation-config counters, so in-place changes to a space or a
+        transformation (see ``Space._notify_mutation`` and
+        ``DataTransformation.__setattr__``) rebuild it. Spaces built inside a jax
+        trace (holding tracers) are never cached.
+        """
+        transformations = self.transformations
+        cache = self.__dict__.get("_spaces_cache")
+        if (
+            cache is not None
+            and cache[0] is source_space
+            and cache[1] == Space._mutation_epoch
+            and cache[2] == DataTransformation._config_epoch
+            and len(cache[3]) == len(transformations)
+            and all(a is b for a, b in zip(cache[3], transformations))
+        ):
+            return cache[4]
+        spaces = [source_space]
+        for transformation in transformations[:-1]:  # the final target space is not needed
+            spaces.append(transformation.get_target_space_from_source(spaces[-1]))
+        if not any(_holds_jax_tracer(space) for space in spaces):
+            # Counters read after building: transformations may build new spaces via
+            # in-place assignment (e.g. ``DictSpace.__setitem__`` on a copy)
+            self._spaces_cache = (
+                source_space, Space._mutation_epoch, DataTransformation._config_epoch,
+                tuple(transformations), spaces,
+            )
+        return spaces
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_spaces_cache", None)
+        return state
 
     def direction_inverse(
         self,

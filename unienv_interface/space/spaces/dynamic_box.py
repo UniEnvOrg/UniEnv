@@ -5,6 +5,8 @@ from .box import _sample_integers_in_closed_interval, _build_sample_plan, _sampl
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    _UNTRACKED_ATTRS = frozenset({"_sample_plan"})
+
     @staticmethod
     def pad_array_on_axis(
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],

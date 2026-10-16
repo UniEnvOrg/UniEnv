@@ -5,6 +5,48 @@ from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from collections.abc import KeysView
 
+class _SpaceDict(dict):
+    """``DictSpace.spaces``: a dict that reports in-place changes (see ``Space._notify_mutation``)."""
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        Space._notify_mutation()
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        Space._notify_mutation()
+
+    def __ior__(self, other):
+        result = super().__ior__(other)
+        Space._notify_mutation()
+        return result
+
+    def clear(self):
+        super().clear()
+        Space._notify_mutation()
+
+    def pop(self, *args):
+        result = super().pop(*args)
+        Space._notify_mutation()
+        return result
+
+    def popitem(self):
+        result = super().popitem()
+        Space._notify_mutation()
+        return result
+
+    def setdefault(self, key, default=None):
+        result = super().setdefault(key, default)
+        Space._notify_mutation()
+        return result
+
+    def update(self, *args, **kwargs):
+        super().update(*args, **kwargs)
+        Space._notify_mutation()
+
+    def __reduce__(self):
+        # Pickle as a plain dict (``DictSpace.__setstate__`` wraps it again)
+        return dict, (dict(self),)
+
 class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
     """Cartesian product of named subspaces represented as a mapping."""
     def __init__(
@@ -199,6 +241,22 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             spaces=self.spaces.copy(),
             device=self.device
         )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "spaces" and type(value) is not _SpaceDict:
+            value = _SpaceDict(value)
+        if name in self.__dict__:
+            Space._notify_mutation()
+        object.__setattr__(self, name, value)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["spaces"] = dict(self.spaces)  # plain dict: loadable without ``_SpaceDict``
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__dict__["spaces"] = _SpaceDict(self.__dict__.get("spaces", {}))
 
     def data_to(self, data, backend = None, device = None):
         return {
