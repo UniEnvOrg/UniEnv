@@ -4,11 +4,12 @@ Usage (from the repository root)::
 
     python benchmarks/envs/bench_remote.py              # codec + memory + websocket
     python benchmarks/envs/bench_remote.py --quick      # short smoke run
-    python benchmarks/envs/bench_remote.py codec memory websocket count   # pick sections
+    python benchmarks/envs/bench_remote.py codec refresh memory websocket count   # pick sections
     UNIENV_ROOT=/path/to/main-checkout python benchmarks/envs/bench_remote.py   # A/B
 
 ``codec`` times Codec.encode / decode of a step response; ``memory`` and ``websocket``
-time one client ``env.step`` through a RemoteServer; ``count`` reports codec
+time one client ``env.step`` through a RemoteServer; ``refresh`` times the client
+proxy's per-response descriptor refresh; ``count`` reports codec
 encode/decode calls and bytes per step (server and client together, MemoryTransport).
 Observations are a 32-float state plus an optional uint8 image.
 """
@@ -60,6 +61,21 @@ def remote_case(transport, batch, img):
         server.close()
 
 
+def refresh_case(batch, img):
+    server = RemoteServer()
+    try:
+        server.register("env", ImageEnv(batch, img))
+        client = server.connect()
+        try:
+            env = client.env("env")
+            descriptor = dict(client.descriptors["env"])
+            report(f"proxy refresh {_label(img)}", bench(lambda: env._refresh(descriptor)), batch)
+        finally:
+            client.close()
+    finally:
+        server.close()
+
+
 def count_case(batch, img, steps=20):
     stats = collections.Counter()
     original_encode, original_decode = codec_module.Codec.encode, codec_module.Codec.decode
@@ -102,7 +118,7 @@ def count_case(batch, img, steps=20):
 
 
 def main():
-    sections = cli_args() or ["codec", "memory", "websocket", "count"]
+    sections = cli_args() or ["codec", "refresh", "memory", "websocket", "count"]
     cases = QUICK_CASES if QUICK else CASES
     for section in sections:
         for batch, img in cases:
@@ -110,6 +126,8 @@ def main():
                 codec_case(batch, img)
             elif section == "count":
                 count_case(batch, img)
+            elif section == "refresh":
+                refresh_case(batch, img)
             else:
                 remote_case(section, batch, img)
 
