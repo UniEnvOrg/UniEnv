@@ -254,7 +254,7 @@ def test_unknown_decode_backend_raises_on_read(tmp_path):
 # Decoding paths
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("seek_mode", ["exact"])
+@pytest.mark.parametrize("seek_mode", ["exact", "approximate"])
 @pytest.mark.parametrize("cache_decoders", [False, True])
 def test_seek_modes_and_decoder_cache(tmp_path, seek_mode, cache_decoders):
     frames = _frames(12, seed=3)

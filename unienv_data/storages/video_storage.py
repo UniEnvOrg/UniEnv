@@ -192,9 +192,25 @@ class PyAvVideoReader:
 
                 return
         else:
-            next_frame = next(self._frame_iterator)
+            # Approximate mode trusts the stream's pts / frame-rate metadata and does not
+            # pick the nearest frame on overshoot, but it still has to decode forward from
+            # the keyframe the demuxer landed on (which can be many frames before the target).
+            last_frame = None
+            last_frame_index = None
+            while True:
+                try:
+                    next_frame = next(self._frame_iterator)
+                except (av.error.EOFError, StopIteration):
+                    if last_frame is None:
+                        raise RuntimeError(f"Reached end of video while seeking to frame index {frame_index}")
+                    next_frame, landed_frame_index = last_frame, last_frame_index
+                    break
+                landed_frame_index = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else frame_index
+                if landed_frame_index >= frame_index:
+                    break
+                last_frame, last_frame_index = next_frame, landed_frame_index
             self._frame_buffer.append(next_frame)
-            self._pointer_position = self.pts_to_frame_index(next_frame.pts) if next_frame.pts is not None else frame_index
+            self._pointer_position = landed_frame_index
 
     def tell(self) -> int:
         return self._pointer_position
