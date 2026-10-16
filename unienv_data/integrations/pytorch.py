@@ -20,13 +20,26 @@ class UniEnvAsPyTorchDataset(Dataset):
     ):
         """
         A PyTorch Dataset wrapper for UniEnvPy batches.
-        Note that UniEnv's `BatchBase` will automatically collate data when indexed with batches, and therefore in the dataloader you can set `collate_fn=None`.
+        `__getitems__` fetches a whole mini-batch with a single (already collated) batch access, so
+        PyTorch's default collation must be bypassed: pass ``collate_fn=UniEnvAsPyTorchDataset.collate_fn``
+        (the identity) to the ``DataLoader``. Note that ``collate_fn=None`` selects PyTorch's
+        ``default_collate``, which cannot handle a pre-collated batch.
+
+        Example::
+
+            loader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=dataset.collate_fn)
         
         Args:
             batch (BatchBase): The UniEnvPy batch to wrap.
+            include_metadata (bool): Whether items are ``(data, metadata)`` tuples.
         """
         self.batch = batch
         self.include_metadata = include_metadata
+
+    @staticmethod
+    def collate_fn(batch : Any) -> Any:
+        """Identity collation: batches returned by ``__getitems__`` are already collated."""
+        return batch
 
     def __len__(self) -> int:
         """
