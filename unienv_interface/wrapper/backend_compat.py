@@ -32,12 +32,13 @@ def data_to(
             for key, value in data.items()
         }
     elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
+        sequence_type = type(data)
         data = [
             data_to(value, source_backend, target_backend, target_device)
             for value in data
         ]
         try:
-            data = type(data)(data)  # Preserve the type of the original sequence
+            data = sequence_type(data)  # Preserve the type of the original sequence
         except:
             pass
     return data

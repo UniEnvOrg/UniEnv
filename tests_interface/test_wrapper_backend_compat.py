@@ -110,3 +110,10 @@ def test_deprecated_constructors_still_work(stub_env):
         warnings.simplefilter("ignore", DeprecationWarning)
         assert isinstance(ToBackendWrapper(stub_env, NumpyComputeBackend), ToBackendOrDeviceWrapper)
         assert isinstance(ToDeviceWrapper(stub_env, None), ToBackendOrDeviceWrapper)
+
+
+def test_data_to_handles_nested_containers():
+    data = {"a": np.zeros(2), "b": [np.ones(1), "text", 3], "c": (np.ones(1),), "d": None}
+    out = data_to(data, NumpyComputeBackend, NumpyComputeBackend)
+    assert out["b"][1] == "text" and out["b"][2] == 3 and out["d"] is None
+    assert isinstance(out["c"], tuple)
