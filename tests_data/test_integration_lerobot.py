@@ -291,3 +291,102 @@ def test_parquet_file_cache_is_bounded(tmp_path):
     assert list(ds._parquet_cache.keys()) == [1, 2]
     ds.close()
     assert len(ds._parquet_file_cache) == 0
+
+
+class _CountingReaders:
+    """Patches the PyAV reader class to record the readers it opens and their kwargs."""
+
+    def __init__(self, monkeypatch):
+        from unienv_data.storages import video_storage
+        self.opened = []
+        counter = self
+
+        class Reader(video_storage.PyAvVideoReader):
+            def __init__(self, *args, **kwargs):
+                counter.opened.append((self, kwargs))
+                super().__init__(*args, **kwargs)
+        monkeypatch.setattr(video_storage, "PyAvVideoReader", Reader)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("hwaccel", ["auto", None])
+def test_video_readers_are_reused_and_match_fresh_readers(tmp_path, monkeypatch, hwaccel):
+    path = write_v3(tmp_path, data_files=[[0, 1, 2]], video_files=[[0, 1], [2]])
+    rng = np.random.default_rng(0)
+    picks = [rng.integers(0, TOTAL, size=int(rng.integers(1, 6))) for _ in range(12)]
+    fresh = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB, video_backend="pyav")
+    fresh._video_reader_cache_max = 0  # opens and closes a reader per call, as before
+    expected = [to_numpy(fresh.get_at(idx)[IMAGE_KEY]) for idx in picks]
+    readers = _CountingReaders(monkeypatch)
+    kwargs = {} if hwaccel == "auto" else {"video_hwaccel": hwaccel}
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB, video_backend="pyav", **kwargs)
+    for idx, images in zip(picks, expected):
+        np.testing.assert_array_equal(to_numpy(ds.get_at(idx)[IMAGE_KEY]), images)
+        _assert_frames(images, idx)
+    assert len(readers.opened) == 2  # one per video file
+    assert all(kw["hwaccel"] == hwaccel for _, kw in readers.opened)
+    ds.close()
+    assert all(reader.container is None for reader, _ in readers.opened)
+    assert not ds._video_reader_cache
+
+
+@pytest.mark.slow
+def test_video_reader_cache_is_bounded_and_thread_safe(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    path = write_v3(tmp_path, data_files=[[0, 1, 2]], video_files=[[0], [1], [2]])
+    readers = _CountingReaders(monkeypatch)
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB, video_backend="pyav")
+    ds._video_reader_cache_max = 2
+    for e in range(3):
+        ds.get_episode(e)
+    assert len(ds._video_reader_cache) == 2
+    evicted = readers.opened[0][0]
+    assert evicted.container is None
+    rng = np.random.default_rng(1)
+    picks = [rng.integers(0, TOTAL, size=4) for _ in range(32)]
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda idx: to_numpy(ds.get_at(idx)[IMAGE_KEY]), picks))
+    for idx, images in zip(picks, results):
+        _assert_frames(images, idx)
+    assert len(ds._video_reader_cache) <= 2
+    ds.close()
+    assert all(reader.container is None for reader, _ in readers.opened)
+
+
+@pytest.mark.slow
+def test_video_readers_are_not_shared_with_forked_or_unpickled_copies(tmp_path):
+    import multiprocessing as mp
+    import pickle
+    path = write_v3(tmp_path, data_files=[[0, 1, 2]], video_files=[[0, 1, 2]])
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB, video_backend="pyav")
+    _assert_frames(ds.get_at(PICKS)[IMAGE_KEY], PICKS)
+    (parent_reader,) = ds._video_reader_cache.values()
+
+    clone = pickle.loads(pickle.dumps(ds))
+    assert not clone._video_reader_cache
+    _assert_frames(clone.get_at(PICKS)[IMAGE_KEY], PICKS)
+    assert next(iter(clone._video_reader_cache.values())) is not parent_reader
+    clone.close()
+
+    def child(queue):
+        try:
+            images = to_numpy(ds.get_at(PICKS)[IMAGE_KEY])
+            (reader,) = ds._video_reader_cache.values()
+            ok = reader is not parent_reader and ds._inherited_video_readers == [parent_reader]
+            ds.close()  # must not close the parent's reader in the child
+            queue.put((ok and parent_reader.container is not None, images))
+        except BaseException as e:  # report instead of hanging the parent
+            queue.put((repr(e), None))
+
+    ctx = mp.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=child, args=(queue,))
+    proc.start()
+    ok, images = queue.get(timeout=60)
+    proc.join(timeout=30)
+    assert ok is True, ok
+    _assert_frames(images, PICKS)
+    # The parent's reader is still open and in use.
+    assert ds._video_reader_cache[next(iter(ds._video_reader_cache))] is parent_reader
+    _assert_frames(ds.get_at(PICKS)[IMAGE_KEY], PICKS)
+    ds.close()
