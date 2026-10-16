@@ -106,7 +106,7 @@ class Wrapper(
     @property
     def rng(self) -> WrapperBRngT:
         """Returns the :attr:`Env` :attr:`rng` attribute."""
-        return self._rng or self.env.rng
+        return self._rng if self._rng is not None else self.env.rng
 
     @rng.setter
     def rng(self, value: WrapperBRngT):
