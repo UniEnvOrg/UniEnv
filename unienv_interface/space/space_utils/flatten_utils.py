@@ -246,6 +246,8 @@ def _flatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_di
 def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
     padded_data = space.backend.reshape(data, data.shape[:start_dim] + space.shape_high[start_dim:])
+    # The flat array may have been promoted to a common dtype (e.g. inside a Dict/Tuple)
+    padded_data = space.backend.astype(padded_data, space.dtype)
     data = space.unpad_data(padded_data, start_axis=start_dim)
     return data
 

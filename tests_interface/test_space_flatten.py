@@ -100,3 +100,16 @@ def test_zero_length_text_flattens_to_empty_box():
     space = TextSpace(B, 0, charset="ab")
     assert sfu.flat_dim(space) == 0
     _check_roundtrip(space, "")
+
+
+@pytest.mark.parametrize("dtype", [np.int32, np.float32])
+def test_dynamic_box_in_mixed_dict_keeps_dtype(dtype):
+    # The flat array is promoted to a common dtype; unflattening must restore the leaf dtype.
+    space = DictSpace(B, {
+        "a": BinarySpace(B, ()),
+        "b": DynamicBoxSpace(B, 0, 3, (1,), (3,), dtype, fill_value=-1),
+        "c": BoxSpace(B, 0.0, 1.0, np.float64, shape=(1,)),
+    })
+    for seed in range(3):
+        _, x = space.sample(_rng(seed))
+        _check_roundtrip(space, x)
