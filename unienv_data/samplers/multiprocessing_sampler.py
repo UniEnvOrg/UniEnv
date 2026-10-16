@@ -114,6 +114,82 @@ class _SamplerTask:
         state["_stripped_rngs"] = stripped
         return state
 
+class _InSlot:
+    """Placeholder sent instead of a result leaf that a worker copied into its shared slot."""
+    __slots__ = ()
+
+def _map_tree(fn : Callable[..., Any], tree : Any, *others : Any) -> Any:
+    """Map ``fn`` over the leaves of ``tree`` (dicts, lists, tuples), zipped with the matching
+    nodes of ``others`` (``None`` where another tree has no such node)."""
+    if isinstance(tree, dict):
+        return {k: _map_tree(fn, v, *(None if o is None else o[k] for o in others)) for k, v in tree.items()}
+    if isinstance(tree, (tuple, list)):
+        mapped = [_map_tree(fn, v, *(None if o is None else o[i] for o in others)) for i, v in enumerate(tree)]
+        return type(tree)(*mapped) if hasattr(tree, "_fields") else type(tree)(mapped)
+    return fn(tree, *others)
+
+def _allocate_shared_slots(exemplar : Any, n_slots : int) -> Optional[List[Any]]:
+    """
+    ``n_slots`` copies of ``exemplar`` whose torch CPU tensors are moved to shared memory
+    (other leaves become ``None``), or ``None`` if ``exemplar`` holds no such tensor.
+    """
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return None
+    found = False
+    def alloc(x):
+        nonlocal found
+        if isinstance(x, torch.Tensor) and x.device.type == "cpu":
+            found = True
+            return torch.empty_like(x).share_memory_()
+        return None
+    slots = [_map_tree(alloc, exemplar) for _ in range(n_slots)]
+    return slots if found else None
+
+class _SharedSlotTask:
+    """
+    Worker task that copies the tensors of a result into a pre-shared buffer slot and only
+    sends back the slot id and a skeleton of the result; the parent copies them out.
+
+    Sending tensors through a result queue otherwise moves each one into a fresh
+    shared-memory file and passes one file descriptor per tensor and batch, which dominates
+    when small batches arrive at a high rate. Leaves that do not match their slot (shape,
+    dtype, device) are sent as usual, and so is a result whose structure differs from the
+    slots.
+    """
+    def __init__(self, task : _SamplerTask, slots : List[Any]):
+        self.task = task
+        self.slots = slots
+
+    def reseed(self, seed : int) -> None:
+        self.task.reseed(seed)
+
+    def __call__(self, slot_id : int) -> Tuple[int, bool, Any]:
+        result = self.task(slot_id)
+        def pack(value, slot):
+            if (
+                slot is not None
+                and getattr(value, "shape", None) == slot.shape
+                and getattr(value, "dtype", None) == slot.dtype
+                and getattr(getattr(value, "device", None), "type", None) == "cpu"
+            ):
+                slot.copy_(value)
+                return _InSlot()
+            return value
+        try:
+            return slot_id, True, _map_tree(pack, result, self.slots[slot_id])
+        except (KeyError, IndexError, TypeError):
+            return slot_id, False, result
+
+    @staticmethod
+    def unpack(packed : bool, skeleton : Any, slot : Any) -> Any:
+        if not packed:
+            return skeleton
+        return _map_tree(
+            lambda value, slot_value: slot_value.clone() if isinstance(value, _InSlot) else value,
+            skeleton, slot
+        )
+
 def _draw_worker_seeds(
     sampler : BatchSampler,
     n_workers : int,
@@ -245,29 +321,48 @@ def wrap_sample_function(
     doze_time : float = 0.001,
     daemon : Optional[bool] = None,
     done_event = None,
+    exemplar_fn : Optional[Callable[[], Any]] = None,
 ):
+    """
+    ``exemplar_fn`` (optional) returns a result-shaped exemplar; its torch CPU tensors get
+    pre-allocated shared-memory slots that workers write their results into (see
+    :class:`_SharedSlotTask`).
+    """
     fn_fetch = _SamplerTask(sampler, fn, takes_work_info=False)
 
     def target_fn():
         if hasattr(target_fn, "sample_manager") and target_fn.sample_manager is not None:
             sample_manager : MultiProcessingSampleManager = target_fn.sample_manager
         else:
+            # One slot per request in flight: the n_buffers queued ones plus the one added below.
+            slots = None if exemplar_fn is None else _allocate_shared_slots(exemplar_fn(), n_buffers + 1)
+            task = fn_fetch if slots is None else _SharedSlotTask(fn_fetch, slots)
             sample_manager = MultiProcessingSampleManager(
-                fn_fetch, 
+                task, 
                 n_workers=n_workers, 
                 ctx=ctx,
                 done_event=done_event,
                 doze_time=doze_time,
                 daemon=daemon,
-                worker_init_fn=fn_fetch.reseed,
+                worker_init_fn=task.reseed,
                 worker_seeds=_draw_worker_seeds(sampler, n_workers),
             )
-            for _ in range(n_buffers):
-                sample_manager.add_work(1)
+            target_fn.slots = slots
+            target_fn.free_slots = None if slots is None else [n_buffers]
+            for i in range(n_buffers):
+                sample_manager.add_work(1 if slots is None else i)
             target_fn.sample_manager = sample_manager
         
-        sample_manager.add_work(1)
-        return sample_manager.fetch()
+        slots = target_fn.slots
+        if slots is None:
+            sample_manager.add_work(1)
+            return sample_manager.fetch()
+        sample_manager.add_work(target_fn.free_slots.pop())
+        slot_id, packed, skeleton = sample_manager.fetch()
+        # Copy the result out so that the slot can be handed to the next request.
+        result = _SharedSlotTask.unpack(packed, skeleton, slots[slot_id])
+        target_fn.free_slots.append(slot_id)
+        return result
 
     target_fn.close = close_fn_for_wrapped_fn(target_fn)
     return target_fn
@@ -356,7 +451,26 @@ class MultiprocessingSampler(
         ctx : Optional[mp.context.BaseContext] = None,
         doze_time : float = 0.005,
         daemon : Optional[bool] = None,
+        shared_memory : bool = False,
     ):
+        """
+        Run ``sampler``'s ``sample*`` functions (and epoch iteration over its ``get*_at``
+        functions) in ``n_workers`` background processes, keeping ``n_buffers`` batches queued.
+
+        Workers pay off when producing a batch is expensive (decoding, transformations,
+        storage reads). For data already in RAM (e.g. an in-memory ``ReplayBuffer``),
+        sampling in-process is usually faster: every batch is otherwise copied to the
+        parent through shared memory.
+
+        Args:
+            shared_memory: For ``sample()`` / ``sample_with_metadata()`` of samplers producing
+                torch CPU tensors, workers copy each batch into one of ``n_buffers + 1``
+                pre-allocated shared-memory slots and the parent copies it out, instead of
+                sending every tensor through the result queue (a new shared-memory file and
+                file descriptor per tensor and batch). This pays off when batches arrive at a
+                high rate (e.g. ~2x for 64 samples of 48 KiB); for large batches the copy out of
+                the slot in this process can cost more than it saves, so it is off by default.
+        """
         #TODO: Implement metadata space for this sampler
         super().__init__(
             sampler.single_space,
@@ -377,9 +491,18 @@ class MultiprocessingSampler(
         for name in dir(sampler):
             attr = getattr(sampler, name)
             if callable(attr) and name.startswith("sample"):
+                exemplar_fn = None
+                if shared_memory and name == "sample":
+                    exemplar_fn = sampler.sampled_space.create_empty
+                elif shared_memory and name == "sample_with_metadata":
+                    exemplar_fn = lambda: (
+                        sampler.sampled_space.create_empty(),
+                        None if sampler.sampled_metadata_space is None else sampler.sampled_metadata_space.create_empty(),
+                    )
                 wrapped_fn = wrap_sample_function(
                     sampler, self.n_workers, self.n_buffers, attr,
                     ctx=self.mp_ctx, doze_time=doze_time, daemon=daemon,
+                    exemplar_fn=exemplar_fn,
                 )
                 setattr(self, name, wrapped_fn)
                 self.functions_to_close.append(wrapped_fn)

@@ -195,3 +195,80 @@ def test_worker_threads_are_limited_only_if_torch_is_imported(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch")
     mps._limit_worker_intraop_threads()
     assert calls == [1]
+
+
+def _assert_rb_rows_consistent(batch):
+    # make_rb rows: obs[i] = [2i, 2i + 1], episode_id = i // 4, episode_end = i % 4 == 3.
+    i = (batch["obs"][:, 0] / 2).long()
+    assert torch.equal(batch["obs"][:, 1], batch["obs"][:, 0] + 1)
+    assert torch.equal(batch["episode_id"], i // 4)
+    assert torch.equal(batch["episode_end"], i % 4 == 3)
+
+
+@pytest.mark.parametrize("ctx", ["fork", "spawn"])
+def test_shared_memory_batches_match_and_are_not_overwritten(ctx):
+    sampler = MultiprocessingSampler(
+        StepSampler(make_rb(200), batch_size=16, seed=0),
+        n_workers=2, n_buffers=3, ctx=mp.get_context(ctx), shared_memory=True,
+    )
+    try:
+        batches = [sampler.sample() for _ in range(6)]
+        snapshots = [{k: v.clone() for k, v in b.items()} for b in batches]
+        batches += [sampler.sample() for _ in range(12)]  # every slot is reused several times
+        assert sampler.sample.slots is not None and len(sampler.sample.slots) == 4
+        for b in batches:
+            assert sampler.sampled_space.contains(b)
+            _assert_rb_rows_consistent(b)
+        # Returned batches are copies: refilling their slot does not change them.
+        for b, snap in zip(batches, snapshots):
+            assert all(torch.equal(b[k], snap[k]) for k in snap)
+        assert len({tuple(b["obs"][:, 0].tolist()) for b in batches}) == len(batches)
+        data, meta = sampler.sample_with_metadata()
+        _assert_rb_rows_consistent(data)
+        assert meta is None and sampler.sample_with_metadata.slots is not None
+        assert sampler.sample_flat().shape[0] == 16
+        assert sampler.sample_flat.slots is None  # only sample / sample_with_metadata use slots
+    finally:
+        sampler.close()
+
+
+def test_shared_memory_is_off_by_default():
+    sampler = _sampler()
+    try:
+        sampler.sample()
+        assert sampler.sample.slots is None
+    finally:
+        sampler.close()
+
+
+def test_shared_memory_without_torch_tensors_falls_back():
+    from tests_common.batch_helpers import numpy_array_batch
+    sampler = MultiprocessingSampler(
+        StepSampler(numpy_array_batch(40, with_metadata=False), batch_size=4, seed=0),
+        n_workers=2, n_buffers=2, ctx=mp.get_context("fork"), shared_memory=True,
+    )
+    try:
+        batch = sampler.sample()
+        assert sampler.sample.slots is None
+        assert sampler.sampled_space.contains(batch)
+    finally:
+        sampler.close()
+
+
+def test_shared_slot_task_sends_mismatching_leaves_as_is():
+    from unienv_data.samplers.multiprocessing_sampler import _SharedSlotTask, _allocate_shared_slots, _InSlot
+    exemplar = {"a": torch.zeros(4, 2), "b": torch.zeros(4, dtype=torch.int64), "c": None}
+    slots = _allocate_shared_slots(exemplar, 2)
+    assert slots[0]["a"].is_shared() and slots[0]["c"] is None
+    result = {"a": torch.ones(4, 2), "b": torch.ones(3, dtype=torch.int64), "c": "x"}
+    task = _SharedSlotTask(lambda work: result, slots)
+    slot_id, packed, skeleton = task(1)
+    assert slot_id == 1 and packed
+    assert isinstance(skeleton["a"], _InSlot) and skeleton["b"] is result["b"] and skeleton["c"] == "x"
+    out = _SharedSlotTask.unpack(packed, skeleton, slots[1])
+    assert torch.equal(out["a"], result["a"]) and out["a"].data_ptr() != slots[1]["a"].data_ptr()
+    # A result whose structure differs from the slots is sent whole.
+    other = {"z": torch.ones(4, 2)}
+    _, packed, skeleton = _SharedSlotTask(lambda work: other, slots)(0)
+    assert not packed and _SharedSlotTask.unpack(packed, skeleton, slots[0]) is other
+    assert _allocate_shared_slots({"x": 1}, 2) is None
