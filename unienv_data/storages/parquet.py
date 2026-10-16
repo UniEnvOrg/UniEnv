@@ -202,6 +202,19 @@ class ParquetStorage(SpaceStorage[
     NumpyDtypeType,
     NumpyRNGType,
 ]):
+    """
+    Stores samples of a flat `DictSpace` (or a single `BoxSpace` / `BinarySpace` / `TextSpace`) as a directory of
+    Parquet files ("pieces") of `piece_size` rows each, plus `_metadata.json`. Numpy backend only.
+
+    A mutable storage keeps the pieces it touches in memory and rewrites a whole piece when it flushes it: on
+    `dumps()` / `close()` / pickling, and, while an unbounded storage grows, every piece as soon as it is
+    complete. The last, partial piece of a growing storage is only written by `dumps()` / `close()`; until then
+    the directory holds a loadable prefix of the data (complete pieces, or what the last `dumps()` wrote).
+
+    Parquet suits low-dimensional, columnar data that other tools read too. It is a poor fit for images: every
+    flush re-encodes whole pieces of pixels, and reads decode whole columns of a piece. Store camera frames in
+    `VideoStorage` / `ImageStorage` (e.g. through a `DictStorage`) and keep the low-dim keys here.
+    """
     # ========== Class Attributes ==========
     single_file_ext: Optional[str] = None  # Directory-based storage
     DEFAULT_KEY: str = "data"
@@ -404,6 +417,8 @@ class ParquetStorage(SpaceStorage[
         # Read-only Arrow cache: piece_idx -> pyarrow.Table
         self._cached_piece_tables: Dict[int, pa.Table] = {}
         self._dirty_pieces: set = set()
+        # Row count recorded in the on-disk `_metadata.json` (create() / load_from() leave it equal to the length)
+        self._disk_len: int = total_len
 
     @property
     def is_mutable(self) -> bool:
@@ -503,6 +518,38 @@ class ParquetStorage(SpaceStorage[
         for piece_idx in list(self._dirty_pieces):
             self._flush_piece(piece_idx)
 
+    def _write_own_metadata(self, num_rows: int) -> None:
+        _write_metadata(
+            self._storage_dir, self._piece_size, num_rows,
+            self._column_shapes, self._compression,
+            column_dtypes=_serialize_column_dtypes(self._column_specs),
+        )
+        self._disk_len = num_rows
+
+    def _flush_settled_pieces(self) -> None:
+        """
+        After a length change: write every dirty *complete* piece and record on disk a row count that the piece
+        files cover. The partial last piece stays in memory until `dumps()` / `close()`, so appending one row at
+        a time no longer re-encodes (and rewrites) the whole growing piece on every call, while the directory on
+        disk always holds a loadable prefix of the storage.
+        """
+        settled_pieces = self._len // self._piece_size
+        for piece_idx in list(self._dirty_pieces):
+            if piece_idx < settled_pieces:
+                self._flush_piece(piece_idx)
+        durable_len = settled_pieces * self._piece_size
+        # Piece files on disk always cover `[0, _disk_len)`: keep a longer prefix written by an earlier
+        # `dumps()` (the partial piece it flushed is still on disk) unless the storage has shrunk below it.
+        if durable_len < self._disk_len <= self._len:
+            durable_len = self._disk_len
+        if durable_len != self._disk_len:
+            self._write_own_metadata(durable_len)
+
+    def _flush_everything(self) -> None:
+        self._flush_all_dirty()
+        if self._len != self._disk_len:
+            self._write_own_metadata(self._len)
+
     def _index_to_piece_mapping(
         self, index: Union[int, slice, np.ndarray, Sequence[int]],
     ) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
@@ -550,19 +597,24 @@ class ParquetStorage(SpaceStorage[
         assert np.all(global_indices >= 0) and np.all(global_indices < self._len), \
             f"Index values out of bounds for storage of length {self._len}: {global_indices}"
 
-        # Map each global index to its piece
+        # Map each global index to its piece (one stable sort instead of one mask per piece)
         piece_indices = global_indices // self._piece_size
-        local_indices = global_indices % self._piece_size
+        local_indices = global_indices - piece_indices * self._piece_size
 
-        # Group by piece
         mapping: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-        unique_pieces = np.unique(piece_indices)
-        for p_idx in unique_pieces:
-            mask = piece_indices == p_idx
-            mapping[int(p_idx)] = (
-                local_indices[mask],
-                np.where(mask)[0],
-            )
+        if piece_indices[0] == piece_indices[-1] and (
+            global_indices.shape[0] == 1 or np.all(piece_indices == piece_indices[0])
+        ):
+            mapping[int(piece_indices[0])] = (local_indices, np.arange(global_indices.shape[0]))
+            return mapping
+        order = np.argsort(piece_indices, kind="stable")
+        sorted_pieces = piece_indices[order]
+        bounds = np.flatnonzero(np.diff(sorted_pieces)) + 1
+        starts = [0, *bounds.tolist()]
+        ends = [*bounds.tolist(), order.shape[0]]
+        for start, end in zip(starts, ends):
+            positions = order[start:end]
+            mapping[int(sorted_pieces[start])] = (local_indices[positions], positions)
         return mapping
 
     # ========== get / set ==========
@@ -608,8 +660,10 @@ class ParquetStorage(SpaceStorage[
         # Determine total output size (a boolean mask selects fewer rows than its length)
         total_size = sum(len(output_positions) for _, output_positions in mapping.values())
 
-        # Collect results from each piece
-        col_results: Dict[str, List] = {name: [None] * total_size for name, _, _ in self._column_specs}
+        # Preallocate one output array per column and scatter each piece's rows into it
+        assembled: Dict[str, np.ndarray] = {}
+        for col_name, dtype, shape in self._column_specs:
+            assembled[col_name] = np.empty((total_size, *shape), dtype=dtype)
 
         for piece_idx, (local_idxs, output_positions) in mapping.items():
             piece_data = None if self._read_only else self._load_piece(piece_idx)
@@ -620,20 +674,10 @@ class ParquetStorage(SpaceStorage[
                     )
                 else:
                     values = piece_data[col_name][local_idxs]
-                for i, pos in enumerate(output_positions):
-                    col_results[col_name][pos] = values[i]
+                assembled[col_name][output_positions] = values
 
-        # Assemble into proper numpy arrays
-        assembled: Dict[str, np.ndarray] = {}
-        for col_name, dtype, shape in self._column_specs:
-            parts = col_results[col_name]
-            if dtype == np.dtype(object):
-                arr = np.array(parts, dtype=object)
-            else:
-                arr = np.stack(parts)
-            if is_single:
-                arr = arr[0]
-            assembled[col_name] = arr
+        if is_single:
+            assembled = {col_name: arr[0] for col_name, arr in assembled.items()}
 
         return self._get_from_columns(
             self.single_instance_space, assembled, is_single
@@ -687,11 +731,15 @@ class ParquetStorage(SpaceStorage[
                 new_piece_rows = current_piece_rows + extend_by
                 for col_name, dtype, shape in self._column_specs:
                     old = piece_data[col_name]
+                    if old.shape[0] >= new_piece_rows:
+                        continue  # already has room (arrays of the growing piece are allocated at full piece size)
+                    # Grow straight to the full piece size: growing row by row re-copies the piece on every append
                     if dtype == np.dtype(object):
-                        new_arr = np.empty((new_piece_rows, *shape), dtype=object)
+                        new_arr = np.empty((self._piece_size, *shape), dtype=object)
+                        new_arr[:] = ""
                     else:
-                        new_arr = np.zeros((new_piece_rows, *shape), dtype=dtype)
-                    new_arr[:current_piece_rows] = old
+                        new_arr = np.zeros((self._piece_size, *shape), dtype=dtype)
+                    new_arr[:current_piece_rows] = old[:current_piece_rows]
                     piece_data[col_name] = new_arr
                 self._cached_pieces[last_piece_idx] = piece_data
                 self._dirty_pieces.add(last_piece_idx)
@@ -701,7 +749,9 @@ class ParquetStorage(SpaceStorage[
         # Create new pieces for remaining rows
         while remaining > 0:
             piece_rows = min(self._piece_size, remaining)
-            piece_data = _allocate_piece_arrays(self._column_specs, piece_rows)
+            # Allocated at full piece size so later appends into this piece do not reallocate (rows past
+            # `_piece_row_range` are ignored by get / flush; np.zeros pages are only committed when touched)
+            piece_data = _allocate_piece_arrays(self._column_specs, self._piece_size)
             piece_idx = self._num_pieces
             self._num_pieces += 1
             self._cached_pieces[piece_idx] = piece_data
@@ -709,13 +759,7 @@ class ParquetStorage(SpaceStorage[
             self._len += piece_rows
             remaining -= piece_rows
 
-        # Flush dirty pieces and update metadata
-        self._flush_all_dirty()
-        _write_metadata(
-            self._storage_dir, self._piece_size, self._len,
-            self._column_shapes, self._compression,
-            column_dtypes=_serialize_column_dtypes(self._column_specs),
-        )
+        self._flush_settled_pieces()
 
     def shrink_length(self, length: int) -> None:
         assert not self._read_only, "Cannot shrink length of a read-only ParquetStorage"
@@ -724,6 +768,9 @@ class ParquetStorage(SpaceStorage[
         assert length > 0, "Length must be greater than 0"
         new_len = self._len - length
         assert new_len >= 0, "New length must be non-negative"
+        if new_len < self._disk_len:
+            # Shrink the on-disk row count before removing the piece files that held the dropped rows
+            self._write_own_metadata(new_len)
 
         # Remove trailing pieces
         new_num_pieces = ceil(new_len / self._piece_size) if new_len > 0 else 0
@@ -759,12 +806,7 @@ class ParquetStorage(SpaceStorage[
         self._num_pieces = new_num_pieces
         self._len = new_len
 
-        self._flush_all_dirty()
-        _write_metadata(
-            self._storage_dir, self._piece_size, self._len,
-            self._column_shapes, self._compression,
-            column_dtypes=_serialize_column_dtypes(self._column_specs),
-        )
+        self._flush_settled_pieces()
 
     # ========== dumps / close ==========
 
@@ -773,14 +815,10 @@ class ParquetStorage(SpaceStorage[
         if os.path.abspath(path) == os.path.abspath(self._storage_dir):
             # Same directory: just flush dirty pieces
             self._flush_all_dirty()
-            _write_metadata(
-                self._storage_dir, self._piece_size, self._len,
-                self._column_shapes, self._compression,
-                column_dtypes=_serialize_column_dtypes(self._column_specs),
-            )
+            self._write_own_metadata(self._len)
         else:
             # Different directory: flush dirty, then copy all pieces
-            self._flush_all_dirty()
+            self._flush_everything()
             os.makedirs(path, exist_ok=True)
             for piece_idx in range(self._num_pieces):
                 src = self._piece_path(piece_idx)
@@ -793,8 +831,10 @@ class ParquetStorage(SpaceStorage[
             )
 
     def close(self) -> None:
-        if self.is_mutable and self._dirty_pieces:
-            self._flush_all_dirty()
+        # The partial last piece of a growing storage is only written here / in `dumps()`
+        # (nothing to persist when the directory itself is gone, e.g. a removed temporary directory)
+        if self.is_mutable and os.path.isdir(self._storage_dir):
+            self._flush_everything()
         self._cached_pieces.clear()
         self._cached_piece_tables.clear()
         self._dirty_pieces.clear()
@@ -826,8 +866,8 @@ class ParquetStorage(SpaceStorage[
     # ========== Pickling ==========
 
     def __getstate__(self):
-        if self.is_mutable and self._dirty_pieces:
-            self._flush_all_dirty()
+        if self.is_mutable:
+            self._flush_everything()
         state = self.__dict__.copy()
         state.pop("_cached_pieces", None)
         state.pop("_cached_piece_tables", None)
