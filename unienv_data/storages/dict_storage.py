@@ -52,6 +52,7 @@ def map_transform(
                 value_map,
                 fn,
                 prefix=full_key + nested_separator,
+                nested_separator=nested_separator,
             )
             if len(sub_transformed) > 0:
                 transformed_data[key] = sub_transformed
@@ -78,7 +79,9 @@ def get_chained_residual_space(
 ) -> Optional[DictSpace[BDeviceType, BDtypeType, BRNGType]]:
     residual_spaces = {}
 
-    if len(residual_spaces) > 0 and (prefix + "*") in all_keys:
+    # A nested residual key (e.g. "obs/*") owns everything left over below its
+    # prefix, so an outer residual key must not claim that subtree as well.
+    if (prefix + "*") in all_keys:
         return DictSpace(
             space.backend,
             {},
@@ -94,6 +97,7 @@ def get_chained_residual_space(
                 subspace,
                 all_keys,
                 prefix=full_key + nested_separator,
+                nested_separator=nested_separator,
             )
             if sub_residual is not None and len(sub_residual.spaces) > 0:
                 residual_spaces[key] = sub_residual
@@ -122,9 +126,11 @@ def get_chained_space(
                 space,
                 prefix,
                 all_keys,
+                nested_separator=nested_separator,
             ) if len(prefix) > 0 else space,
             [key for key in all_keys if key != key_chain],
             prefix=prefix,
+            nested_separator=nested_separator,
         )
         return subspace
     key_chain = key_chain.split(nested_separator)
@@ -245,6 +251,7 @@ class DictStorage(SpaceStorage[
             single_instance_space,
             storage_map,
             cache_filename=path,
+            nested_separator=nested_separator,
         )
 
     # ========== Instance Implementations ==========
@@ -371,7 +378,8 @@ class DictStorage(SpaceStorage[
         result, residual = map_transform(
             self.single_instance_space,
             self.storage_map,
-            lambda key, space, storage: storage.get(index)
+            lambda key, space, storage: storage.get(index),
+            nested_separator=self.nested_separator,
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
         return result
