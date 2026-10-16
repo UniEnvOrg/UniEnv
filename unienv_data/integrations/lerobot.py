@@ -2,6 +2,7 @@ from typing import Optional, Any, Dict, List, Tuple, Sequence, Union, Literal
 from collections import OrderedDict
 import importlib.util
 import os
+import threading
 
 import numpy as np
 import pyarrow as pa
@@ -199,8 +200,14 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         exclude_features: Optional[List[str]] = None,
         decode_video: bool = True,
         video_backend: Literal["pyav", "torchcodec", "auto"] = "auto",
+        video_hwaccel: Optional[Any] = "auto",
     ) -> "LeRobotAsUniEnvDataset[BArrayType, BDeviceType, BDtypeType, BRNGType]":
-        """Load a LeRobot dataset from a local directory."""
+        """Load a LeRobot dataset from a local directory.
+
+        ``video_hwaccel`` is passed to the video readers: ``"auto"`` (default) uses a hardware
+        decoder when one is available, ``None`` decodes in software, which is cheaper to open
+        and often faster for small frames read at random positions (the usual training case).
+        """
         schema = parse_info_json(dataset_dir)
         index = build_index(dataset_dir, schema)
 
@@ -226,6 +233,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             video_backend=video_backend,
             include_features=include_features,
             exclude_features=effective_exclude_features,
+            video_hwaccel=video_hwaccel,
         )
 
     @staticmethod
@@ -266,6 +274,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         video_backend: Literal["pyav", "torchcodec", "auto"] = "auto",
         include_features: Optional[List[str]] = None,
         exclude_features: Optional[List[str]] = None,
+        video_hwaccel: Optional[Any] = "auto",
     ):
         super().__init__(space)
         self._dataset_dir = dataset_dir
@@ -274,6 +283,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         self._device = _device
         self._decode_video = decode_video
         self._video_backend = video_backend
+        self._video_hwaccel = video_hwaccel
 
         # Determine active features based on filters
         active = list(self._schema.features.keys())
@@ -291,12 +301,19 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         ] if decode_video else []
 
         # Simple Parquet cache: episode_index -> {col_name: np.ndarray | torch.Tensor}
+        # (the columns of the episode's whole data file, shared with `_parquet_file_cache`)
         self._parquet_cache: OrderedDict[int, Dict[str, Any]] = OrderedDict()
+        # Data file path -> its materialized tabular columns (LRU). v3.0 packs many episodes
+        # into one file; they share one read instead of one read per episode.
+        self._parquet_file_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         # Data file path -> global frame index of its first row (None if the file has no "index" column)
         self._data_file_first_index: Dict[str, Optional[int]] = {}
         # v3.0: episode_index -> video feature -> (chunk_index, file_index, from_timestamp, to_timestamp)
         self._video_locations: Optional[Dict[int, Dict[str, Tuple[int, int, float, float]]]] = None
         self._parquet_cache_max = 16
+        # Open video readers, video path -> reader (LRU); see `_checkout_video_reader`.
+        self._video_reader_cache_max = 16
+        self._reset_video_readers()
         self._use_torch_fastpath = self.backend.simplified_name == "pytorch" and torch is not None
 
     def __len__(self) -> int:
@@ -514,7 +531,26 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             file_index=ep_meta.data_file_index,
             chunk_index=ep_meta.data_chunk_index,
         )
-        table = pq.read_table(path, memory_map=True)
+        data = self._load_parquet_file(path)
+
+        # LRU eviction
+        if len(self._parquet_cache) >= self._parquet_cache_max:
+            self._parquet_cache.popitem(last=False)
+        self._parquet_cache[episode_index] = data
+
+        return data
+
+    def _load_parquet_file(self, path: str) -> Dict[str, Any]:
+        """Materialized tabular columns of a whole data file (cached per file, LRU)."""
+        data = self._parquet_file_cache.get(path)
+        if data is not None:
+            self._parquet_file_cache.move_to_end(path)
+            return data
+
+        # Only read the active tabular columns (plus "index", for the file's row offset).
+        wanted = set(self._tabular_features) | {"index"}
+        columns = [name for name in pq.read_schema(path).names if name in wanted]
+        table = pq.read_table(path, memory_map=True, columns=columns)
         if path not in self._data_file_first_index:
             self._data_file_first_index[path] = (
                 int(table.column("index")[0].as_py())
@@ -522,18 +558,19 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                 else None
             )
 
-        data: Dict[str, Any] = {}
+        data = {}
         for col_name in table.column_names:
             if col_name not in self._tabular_features:
                 continue
             feat_shape = self._schema.features[col_name].shape
             data[col_name] = self._materialize_tabular_column(table.column(col_name), feat_shape)
 
-        # LRU eviction
-        if len(self._parquet_cache) >= self._parquet_cache_max:
-            self._parquet_cache.popitem(last=False)
-        self._parquet_cache[episode_index] = data
-
+        if len(self._parquet_file_cache) >= self._parquet_cache_max:
+            _, evicted = self._parquet_file_cache.popitem(last=False)
+            # Keep at most `_parquet_cache_max` files alive: drop the episodes still holding it.
+            for ep in [ep for ep, cached in self._parquet_cache.items() if cached is evicted]:
+                del self._parquet_cache[ep]
+        self._parquet_file_cache[path] = data
         return data
 
     def _episode_row_offset(self, episode_index: int) -> int:
@@ -627,20 +664,84 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             reader_cls = PyAvVideoReader
 
         from unienv_interface.backends.numpy import NumpyComputeBackend
-        with reader_cls(
-            backend=NumpyComputeBackend,
-            filename=video_path,
-            buffer_pixel_format="rgb24",
-            hwaccel="auto",
-            seek_mode="exact",
-            device=None,
-        ) as reader:
-            frames = reader.read(local_indices, total_frames)
+        reader = self._checkout_video_reader(video_path, reader_cls)
+        try:
+            with reader:
+                frames = reader.read(local_indices, total_frames)
+        except BaseException:
+            # Do not keep a reader in an unknown decoding state.
+            reader.close()
+            raise
+        self._checkin_video_reader(video_path, reader)
 
         # reader.read returns backend arrays; ensure numpy for assembly
         if not isinstance(frames, np.ndarray):
             frames = NumpyComputeBackend.to_numpy(frames)
         return frames
+
+    # ========== Video reader cache ==========
+    # Opening a video container (and its hardware decoding context) costs far more than
+    # seeking to and decoding a few frames, so readers are kept open across calls. A reader
+    # is taken out of the cache while in use (concurrent reads, e.g. from a CombinedBatch
+    # thread pool, open their own) and belongs to the process that opened it: after a fork
+    # the inherited readers are neither reused (shared file offsets, device contexts) nor
+    # closed by the child, and pickling drops them.
+
+    def _reset_video_readers(self) -> None:
+        self._video_reader_cache: OrderedDict[str, Any] = OrderedDict()
+        self._video_reader_lock = threading.Lock()
+        self._video_reader_pid = os.getpid()
+        # Readers inherited through fork: referenced so that they are never closed here.
+        self._inherited_video_readers: List[Any] = []
+
+    def _owned_video_reader_cache(self) -> "OrderedDict[str, Any]":
+        if self._video_reader_pid != os.getpid():
+            inherited = self._inherited_video_readers + list(self._video_reader_cache.values())
+            self._reset_video_readers()
+            self._inherited_video_readers = inherited
+        return self._video_reader_cache
+
+    def _checkout_video_reader(self, video_path: str, reader_cls) -> Any:
+        cache = self._owned_video_reader_cache()
+        with self._video_reader_lock:
+            reader = cache.pop(video_path, None)
+        if reader is not None and type(reader) is not reader_cls:
+            reader.close()
+            reader = None
+        if reader is None:
+            from unienv_interface.backends.numpy import NumpyComputeBackend
+            reader = reader_cls(
+                backend=NumpyComputeBackend,
+                filename=video_path,
+                buffer_pixel_format="rgb24",
+                hwaccel=self._video_hwaccel,
+                seek_mode="exact",
+                device=None,
+            )
+        return reader
+
+    def _checkin_video_reader(self, video_path: str, reader: Any) -> None:
+        cache = self._owned_video_reader_cache()
+        to_close = []
+        with self._video_reader_lock:
+            if video_path in cache or self._video_reader_cache_max <= 0:
+                to_close.append(reader)  # another thread returned a reader for this file first
+            else:
+                cache[video_path] = reader
+                while len(cache) > self._video_reader_cache_max:
+                    to_close.append(cache.popitem(last=False)[1])
+        for r in to_close:
+            r.close()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for name in ("_video_reader_cache", "_video_reader_lock", "_video_reader_pid", "_inherited_video_readers"):
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._reset_video_readers()
 
     def _to_backend(self, data: Any) -> Any:
         if isinstance(data, np.ndarray):
@@ -654,3 +755,15 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
 
     def close(self) -> None:
         self._parquet_cache.clear()
+        self._parquet_file_cache.clear()
+        cache = getattr(self, "_video_reader_cache", None)
+        if cache is None:
+            return
+        if self._video_reader_pid == os.getpid():
+            with self._video_reader_lock:
+                readers = list(cache.values())
+                cache.clear()
+            for reader in readers:
+                reader.close()
+        else:
+            self._owned_video_reader_cache()

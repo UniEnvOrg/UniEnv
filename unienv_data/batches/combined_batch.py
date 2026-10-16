@@ -157,7 +157,72 @@ class CombinedBatch(BatchBase[
         self.is_mutable = is_mutable
         self.batches = batches
         self.use_thread_pool = use_thread_pool
+        # Thread pool for `use_thread_pool`, owned by the process that created it.
+        self._executor : Optional[ThreadPoolExecutor] = None
+        self._executor_pid : Optional[int] = None
+        # (id(space), batch size) -> (space, batched space)
+        self._batch_space_cache : Dict[Tuple[int, int], Tuple[Space, Space]] = {}
         self._build_index_cache()
+
+    def _get_executor(self) -> ThreadPoolExecutor:
+        """Thread pool reused across calls (starting one per access costs more than the gathers
+        it parallelises for small batches). Re-created after a fork, since threads do not
+        survive it: work submitted to the inherited pool would never run."""
+        pid = os.getpid()
+        if self._executor is None or self._executor_pid != pid:
+            self._executor = ThreadPoolExecutor(max_workers=len(self.batches), thread_name_prefix="CombinedBatch")
+            self._executor_pid = pid
+        return self._executor
+
+    def _cached_batch_space(self, space : Space, batch_size : int) -> Space:
+        """``sbu.batch_space(space, batch_size)``, memoised: building batched spaces (bounds arrays
+        and their validation) dominates the per-call cost for small batches, and training loops
+        reuse the same batch size."""
+        cache = self._batch_space_cache
+        key = (id(space), int(batch_size))
+        entry = cache.get(key)
+        if entry is None or entry[0] is not space:
+            if len(cache) >= 16:
+                cache.clear()
+            entry = (space, sbu.batch_space(space, int(batch_size)))
+            cache[key] = entry
+        return entry[1]
+
+    def get_column(self, nested_keys : Sequence[Any]) -> BatchBase:
+        """
+        Lazy view over one field of the samples that combines the children's column views, so
+        that children able to read a single column cheaply (replay buffers, stacked views, ...)
+        do so instead of fetching whole samples. Values, spaces, metadata and the flattened
+        layout are those of ``SubItemBatch(self, nested_keys)``, which is returned when the
+        children's column views cannot be combined. The view is read-only.
+        """
+        from .subitem_batch import SubItemBatch
+        fallback = lambda: super(CombinedBatch, self).get_column(nested_keys)
+        columns = [batch.get_column(nested_keys) for batch in self.batches]
+        if all(isinstance(column, SubItemBatch) and column.batch is batch for column, batch in zip(columns, self.batches)):
+            return fallback()  # nothing to gain over a view of this batch
+        if any(column.single_metadata_space != batch.single_metadata_space for column, batch in zip(columns, self.batches)):
+            return fallback()
+        try:
+            combined = CombinedBatch(columns, use_thread_pool=self.use_thread_pool)
+        except AssertionError:
+            return fallback()  # the column views disagree on their spaces
+        combined.is_mutable = False
+        return combined
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_executor"] = None
+        state["_executor_pid"] = None
+        state["_batch_space_cache"] = {}
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # Views pickled before these attributes existed.
+        self.__dict__.setdefault("_executor", None)
+        self.__dict__.setdefault("_executor_pid", None)
+        self.__dict__.setdefault("_batch_space_cache", {})
 
     def _build_index_cache(self) -> None:
         """
@@ -215,18 +280,18 @@ class CombinedBatch(BatchBase[
 
             if self.use_thread_pool and len(batch_list) > 1:
                 data_futures = []
-                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
-                    for batch_index, index_into_batch, mask in batch_list:
-                        data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at, index_into_batch))
-                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
-                        batch_result = data_future.result()
-                        if result is None:
-                            result = self.backend.zeros(
-                                (batch_size, *batch_result.shape[1:]),
-                                dtype=batch_result.dtype,
-                                device=self.backend.device(batch_result)
-                            )
-                        result = self.backend.at(result)[mask].set(batch_result)
+                executor = self._get_executor()
+                for batch_index, index_into_batch, mask in batch_list:
+                    data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at, index_into_batch))
+                for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                    batch_result = data_future.result()
+                    if result is None:
+                        result = self.backend.zeros(
+                            (batch_size, *batch_result.shape[1:]),
+                            dtype=batch_result.dtype,
+                            device=self.backend.device(batch_result)
+                        )
+                    result = self.backend.at(result)[mask].set(batch_result)
             else:
                 for batch_index, index_into_batch, mask in batch_list:
                     batch_result = self.batches[batch_index].get_flattened_at(index_into_batch)
@@ -260,10 +325,7 @@ class CombinedBatch(BatchBase[
                 metadata_space = None
                 metadata = {}
             else:
-                metadata_space = sbu.batch_space(
-                    self.batches[0].single_metadata_space,
-                    batch_size,
-                )
+                metadata_space = self._cached_batch_space(self.batches[0].single_metadata_space, batch_size)
                 metadata = metadata_space.create_empty()
             
             batch_index_arr = self.backend.zeros(
@@ -274,27 +336,27 @@ class CombinedBatch(BatchBase[
 
             if self.use_thread_pool and len(batch_list) > 1:
                 data_futures = []
-                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
-                    for batch_index, index_into_batch, mask in batch_list:
-                        data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at_with_metadata, index_into_batch))
-                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
-                        batch_result, metadata_result = data_future.result()
-                        if result is None:
-                            result = self.backend.zeros(
-                                (batch_size, *batch_result.shape[1:]),
-                                dtype=batch_result.dtype,
-                                device=self.device
-                            )
+                executor = self._get_executor()
+                for batch_index, index_into_batch, mask in batch_list:
+                    data_futures.append(executor.submit(self.batches[batch_index].get_flattened_at_with_metadata, index_into_batch))
+                for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                    batch_result, metadata_result = data_future.result()
+                    if result is None:
+                        result = self.backend.zeros(
+                            (batch_size, *batch_result.shape[1:]),
+                            dtype=batch_result.dtype,
+                            device=self.device
+                        )
 
-                        result = self.backend.at(result)[mask].set(batch_result)
-                        if metadata_space is not None:
-                            metadata = sbu.set_at(
-                                metadata_space,
-                                metadata,
-                                mask,
-                                metadata_result,
-                            )
-                        batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+                    result = self.backend.at(result)[mask].set(batch_result)
+                    if metadata_space is not None:
+                        metadata = sbu.set_at(
+                            metadata_space,
+                            metadata,
+                            mask,
+                            metadata_result,
+                        )
+                    batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             else:
                 for batch_index, index_into_batch, mask in batch_list:
                     batch_result, metadata_result = self.batches[batch_index].get_flattened_at_with_metadata(index_into_batch)
@@ -324,23 +386,20 @@ class CombinedBatch(BatchBase[
             return self.batches[batch_idx].get_at(index_into_batch)
         else:
             batch_size, batch_list = self._convert_index(idx)
-            result_space = sbu.batch_space(
-                self.single_space,
-                batch_size,
-            )
+            result_space = self._cached_batch_space(self.single_space, batch_size)
             result = result_space.create_empty()
             if self.use_thread_pool and len(batch_list) > 1:
                 data_futures = []
-                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
-                    for batch_index, index_into_batch, mask in batch_list:
-                        data_futures.append(executor.submit(self.batches[batch_index].get_at, index_into_batch))
-                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
-                        result = sbu.set_at(
-                            result_space,
-                            result,
-                            mask,
-                            data_future.result(),
-                        )
+                executor = self._get_executor()
+                for batch_index, index_into_batch, mask in batch_list:
+                    data_futures.append(executor.submit(self.batches[batch_index].get_at, index_into_batch))
+                for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                    result = sbu.set_at(
+                        result_space,
+                        result,
+                        mask,
+                        data_future.result(),
+                    )
             else:
                 for batch_index, index_into_batch, mask in batch_list:
                     result = sbu.set_at(
@@ -366,20 +425,14 @@ class CombinedBatch(BatchBase[
             return dat, metadata
         else:
             batch_size, batch_list = self._convert_index(idx)
-            result_space = sbu.batch_space(
-                self.single_space,
-                batch_size,
-            )
+            result_space = self._cached_batch_space(self.single_space, batch_size)
             result = result_space.create_empty()
             
             if self.batches[0].single_metadata_space is None:
                 metadata_space = None
                 metadata = {}
             else:
-                metadata_space = sbu.batch_space(
-                    self.batches[0].single_metadata_space,
-                    batch_size,
-                )
+                metadata_space = self._cached_batch_space(self.batches[0].single_metadata_space, batch_size)
                 metadata = metadata_space.create_empty()
             
             batch_index_arr = self.backend.zeros(
@@ -390,25 +443,25 @@ class CombinedBatch(BatchBase[
 
             if self.use_thread_pool and len(batch_list) > 1:
                 data_futures = []
-                with ThreadPoolExecutor(max_workers=len(batch_list)) as executor:
-                    for batch_index, index_into_batch, mask in batch_list:
-                        data_futures.append(executor.submit(self.batches[batch_index].get_at_with_metadata, index_into_batch))
-                    for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
-                        batch_result, metadata_result = data_future.result()
-                        result = sbu.set_at(
-                            result_space,
-                            result,
+                executor = self._get_executor()
+                for batch_index, index_into_batch, mask in batch_list:
+                    data_futures.append(executor.submit(self.batches[batch_index].get_at_with_metadata, index_into_batch))
+                for data_future, (batch_index, index_into_batch, mask) in zip(data_futures, batch_list):
+                    batch_result, metadata_result = data_future.result()
+                    result = sbu.set_at(
+                        result_space,
+                        result,
+                        mask,
+                        batch_result,
+                    )
+                    if metadata_space is not None:
+                        metadata = sbu.set_at(
+                            metadata_space,
+                            metadata,
                             mask,
-                            batch_result,
+                            metadata_result,
                         )
-                        if metadata_space is not None:
-                            metadata = sbu.set_at(
-                                metadata_space,
-                                metadata,
-                                mask,
-                                metadata_result,
-                            )
-                        batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
+                    batch_index_arr = self.backend.at(batch_index_arr)[mask].set(batch_index)
             else:
                 for batch_index, index_into_batch, mask in batch_list:
                     batch_result, metadata_result = self.batches[batch_index].get_at_with_metadata(index_into_batch)
@@ -478,4 +531,7 @@ class CombinedBatch(BatchBase[
         """Release this view. The child batches are not owned by the view and stay open;
         close them through whoever created it (``BatchBase.__del__`` calls ``close()``, so
         closing the children here would tear it down whenever a view is garbage-collected)."""
-        pass
+        executor = getattr(self, "_executor", None)
+        if executor is not None and getattr(self, "_executor_pid", None) == os.getpid():
+            executor.shutdown(wait=False)
+        self._executor = None
