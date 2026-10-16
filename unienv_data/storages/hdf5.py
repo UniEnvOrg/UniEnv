@@ -156,8 +156,8 @@ class HDF5Storage(SpaceStorage[
             if root.dtype.kind == 'O' or root.dtype.kind == 'S':
                 space = TextSpace(
                     NumpyComputeBackend,
-                    max_length=root.dtype.itemsize if root.dtype.itemsize is not None else 4096,
-                    dtype=str,
+                    # Fixed-length strings ('S') bound the length; variable-length ones ('O') do not.
+                    max_length=root.dtype.itemsize if root.dtype.kind == 'S' else 4096,
                     device=None,
                 )
             elif NumpyComputeBackend.dtype_is_boolean(root.dtype):
@@ -322,9 +322,13 @@ class HDF5Storage(SpaceStorage[
                 ),
                 capacity=capacity,
                 initial_capacity=initial_capacity,
+                compression=compression,
+                compression_level=compression_level,
+                chunks=chunks,
             )
 
-        initial_capacity = initial_capacity or capacity
+        # `initial_capacity=0` is valid (an empty, growable dataset), so only fall back when it is None.
+        initial_capacity = capacity if initial_capacity is None else initial_capacity
         for key, space in single_instance_space.spaces.items():
             assert key not in root, f"Key '{key}' already exists in group"
             if not isinstance(space, DictSpace):
@@ -378,6 +382,8 @@ class HDF5Storage(SpaceStorage[
         root : h5py.Group,
         function : Callable[[h5py.Dataset], Any],
     ) -> Any:
+        if isinstance(root, h5py.Dataset):
+            return function(root)
         groups = []
         for key, item in root.items():
             if isinstance(item, h5py.Dataset):
@@ -396,6 +402,9 @@ class HDF5Storage(SpaceStorage[
         root : h5py.Group,
         function : Callable[[h5py.Dataset], None],
     ) -> None:
+        if isinstance(root, h5py.Dataset):
+            function(root)
+            return
         for key, item in root.items():
             if isinstance(item, h5py.Dataset):
                 function(item)
@@ -487,6 +496,9 @@ class HDF5Storage(SpaceStorage[
             "cache_path must be provided for HDF5Storage"
         assert not multiprocessing, \
             "HDF5Storage does not support multiprocessing safe creation. Please create the storage in the main process and then load it in child processes."
+        if capacity is None and initial_capacity is None:
+            # Unbounded storages start empty and grow through `extend_length`.
+            initial_capacity = 0
         root = h5py.File(
             cache_path,
             "w",
@@ -500,7 +512,6 @@ class HDF5Storage(SpaceStorage[
             compression=compression,
             compression_level=compression_level,
             chunks=chunks,
-            **kwargs
         )
         return cls(
             single_instance_space,
@@ -563,6 +574,7 @@ class HDF5Storage(SpaceStorage[
         full_name : Optional[str] = None,
         h5py_kwargs : Optional[Dict[str, Any]] = None,
         length : Optional[int] = None,
+        owns_root : bool = True,
     ):
         assert root is not None or filename is not None, \
             "Either root or filename must be provided"
@@ -582,6 +594,9 @@ class HDF5Storage(SpaceStorage[
             1
         )
         self.root = root
+        # Column views share their parent's open file and must not close it;
+        # a handle this instance opens itself (see `_ensure_root`) is always owned.
+        self._owns_root = owns_root
         self.capacity = capacity
         self._multiprocessing = multiprocessing
         self._h5py_kwargs = dict(h5py_kwargs or {})
@@ -636,6 +651,7 @@ class HDF5Storage(SpaceStorage[
             if self._full_name is not None:
                 root = root[self._full_name]
             self.root = root
+            self._owns_root = True
         return self.root
 
     def extend_length(self, length):
@@ -664,8 +680,21 @@ class HDF5Storage(SpaceStorage[
     def __len__(self):
         return self._len
     
+    def _normalize_array_index(self, index):
+        """Map negative entries of an integer index array to their positive positions.
+
+        The IO-reduction path turns sorted indices into slices, which silently
+        selects nothing when negative entries are mixed with positive ones.
+        """
+        if isinstance(index, np.ndarray) and index.dtype.kind == 'i' and index.size > 0 and np.any(index < 0):
+            index = np.where(index < 0, index + self._len, index)
+        return index
+
     def get(self, index):
         root = self._ensure_root()
+        index = self._normalize_array_index(index)
+        if isinstance(index, np.ndarray) and index.dtype.kind in {'i', 'u'} and index.size == 0:
+            index = slice(0, 0)
         if not is_fancy_index(index):
             return __class__.get_from(
                 root,
@@ -689,6 +718,7 @@ class HDF5Storage(SpaceStorage[
         if self._multiprocessing:
             raise RuntimeError("HDF5Storage does not support set in multiprocessing mode")
         root = self._ensure_root()
+        index = self._normalize_array_index(index)
         if not is_fancy_index(index):
             return __class__.set_to(
                 root,
@@ -733,31 +763,43 @@ class HDF5Storage(SpaceStorage[
             full_name=sub_full_name,
             h5py_kwargs=self._h5py_kwargs,
             length=self._len,
+            owns_root=sub_root is None,
         )
 
     def dumps(self, path):
         root = self._ensure_root()
-        if isinstance(root, h5py.File) and os.path.samefile(root.filename, path):
+        if os.path.exists(path) and os.path.samefile(root.file.filename, path):
+            if not isinstance(root, h5py.File):
+                raise ValueError(
+                    f"Cannot dump a column view of {root.file.filename} onto the file it is a view of"
+                )
             root.flush()
-        else:
-            target_file = h5py.File(path, 'w')
-            target_file.copy(
-                root,
-                target_file,
-            )
+            return
+
+        parent_dir = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent_dir, exist_ok=True)
+        with h5py.File(path, 'w') as target_file:
+            # Copy the members (not the root object itself) so that the dumped
+            # file has the same layout that `load_from` expects for this space.
+            if isinstance(root, h5py.Dataset):
+                root.file.copy(root, target_file, name=__class__.DEFAULT_KEY)
+            else:
+                for key in root.keys():
+                    root.copy(root[key], target_file, name=key)
             target_file.flush()
-            target_file.close()
 
     def close(self):
         root = getattr(self, "root", None)
+        self.root = None
+        if root is None or not getattr(self, "_owns_root", True):
+            return
         try:
             if isinstance(root, h5py.File):
                 root.close()
-            elif root is not None:
+            else:
                 root.file.close()
         except Exception:
             pass
-        self.root = None
 
     def __getstate__(self):
         state = self.__dict__.copy()

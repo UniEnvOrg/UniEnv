@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+A test-coverage push (line coverage 64% → 92%, ~3000 tests) surfaced and fixed a large number of bugs. Behaviour changes worth noting first:
+
+- **Batch views no longer close the batch they wrap.** `close()` on a frame/slice-stacked, sub-index, sub-item, backend/device, transformed or combined batch leaves the source open (previously garbage-collecting a FrameStack view emptied its `ReplayBuffer`). Wrapper *storages* (`DictStorage`, `TransformedStorage`, `ToBackendOrDeviceStorage`) still close their children on an explicit `close()`.
+- `SyncVecEnv`/`AsyncVecEnv` `reset(seed=s)` now seeds sub-environment `i` with `s + i`.
+- `TimeLimitWrapper` never marks a terminated instance as truncated (batched now matches unbatched).
+- `BoxSpace`/`DynamicBoxSpace` `contains` returns `False` for non-array values instead of raising; spaces built with Python scalar dtypes (JAX defaults `float`/`int`) store the concrete dtype.
+- `ReplayBuffer.get_column` returns a live view that tracks the parent buffer; structural writes on the view raise.
+- `ImageCompressTransformation` budgets now include the JPEG header (new `header_bytes`; old configs keep their shapes) and raise `ValueError` when an image cannot fit.
+
+Spaces and transformations:
+- Fixed `BatchedSpace` (membership checks, sampling, `shape`, `data_to`) and `GraphSpace` (default unbounded node/edge counts, `to()`, node-feature sampling, `data_to`, single-node graphs, equality ignoring `batch_shape`); graphs of different sizes can be batched.
+- Fixed flattening of `TextSpace`, `UnionSpace`, `DynamicBoxSpace` and `DictSpace` extended via `__setitem__`; flattened data now always lies in `flatten_space`.
+- Integer boxes with infinite bounds sample uniformly instead of returning a constant; `UnionSpace`/`TextSpace` sampling works on PyTorch/CUDA; zero-size boxes are supported.
+- Fixed `construct_space_from_data_stream`, `batch_differing_spaces` shapes, and `concatenate`/`BatchifyTransformation` for Text and Union spaces.
+- gymnasium space conversion: inclusive Discrete/MultiDiscrete bounds, numpy scalar data, MultiBinary and OneOf round-trips.
+- `DictIncludeKeyTransformation` keeps sibling nested keys; `DictExcludeKeyTransformation` is order-independent; `CropTransformation` supports lower-rank bounds and keeps the dtype; `IterativeTransformation.direction_inverse` works for source-dependent inverses (new `LeafwiseTransformation`).
+- The remote codec rejects malformed dict entries and dtypes and applies its depth limit consistently.
+
+Environments and wrappers:
+- `AsyncVecEnv` can be constructed and reports worker errors as chained `RuntimeError`s; vec-env info dicts are stacked per key and may contain strings.
+- `ActionTransformWrapper`/`ActionRescaleWrapper` actually transform actions; `FlattenContextObservationWrapper` flattens instead of unflattening.
+- Masked resets work and return only the selected rows in `FrameStackWrapper`, `FuncFrameStackWrapper`, `BatchifyWrapper`, `WorldEnv` and `FuncWorldEnv`.
+- `FuncFrameStackWrapper` supports action stacking; `FuncTransformWrapper` works with transformations; transform wrappers keep the context space when only other transformations are given.
+- `BatchifyWrapper`/`UnBatchifyWrapper` batch the reward too; `ControlFrequencyLimitWrapper` no longer runs at twice the requested rate.
+- Episode video wrappers forward reset masks, don't re-post finished episodes on close, and support `format="gif"`.
+- `ToGymnasiumEnv`/`FromGymnasiumEnv` work end to end and pass gymnasium's `check_env`; `ToGymnasiumEnv` observations no longer share the episode context object between calls (required by gymnasium 1.4's `check_env`).
+- World timestep compatibility uses a tolerance-based ratio, so periods such as 0.1/0.02 are accepted.
+- `Wrapper.rng` works with JAX keys; `FuncEnvBasedEnv.render_fps` works without a renderer; `ToBackendOrDeviceWrapper.device` defaults to the inner env's device; `next_seed_rng` returns valid non-negative seeds; `symbol_util`, `array_serialization`, `serialize_dtype` and `dict_util` edge cases fixed.
+
+Calibration:
+- The `calibration` extra now requires `opencv-contrib-python>=4.7,<5`: OpenCV 5.0's Python bindings no longer provide `cv2.calibrateHandEye`, so `solve_hand_to_base` raises a clear `ImportError` there instead of an `AttributeError`.
+
+Storages, replay buffer and batches:
+- Fixed `ReplayBuffer.get_flattened_at*` ignoring the ring-buffer offset after wrap-around.
+- `HDF5Storage`: h5py kwargs, compression/chunks for non-dict spaces, unbounded creation, `dumps` to another path, column views (incl. closing the parent file), negative/empty index arrays.
+- `DictStorage` custom `nested_separator` and nested `*` keys; `TransformedStorage` flattened accessors; `ParquetStorage` boolean masks; string columns in raw HDF5/Parquet loaders; empty selections return empty batches; `create`/`load_from` honour subclasses; memory-mapped tensor views pickle correctly.
+- `VideoStorage`: falls back to software decoding when a hardware decoder fails to initialise; correct auto-codec priority with per-base caching, duplicate-index reads, exact frames in approximate seek mode, PyAV for non-rgb24 buffers.
+- Fixed `SliceStackedBatch`/`FrameStackedBatch` flattened access, metadata, negative indices and the JAX episode-end mask; `SubIndexedBatch` int indexing; `SubItemBatch` flattened/metadata access; `CombinedBatch.set_at` with dicts; `ToBackendOrDeviceBatch` device-only conversion; `TransformedBatch.extend` with space-dependent inverses.
+- `MultiprocessingSampler` seeds each worker independently (no more duplicate batches), works with spawn/forkserver, stops workers when an epoch iterator is abandoned, and closes faster.
+- `HFAsUniEnvDataset` index handling and `get_column`; `UniEnvAsPyTorchDataset.collate_fn` for batched DataLoaders; `ImageCompressTransformation` grayscale/channel-first round-trips and any `init_quality`.
+- LeRobot v3: episode metadata in `meta/episodes/chunk-XXX/` is discovered, rows and video frames in packed files are located correctly, and the torch fast path handles scalar columns.
+
+## 0.0.1b14 (2026-10-16)
+
+- Fixed `UnBatchifyWrapper` construction: `sbu.unbatch_spaces` takes only the space, so the extra batch-size argument made `UnBatchifyWrapper(env)` raise `TypeError`.
 - Hardened `unienv_utils.calibration` after review: `solve_camera_relative` now rejects outlier paired observations with tianji's MAD-based gating (new `reject_outliers` / `min_inliers` parameters; `PairResult` reports `n_inliers` and `inlier_mask`, and residuals are computed over the inliers); the hand-eye low-diversity warning no longer misses rotations about the same axis in opposite directions; calibration JSON writes unavailable residual values as `null` and refuses non-finite numbers (`allow_nan=False`).
 - Added `root_node` support to `CombinedWorldNode`, `FlatCombinedWorldNode`, `CombinedFuncWorldNode` and `FlatCombinedFuncWorldNode`. A `root_node` is passed separately (same world, not listed in `nodes`) and its data merges at the top level of the aggregated context/observation/action dicts instead of nesting under its own name:
   - Sole-root contributor per channel follows the existing `direct_return` rule (`True`: the root's own space/data passes through unwrapped, any space type; `False`: wrapped under the reserved key `ROOT_NODE_KEY = ""`). Mixed root + named children requires a `DictSpace` root space whose keys merge next to the child entries; a root key equal to a child node name raises `ValueError`.

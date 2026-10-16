@@ -135,6 +135,41 @@ def _schema_to_flat_dictspace(
     return DictSpace(backend, spaces, device=device)
 
 
+def _load_v3_video_locations(
+    dataset_dir: str,
+    video_features: Sequence[str],
+) -> Dict[int, Dict[str, Tuple[int, int, float, float]]]:
+    """
+    Read the per-episode video placement of a v3.0 dataset from its episode metadata
+    (``videos/<key>/{chunk_index,file_index,from_timestamp,to_timestamp}`` columns).
+    Features without these columns are left out (callers then fall back to the data file).
+    """
+    locations: Dict[int, Dict[str, Tuple[int, int, float, float]]] = {}
+    episodes_dir = os.path.join(dataset_dir, "meta", "episodes")
+    if not video_features or not os.path.isdir(episodes_dir):
+        return locations
+    paths = sorted(
+        os.path.join(root, fname)
+        for root, _, fnames in os.walk(episodes_dir)
+        for fname in fnames if fname.endswith(".parquet")
+    )
+    for path in paths:
+        column_names = set(pq.read_schema(path).names)
+        for feat_name in video_features:
+            keys = [f"videos/{feat_name}/{c}" for c in ("chunk_index", "file_index", "from_timestamp", "to_timestamp")]
+            if "episode_index" not in column_names or not all(k in column_names for k in keys):
+                continue
+            table = pq.read_table(path, columns=["episode_index", *keys]).to_pydict()
+            for i, ep_idx in enumerate(table["episode_index"]):
+                values = [table[k][i] for k in keys]
+                if any(v is None for v in values):
+                    continue
+                locations.setdefault(int(ep_idx), {})[feat_name] = (
+                    int(values[0]), int(values[1]), float(values[2]), float(values[3])
+                )
+    return locations
+
+
 class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """
     Wraps a local LeRobot dataset directory as a UniEnv BatchBase.
@@ -257,6 +292,10 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
 
         # Simple Parquet cache: episode_index -> {col_name: np.ndarray | torch.Tensor}
         self._parquet_cache: OrderedDict[int, Dict[str, Any]] = OrderedDict()
+        # Data file path -> global frame index of its first row (None if the file has no "index" column)
+        self._data_file_first_index: Dict[str, Optional[int]] = {}
+        # v3.0: episode_index -> video feature -> (chunk_index, file_index, from_timestamp, to_timestamp)
+        self._video_locations: Optional[Dict[int, Dict[str, Tuple[int, int, float, float]]]] = None
         self._parquet_cache_max = 16
         self._use_torch_fastpath = self.backend.simplified_name == "pytorch" and torch is not None
 
@@ -309,10 +348,8 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
 
         # Load tabular features from Parquet
         for ep_idx, (local_indices, output_positions) in episode_groups.items():
-            episode_meta = self._index.episodes[ep_idx]
-            dataset_offset = int(episode_meta.dataset_from_index or 0)
-            file_row_indices = local_indices + dataset_offset
             parquet_data = self._load_parquet_episode(ep_idx)
+            file_row_indices = local_indices + self._episode_row_offset(ep_idx)
             row_index_tensor = None
             output_index_tensor_cpu = None
             if use_torch_fastpath and torch is not None:
@@ -326,6 +363,9 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                             device=cached_values.device if hasattr(cached_values, "device") else "cpu"
                         )]
                         target = result[feat_name]
+                        if values.ndim == 1 and target.ndim > 1:
+                            # Scalar features (shape [1]) are stored as primitive columns.
+                            values = values.reshape(-1, *target.shape[1:])
                         if values.device != target.device:
                             values = values.to(target.device)
                         output_index_tensor = output_index_tensor_cpu.to(device=target.device)
@@ -341,17 +381,32 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         for feat_name in self._video_features:
             for ep_idx, (local_indices, output_positions) in episode_groups.items():
                 episode_meta = self._index.episodes[ep_idx]
-                dataset_offset = int(episode_meta.dataset_from_index or 0)
-                file_frame_indices = local_indices + dataset_offset
-                total_file_frames = (
-                    int(episode_meta.dataset_to_index)
-                    if episode_meta.dataset_to_index is not None
-                    else int(max(episode_meta.length, int(file_frame_indices.max()) + 1))
-                )
+                video_location = self._get_video_location(episode_meta.index, feat_name)
+                if video_location is not None:
+                    # v3.0 packs videos independently of the data files: use the episode's
+                    # video file and its start timestamp within that file.
+                    chunk_index, file_index, from_timestamp, to_timestamp = video_location
+                    video_fps = self._video_fps(feat_name)
+                    first_frame = int(round(from_timestamp * video_fps))
+                    file_frame_indices = local_indices + first_frame
+                    total_file_frames = max(
+                        int(round(to_timestamp * video_fps)),
+                        first_frame + int(episode_meta.length),
+                    )
+                else:
+                    dataset_offset = int(episode_meta.dataset_from_index or 0)
+                    file_frame_indices = local_indices + dataset_offset
+                    total_file_frames = (
+                        int(episode_meta.dataset_to_index)
+                        if episode_meta.dataset_to_index is not None
+                        else int(max(episode_meta.length, int(file_frame_indices.max()) + 1))
+                    )
+                    chunk_index = episode_meta.data_chunk_index
+                    file_index = episode_meta.data_file_index
                 video_path = get_video_file_path(
                     self._dataset_dir, self._schema, feat_name, episode_meta.index,
-                    file_index=episode_meta.data_file_index,
-                    chunk_index=episode_meta.data_chunk_index,
+                    file_index=file_index,
+                    chunk_index=chunk_index,
                 )
                 frames = self._decode_video_frames(
                     video_path, file_frame_indices, total_file_frames
@@ -460,6 +515,12 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             chunk_index=ep_meta.data_chunk_index,
         )
         table = pq.read_table(path, memory_map=True)
+        if path not in self._data_file_first_index:
+            self._data_file_first_index[path] = (
+                int(table.column("index")[0].as_py())
+                if "index" in table.column_names and table.num_rows > 0
+                else None
+            )
 
         data: Dict[str, Any] = {}
         for col_name in table.column_names:
@@ -474,6 +535,38 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         self._parquet_cache[episode_index] = data
 
         return data
+
+    def _episode_row_offset(self, episode_index: int) -> int:
+        """Row of the episode's first frame inside its (possibly packed) data file."""
+        ep_meta = self._index.episodes[episode_index]
+        if ep_meta.dataset_from_index is None:
+            return 0
+        # v3.0 `dataset_from_index` is a global frame index; packed files restart their rows
+        # at 0, so subtract the global index of the file's first row when it is known.
+        path = get_data_file_path(
+            self._dataset_dir, self._schema, ep_meta.index,
+            file_index=ep_meta.data_file_index,
+            chunk_index=ep_meta.data_chunk_index,
+        )
+        if path not in self._data_file_first_index:
+            self._load_parquet_episode(episode_index)
+        first_index = self._data_file_first_index.get(path)
+        return int(ep_meta.dataset_from_index) - (first_index or 0)
+
+    def _video_fps(self, feat_name: str) -> float:
+        video_info = self._schema.features[feat_name].video_info
+        if video_info is not None and video_info.fps:
+            return float(video_info.fps)
+        return float(self._schema.fps)
+
+    def _get_video_location(
+        self, episode_index: int, feat_name: str
+    ) -> Optional[Tuple[int, int, float, float]]:
+        if self._schema.codebase_version != LeRobotVersion.V3_0:
+            return None
+        if self._video_locations is None:
+            self._video_locations = _load_v3_video_locations(self._dataset_dir, self._video_features)
+        return self._video_locations.get(episode_index, {}).get(feat_name)
 
     def _materialize_tabular_column(
         self,

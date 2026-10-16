@@ -453,7 +453,8 @@ class CombinedBatch(BatchBase[
             self.batches[batch_idx].set_at(index_into_batch, value)
         else:
             batch_size, batch_list = self._convert_index(idx)
-            assert batch_size == len(value), f"Target batch size of {batch_size} does not match value size of {len(value)}"
+            value_size = sbu.batch_size_data(value)
+            assert batch_size == value_size, f"Target batch size of {batch_size} does not match value size of {value_size}"
             for batch_index, index_into_batch, mask in batch_list:
                 self.batches[batch_index].set_at(index_into_batch, sbu.get_at(self._batched_space, value, mask))
 
@@ -474,6 +475,7 @@ class CombinedBatch(BatchBase[
         self._build_index_cache()
     
     def close(self) -> None:
-        for batch in self.batches:
-            batch.close()
-        self.batches = []
+        """Release this view. The child batches are not owned by the view and stay open;
+        close them through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the children here would tear it down whenever a view is garbage-collected)."""
+        pass

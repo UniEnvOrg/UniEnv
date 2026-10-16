@@ -76,6 +76,7 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             self.max_length + 1,
             rng=rng,
             dtype=self.backend.default_integer_dtype,
+            device=self.device,
         )
         length = int(length[0])
         # Draw `length` i.i.d. character indices from the charset. We use
@@ -89,6 +90,7 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             len(charset_list),
             rng=rng,
             dtype=self.backend.default_integer_dtype,
+            device=self.device,
         )
         sample = "".join(
             charset_list[int(index[i])] for i in range(length)

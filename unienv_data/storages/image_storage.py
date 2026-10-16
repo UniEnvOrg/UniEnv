@@ -40,7 +40,7 @@ class ImageStorage(ListStorageBase[
             raise ValueError("cache_path must be provided for ImageStorage.create")
         assert not os.path.exists(cache_path), f"Cache path {cache_path} already exists"
         os.makedirs(cache_path, exist_ok=True)
-        return ImageStorage(
+        return cls(
             single_instance_space,
             format=format,
             quality=quality,
@@ -63,8 +63,8 @@ class ImageStorage(ListStorageBase[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         format = metadata["format"]
         quality = int(metadata["quality"])
@@ -72,7 +72,7 @@ class ImageStorage(ListStorageBase[
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
         length = metadata["length"]
 
-        return ImageStorage(
+        return cls(
             single_instance_space,
             format=format,
             quality=quality,
@@ -120,15 +120,18 @@ class ImageStorage(ListStorageBase[
             return self.backend.from_numpy(np_image, dtype=self.single_instance_space.dtype, device=self.single_instance_space.device)
     
     def set_to_file(self, filename : str, value : BArrayType):
-        np_value = self.backend.to_numpy(value)
-        img = Image.fromarray(np_value, mode="RGB")
+        np_value = np.ascontiguousarray(self.backend.to_numpy(value), dtype=np.uint8)
+        assert np_value.ndim == 3 and np_value.shape[-1] == 3, \
+            f"ImageStorage expects (H, W, 3) RGB images, got shape {np_value.shape}"
+        # Pillow infers RGB from a uint8 (H, W, 3) array; its `mode` argument is deprecated.
+        img = Image.fromarray(np_value)
         try:
             img.save(filename, format=self.format, quality=self.quality)
         finally:
             img.close()
 
     def dumps(self, path):
-        assert os.path.samefile(path, self.cache_filename), \
+        assert os.path.exists(path) and os.path.samefile(path, self.cache_filename), \
             f"Dump path {path} does not match cache filename {self.cache_filename}"
         metadata = {
             "storage_type": __class__.__name__,

@@ -34,9 +34,10 @@ class SubItemBatch(BatchBase[
     ):
         self.batch = batch
         self.sub_indexes = sub_indexes
+        # Metadata describes whole samples rather than fields, so it is forwarded unchanged.
         super().__init__(
             recursive_index(batch.single_space, sub_indexes),
-            recursive_index(batch.single_metadata_space, sub_indexes) if batch.single_metadata_space is not None else None,
+            batch.single_metadata_space,
         )
 
     @property
@@ -50,18 +51,6 @@ class SubItemBatch(BatchBase[
     def __len__(self) -> int:
         return len(self.batch)
 
-    def get_flattened_at(self, idx):
-        return recursive_index(
-            self.batch.get_flattened_at(idx),
-            self.sub_indexes
-        )
-
-    def get_flattened_at_with_metadata(self, idx):
-        return recursive_index(
-            self.batch.get_flattened_at_with_metadata(idx),
-            self.sub_indexes
-        )
-
     def get_at(self, idx):
         return recursive_index(
             self.batch.get_at(idx),
@@ -69,10 +58,11 @@ class SubItemBatch(BatchBase[
         )
 
     def get_at_with_metadata(self, idx) -> Tuple[BatchT, Dict[str, Any]]:
-        return recursive_index(
-            self.batch.get_at_with_metadata(idx),
-            self.sub_indexes
-        )
+        data, metadata = self.batch.get_at_with_metadata(idx)
+        return recursive_index(data, self.sub_indexes), metadata
+
+    # get_flattened_at / get_flattened_at_with_metadata: the BatchBase defaults flatten the
+    # selected item with this batch's space (the parent's flat layout cannot be indexed by key).
 
     def close(self) -> None:
         pass

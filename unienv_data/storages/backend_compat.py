@@ -97,7 +97,7 @@ class ToBackendOrDeviceStorage(
         if (backend is None or backend == single_instance_space.backend) and (device is None or device == single_instance_space.device):
             return inner_storage
 
-        return ToBackendOrDeviceStorage(
+        return cls(
             single_instance_space,
             inner_storage,
             inner_storage_path,
@@ -122,8 +122,8 @@ class ToBackendOrDeviceStorage(
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         inner_storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["inner_storage_type"])
         inner_storage_path = metadata["inner_storage_path"]
         inner_backend = deserialize_backend(metadata["inner_backend"])
@@ -149,7 +149,7 @@ class ToBackendOrDeviceStorage(
         if inner_backend == single_instance_space.backend and inner_device == single_instance_space.device:
             return inner_storage
         else:
-            return ToBackendOrDeviceStorage(
+            return cls(
                 single_instance_space,
                 inner_storage,
                 inner_storage_path,
@@ -305,4 +305,12 @@ class ToBackendOrDeviceStorage(
             json.dump(metadata, f)
     
     def close(self):
+        inner_storage = getattr(self, "inner_storage", None)
+        self.inner_storage = None
+        if inner_storage is not None:
+            inner_storage.close()
+
+    def __del__(self):
+        # Only drop the reference on garbage collection; the inner storage
+        # closes itself once it is no longer referenced anywhere else.
         self.inner_storage = None

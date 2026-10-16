@@ -32,12 +32,13 @@ def data_to(
             for key, value in data.items()
         }
     elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
+        sequence_type = type(data)
         data = [
             data_to(value, source_backend, target_backend, target_device)
             for value in data
         ]
         try:
-            data = type(data)(data)  # Preserve the type of the original sequence
+            data = sequence_type(data)  # Preserve the type of the original sequence
         except:
             pass
     return data
@@ -84,7 +85,13 @@ class ToBackendOrDeviceWrapper(
     
     @property
     def device(self) -> Optional[WrapperBDeviceT]:
-        return self._device
+        if self._device is not None:
+            return self._device
+        if self._backend is None or self._backend == self.env.backend:
+            # Same backend and no explicit device: data stays on the inner env's device.
+            return self.env.device
+        # Different backend without an explicit device: the target backend's default device.
+        return None
 
     def step(
         self, 

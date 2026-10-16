@@ -18,11 +18,17 @@ network = [
     "websockets>=15,<16",
 ]
 calibration = [
-    "opencv-contrib-python>=4.7",
+    # TODO(opencv5): OpenCV 5.0.0 does not expose cv2.calibrateHandEye to Python (declared
+    # CV_EXPORTS, not CV_EXPORTS_W). Fixed upstream in opencv/opencv@325e30db1d on 5.x but
+    # unreleased as of 2026-10-16; lift the <5 cap (e.g. to !=5.0.0.*) once a 5.x release ships it.
+    "opencv-contrib-python>=4.7,<5",
 ]
 dev = [
     "pytest",
-    "opencv-contrib-python>=4.7",
+    "pytest-timeout",
+    "pytest-cov",
+    "hypothesis",
+    "opencv-contrib-python>=4.7,<5",  # see TODO(opencv5) in the calibration extra
     "websockets>=15,<16",
     "gymnasium>=0.29.0",
     "moviepy>=2.1",
@@ -52,3 +58,11 @@ Changelog = "https://github.com/UniEnvOrg/UniEnv/blob/main/CHANGELOG.md"
 [tool.setuptools.packages.find]
 include = ["*"]
 exclude = ["training*", "tests*", "examples*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_interface", "tests_data", "tests_utils"]
+timeout = 300
+markers = [
+    "slow: long-running tests (video encoding, multiprocessing); deselect with -m 'not slow'",
+    "gpu: tests that need a CUDA device",
+]

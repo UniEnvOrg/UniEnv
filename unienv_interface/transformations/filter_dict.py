@@ -58,10 +58,15 @@ def include_chained_key_in_dict(
             raise KeyError(f"Key '{first_key}' not found in the source dictionary.")
     
     first_value = d[first_key]
+    existing_value = target_d[first_key] if first_key in target_d.keys() else None
+    if len(chained_key) > 1 and existing_value is first_value:
+        # The whole sub-tree has already been included by a shorter key
+        return target_d
     target_d[first_key] = include_chained_key_in_dict(
         first_value,
         chained_key[1:],
-        target_d=None,
+        # Merge into the partial sub-tree built by sibling keys (e.g. 'a/x' then 'a/y')
+        target_d=existing_value,
         ignore_missing_keys=ignore_missing_keys
     )
     
@@ -169,10 +174,21 @@ class DictExcludeKeyTransformation(DataTransformation):
         self._chained_keys : List[List[str]] = []
         for key in excluded_keys:
             self._chained_keys.append(key.split(self.nested_separator))
+
+    def _effective_chained_keys(self) -> List[List[str]]:
+        # A key below an excluded key is already removed with its parent; processing it
+        # after the parent (the set order is arbitrary) would report it as missing.
+        return [
+            chained_key for chained_key in self._chained_keys
+            if not any(
+                len(other) < len(chained_key) and chained_key[:len(other)] == other
+                for other in self._chained_keys
+            )
+        ]
         
     def get_target_space_from_source(self, source_space):
         new_space = source_space
-        for chained_key in self._chained_keys:
+        for chained_key in self._effective_chained_keys():
             try:
                 new_space = exclude_chained_key_in_dict(
                     new_space,
@@ -185,7 +201,7 @@ class DictExcludeKeyTransformation(DataTransformation):
     
     def transform(self, source_space, data):
         new_data = data
-        for chained_key in self._chained_keys:
+        for chained_key in self._effective_chained_keys():
             try:
                 new_data = exclude_chained_key_in_dict(
                     new_data,

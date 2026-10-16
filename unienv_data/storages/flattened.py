@@ -48,7 +48,7 @@ class FlattenedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **_inner_storage_kwargs
         )
-        return FlattenedStorage(
+        return cls(
             single_instance_space,
             inner_storage,
             inner_storage_path,
@@ -70,8 +70,8 @@ class FlattenedStorage(SpaceStorage[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         inner_storage_cls : Type[SpaceStorage] = get_class_from_full_name(metadata["inner_storage_type"])
         inner_storage_path = metadata["inner_storage_path"]
         flattened_space = sfu.flatten_space(single_instance_space)
@@ -83,7 +83,7 @@ class FlattenedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **kwargs
         )
-        return FlattenedStorage(
+        return cls(
             single_instance_space,
             inner_storage,
             inner_storage_path,

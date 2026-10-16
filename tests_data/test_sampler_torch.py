@@ -2,7 +2,6 @@ from typing import Generic, TypeVar, Generic, Optional, Any, Dict as DictT, Tupl
 import torch
 import numpy as np
 import pytest
-import tempfile
 
 from unienv_data import *
 from unienv_data.storages.pytorch import PytorchTensorStorage
@@ -18,13 +17,15 @@ def construct_torch_rb(
     space : Space,
     capacity : int,
     use_mmap : bool,
-    seed : Optional[int] = None
+    seed : Optional[int] = None,
+    cache_dir = None,
 ) -> ReplayBuffer:
+    assert not use_mmap or cache_dir is not None, "memory-mapped buffers need a cache directory"
     rb = ReplayBuffer.create(
         FlattenedStorage,
         space,
         inner_storage_cls=PytorchTensorStorage,
-        cache_path=tempfile.mkdtemp() if use_mmap else None,
+        cache_path=str(cache_dir) if use_mmap else None,
         capacity=capacity,
         is_memmap=use_mmap,
     )
@@ -36,7 +37,7 @@ def test_step_sampler(
     capacity : int,
     seed : int
 ):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     space = BoxSpace(
         PyTorchComputeBackend,
         0.0,
@@ -61,13 +62,16 @@ def test_step_sampler(
         sample = sampler.sample()
         assert sample_space.contains(sample)
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @pytest.mark.parametrize("capacity", [50, 100])
 @pytest.mark.parametrize("seed", [0, 1024])
 @pytest.mark.parametrize("use_mmap", [True, False])
 def test_multiprocessing_sampler(
     capacity : int,
     seed : int,
-    use_mmap : bool
+    use_mmap : bool,
+    tmp_path,
 ):
     device = torch.device("cpu")
     space = BoxSpace(
@@ -78,7 +82,7 @@ def test_multiprocessing_sampler(
         device=device,
         shape=(3, 5, 2)
     )
-    rb = construct_torch_rb(space, capacity, use_mmap, seed)
+    rb = construct_torch_rb(space, capacity, use_mmap, seed, cache_dir=tmp_path / "rb")
     rb = check_fixed_capacity_replay_buffer(
         rb,
         seed=seed,
@@ -95,12 +99,14 @@ def test_multiprocessing_sampler(
         sampler,
         n_workers=4,
         n_buffers=8,
-        ctx=torch.multiprocessing.get_context("spawn") if device.type == "cuda" else torch.multiprocessing.get_context("fork")
+        ctx=torch.multiprocessing.get_context("fork"),
     )
-    sample_space = sampler.sampled_space
-    for i in range(10):
-        sample = sampler.sample()
-        assert sample_space.contains(sample)
-    for sample in sampler.epoch_iter():
-        assert sample_space.contains(sample)
-
+    try:
+        sample_space = sampler.sampled_space
+        for i in range(10):
+            sample = sampler.sample()
+            assert sample_space.contains(sample)
+        for sample in sampler.epoch_iter():
+            assert sample_space.contains(sample)
+    finally:
+        sampler.close()

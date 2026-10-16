@@ -20,14 +20,14 @@ def data_to(
     target_backend : Optional[ComputeBackend[WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]] = None,
     target_device : Optional[WrapperBDeviceT] = None,
 ):
-    if source_backend.is_backendarray(data):
+    if source_backend is not None and source_backend.is_backendarray(data):
         if source_backend is not None and target_backend is not None and target_backend != source_backend:
             data = target_backend.from_other_backend(
                 source_backend,
                 data
             )
         if target_device is not None:
-            data = (source_backend or target_backend).to_device(
+            data = (target_backend or source_backend).to_device(
                 data,
                 target_device
             )
@@ -37,14 +37,14 @@ def data_to(
             for key, value in data.items()
         }
     elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
-        data = [
+        converted = [
             data_to(value, source_backend, target_backend, target_device)
             for value in data
         ]
         try:
-            data = type(data)(data)  # Preserve the type of the original sequence
+            data = type(data)(converted)  # Preserve the type of the original sequence
         except:
-            pass
+            data = converted
     return data
 
 class ToBackendOrDeviceBatch(
@@ -84,10 +84,10 @@ class ToBackendOrDeviceBatch(
         return self.target_device if self.target_device is not None else self.batch.device
 
     def get_flattened_at(self, idx):
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
@@ -100,10 +100,10 @@ class ToBackendOrDeviceBatch(
         )
 
     def get_flattened_at_with_metadata(self, idx):
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
@@ -125,16 +125,16 @@ class ToBackendOrDeviceBatch(
 
     def set_flattened_at(self, idx, value):
         assert self.is_mutable, "Batch is not mutable"
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
         value = data_to(
             value,
-            source_backend=self.target_backend,
+            source_backend=self.backend,
             target_backend=self.batch.backend,
             target_device=self.batch.device
         )
@@ -144,17 +144,17 @@ class ToBackendOrDeviceBatch(
         assert self.is_mutable, "Batch is not mutable"
         value = data_to(
             value,
-            source_backend=self.target_backend,
+            source_backend=self.backend,
             target_backend=self.batch.backend,
             target_device=self.batch.device
         )
         self.batch.extend_flattened(value)
     
     def get_at(self, idx):
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
@@ -169,10 +169,10 @@ class ToBackendOrDeviceBatch(
         )
     
     def get_at_with_metadata(self, idx):
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
@@ -194,16 +194,16 @@ class ToBackendOrDeviceBatch(
     
     def set_at(self, idx, value):
         assert self.is_mutable, "Batch is not mutable"
-        if self.target_backend.is_backendarray(idx):
+        if self.backend.is_backendarray(idx):
             idx = data_to(
                 idx,
-                source_backend=self.target_backend,
+                source_backend=self.backend,
                 target_backend=self.batch.backend,
                 target_device=self.batch.device
             )
         o_value = data_to(
             value,
-            source_backend=self.target_backend,
+            source_backend=self.backend,
             target_backend=self.batch.backend,
             target_device=self.batch.device
         )
@@ -213,7 +213,7 @@ class ToBackendOrDeviceBatch(
         assert self.is_mutable, "Batch is not mutable"
         o_value = data_to(
             value,
-            source_backend=self.target_backend,
+            source_backend=self.backend,
             target_backend=self.batch.backend,
             target_device=self.batch.device
         )
@@ -221,7 +221,17 @@ class ToBackendOrDeviceBatch(
 
     def remove_at(self, idx):
         assert self.is_mutable, "Batch is not mutable"
+        if self.backend.is_backendarray(idx):
+            idx = data_to(
+                idx,
+                source_backend=self.backend,
+                target_backend=self.batch.backend,
+                target_device=self.batch.device
+            )
         self.batch.remove_at(idx)
     
     def close(self):
-        self.batch.close()
+        """Release this view. The wrapped batch is not owned by the view and stays open;
+        close it through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the source here would tear it down whenever a view is garbage-collected)."""
+        pass

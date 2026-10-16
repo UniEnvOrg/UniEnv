@@ -33,6 +33,12 @@ CONSERVATIVE_COMPRESSION_RATIOS = {
     "JPEG": get_jpeg_compression_ratio,
 }
 
+# Fixed per-image overhead (markers, quantization and Huffman tables...) that does not scale with the
+# number of pixels. A baseline JPEG written by PIL carries ~630 bytes for RGB and ~330 for grayscale.
+CONSERVATIVE_HEADER_BYTES = {
+    "JPEG": 1024,
+}
+
 class ImageCompressTransformation(DataTransformation):
     has_inverse = True
 
@@ -44,14 +50,21 @@ class ImageCompressTransformation(DataTransformation):
         mode : Optional[str] = None,
         format : str = "JPEG",
         last_channel : bool = True,
+        header_bytes : Optional[int] = None,
     ) -> None:
         """
         Initialize JPEG compression transformation.
         Args:
             init_quality: Initial JPEG quality setting (1-100).
             max_size_bytes: Maximum allowed size of compressed JPEG in bytes.
+            compression_ratio: Size budget as ``H * W * C // compression_ratio + 1 + header_bytes`` bytes
+                (defaults to a conservative ratio for ``format`` derived from ``init_quality``).
             mode: Optional mode for PIL Image (e.g., "RGB", "L"). If None, inferred from input.
             format: Image format to use for compression (default "JPEG"). See https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html for options.
+            last_channel: Whether images are (..., H, W, C) (True) or channel-less (..., H, W) (False).
+            header_bytes: Fixed allowance added to ratio-based budgets for the per-image format overhead,
+                which dominates for small images. Defaults to a conservative value for ``format``;
+                ignored when ``max_size_bytes`` is given.
         """
         assert not (max_size_bytes is not None and compression_ratio is not None), "Specify either max_size_bytes or compression_ratio, not both."
         assert max_size_bytes is not None or compression_ratio is not None or format in CONSERVATIVE_COMPRESSION_RATIOS, "Either max_size_bytes must be specified or format must have a conservative compression ratio defined."
@@ -62,6 +75,7 @@ class ImageCompressTransformation(DataTransformation):
         self.mode = mode
         self.format = format
         self.last_channel = last_channel
+        self.header_bytes = header_bytes if header_bytes is not None else CONSERVATIVE_HEADER_BYTES.get(format, 0)
 
     def validate_source_space(self, source_space: Space[Any, BDeviceType, BDtypeType, BRNGType]) -> None:
         assert isinstance(source_space, BoxSpace), "JPEGCompressTransformation only supports BoxSpace source spaces."
@@ -85,7 +99,7 @@ class ImageCompressTransformation(DataTransformation):
         else:
             H, W = source_space.shape[-2], source_space.shape[-1]
             C = 1
-        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1
+        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1 + self.header_bytes
 
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
@@ -114,10 +128,13 @@ class ImageCompressTransformation(DataTransformation):
         Args:
             img_array: np.ndarray, uint8, shape (H, W, 3) RGB or (H, W, 1) grayscale
             max_bytes: maximum allowed size of JPEG file
-            min_quality: minimum JPEG quality before giving up
+            min_quality: minimum JPEG quality before giving up (capped at ``init_quality``)
 
         Returns:
             jpeg_bytes (bytes), final_quality (int)
+
+        Raises:
+            ValueError: if the image does not fit in ``max_bytes`` even at ``min_quality``.
         """
         # Handle grayscale (H, W, 1) → (H, W)
         if img_array.ndim == 3 and img_array.shape[-1] == 1:
@@ -127,17 +144,24 @@ class ImageCompressTransformation(DataTransformation):
         img = Image.fromarray(img_array, mode=mode)
 
         quality = self.init_quality
-        while quality >= min_quality:
-            buf = io.BytesIO()
-            img.save(buf, format=self.format, quality=quality)
-            image_bytes = buf.getvalue()
-            if len(image_bytes) <= max_bytes:
-                return image_bytes, quality
-            quality -= 10
+        min_quality = min(min_quality, quality)
+        try:
+            while True:
+                buf = io.BytesIO()
+                img.save(buf, format=self.format, quality=quality)
+                image_bytes = buf.getvalue()
+                if len(image_bytes) <= max_bytes:
+                    return image_bytes, quality
+                if quality <= min_quality:
+                    break
+                quality = max(quality - 10, min_quality)
+        finally:
+            img.close()
 
-        img.close()
-        # Return lowest quality attempt if still too large
-        return image_bytes, quality
+        raise ValueError(
+            f"Image of shape {img_array.shape} needs {len(image_bytes)} bytes as {self.format} even at quality {quality}, "
+            f"which exceeds the {max_bytes} byte budget; increase `max_size_bytes` (or lower `compression_ratio`)."
+        )
     
     def transform(self, source_space, data):
         self.validate_source_space(source_space)
@@ -192,6 +216,9 @@ class ImageCompressTransformation(DataTransformation):
         self.__dict__.update(state)
         if 'last_channel' not in state:
             self.last_channel = True
+        if 'header_bytes' not in state:
+            # Older versions had no header allowance; keep their target space unchanged.
+            self.header_bytes = 0
 
     def serialize(
         self,
@@ -204,6 +231,7 @@ class ImageCompressTransformation(DataTransformation):
             "mode": self.mode,
             "format": self.format,
             "last_channel": self.last_channel,
+            "header_bytes": self.header_bytes,
         }
 
     @classmethod
@@ -219,6 +247,8 @@ class ImageCompressTransformation(DataTransformation):
             mode=json_data.get("mode", None),
             format=json_data.get("format", "JPEG"),
             last_channel=json_data.get("last_channel", True),
+            # Configurations saved before the header allowance existed must keep their target shape.
+            header_bytes=json_data.get("header_bytes", 0),
         )
 
 class ImageDecompressTransformation(DataTransformation):
@@ -292,13 +322,20 @@ class ImageDecompressTransformation(DataTransformation):
         self.validate_source_space(source_space)
         data_numpy = source_space.backend.to_numpy(data)
         flat_data_numpy = data_numpy.reshape(-1, data_numpy.shape[-1])
-        flat_decompressed_image = np.zeros((flat_data_numpy.shape[0], self.target_height, self.target_width, self.target_channels), dtype=np.uint8)
+        image_shape = (self.target_height, self.target_width)
+        if self.target_channels is not None:
+            image_shape = image_shape + (self.target_channels,)
+        flat_decompressed_image = np.zeros((flat_data_numpy.shape[0], *image_shape), dtype=np.uint8)
         for i in range(flat_data_numpy.shape[0]):
             byte_array : np.ndarray = flat_data_numpy[i]
-            flat_decompressed_image[i] = self.decode_bytes(
+            decoded = self.decode_bytes(
                 byte_array.tobytes(),
                 mode=self.mode
             )
+            if decoded.ndim == 2 and len(image_shape) == 3:
+                # Grayscale JPEGs decode to (H, W); restore the channel axis.
+                decoded = decoded[..., None]
+            flat_decompressed_image[i] = decoded
         if self.target_channels is None:
             decompressed_image = flat_decompressed_image.reshape(data_numpy.shape[:-1] + (self.target_height, self.target_width))
         else:

@@ -120,6 +120,13 @@ def test_min_poses_is_enforced() -> None:
     assert result.n_poses == 3
 
 
+def test_missing_calibrate_hand_eye_raises_clear_import_error(monkeypatch) -> None:
+    # OpenCV 5.0's Python bindings dropped calibrateHandEye
+    monkeypatch.delattr(cv2, "calibrateHandEye", raising=False)
+    with pytest.raises(ImportError, match="opencv-contrib-python>=4.7,<5"):
+        solve_hand_to_base(_make_observations(5))
+
+
 def test_invalid_pose_is_rejected() -> None:
     observations = _make_observations(5)
     broken = observations[:]

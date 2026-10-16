@@ -27,13 +27,15 @@ class ToGymnasiumEnv(
         )
         self.observation_space = gym_utils.to_gym_space(self._unienv_combined_space)
         self._episode_context : Optional[ContextType] = None
-        self._np_rng : Optional[np.random.Generator] = None
 
     @staticmethod
     def combine_context_obs_space(
         context_space: Space[ContextType, BDeviceType, BDeviceType, BRNGType],
         observation_space: Space[ObsType, BDeviceType, BDtypeType, BRNGType]
     ) -> Space[Union[ContextType, ObsType], BDeviceType, BDtypeType, BRNGType]:
+        if context_space is None:
+            # Nothing to combine: expose the observation space as-is.
+            return observation_space
         if isinstance(context_space, DictSpace) and isinstance(observation_space, DictSpace):
             spaces = context_space.spaces.copy()
             spaces.update(observation_space.spaces)
@@ -60,6 +62,8 @@ class ToGymnasiumEnv(
         context: ContextType,
         observation: ObsType
     ) -> Dict[str, Any]:
+        if context is None:
+            return observation
         if isinstance(context, Dict) and isinstance(observation, Dict):
             new_obs = context.copy()
             new_obs.update(observation)
@@ -102,15 +106,21 @@ class ToGymnasiumEnv(
         self.env.render_mode = value
     
     def _init_np_rng(self):
-        if self._np_rng is None:
-            self._np_rng = np.random.default_rng(
-                seed_util.next_seed_rng(self.env.rng, self.env.backend)
-            )
+        if self._np_random is None:
+            # Derive the gymnasium-side generator from the wrapped env's rng.
+            self.env.rng, seed = seed_util.next_seed_rng(self.env.rng, self.env.backend)
+            self._np_random = np.random.default_rng(seed)
+            self._np_random_seed = seed
 
     @property
     def np_random(self) -> np.random.Generator:
         self._init_np_rng()
-        return self._np_rng
+        return self._np_random
+
+    @np_random.setter
+    def np_random(self, value: np.random.Generator):
+        self._np_random = value
+        self._np_random_seed = -1
 
     def step(self, action: ActType) -> Tuple[
         ObsType, 
@@ -125,7 +135,9 @@ class ToGymnasiumEnv(
         obs, rew, terminated, truncated, info = self.env.step(c_action)
         c_obs = gym_utils.to_gym_data(
             self._unienv_combined_space, 
-            self.combine_context_obs(self._episode_context, obs
+            # Copy so each step's observation owns its context data (gymnasium requires
+            # observations from different calls not to share objects)
+            self.combine_context_obs(copy.deepcopy(self._episode_context), obs
         ))
         c_rew = float(rew)
         c_terminated = bool(terminated)
@@ -141,7 +153,10 @@ class ToGymnasiumEnv(
         **kwargs,
     ) -> Tuple[ObsType, Dict[str, Any]]:
         assert mask is None, "Batched environment param `mask` is not supported by this wrapper."
-        kwargs = kwargs.update(options) if options is not None else kwargs
+        # Seeds the gymnasium-side np_random like gymnasium.Env.reset does.
+        super().reset(seed=seed)
+        if options is not None:
+            kwargs = {**kwargs, **options}
         context, obs, info = self.env.reset(
             *args, 
             mask=None, 
@@ -151,7 +166,7 @@ class ToGymnasiumEnv(
         self._episode_context = context
         c_obs = gym_utils.to_gym_data(
             self._unienv_combined_space,
-            self.combine_context_obs(context, obs)
+            self.combine_context_obs(copy.deepcopy(context), obs)
         )
         return c_obs, info
 
@@ -228,6 +243,10 @@ class FromGymnasiumEnv(
     def rng(self) -> np.random.Generator:
         return self._rng
 
+    @rng.setter
+    def rng(self, value: np.random.Generator):
+        self._rng = value
+
     def step(
         self, action: ActType
     ) -> Tuple[
@@ -255,10 +274,14 @@ class FromGymnasiumEnv(
         **kwargs,
     ) -> Tuple[None, ObsType, Dict[str, Any]]:
         assert mask is None, "Batched environment param `mask` is not supported by this wrapper."
+        # gymnasium's reset only takes `seed` and `options`: pass other kwargs as options.
+        options = kwargs.pop("options", None)
+        if len(kwargs) > 0:
+            options = {**(options or {}), **kwargs}
         obs, info = self.env.reset(
             *args, 
             seed=seed, 
-            **kwargs
+            options=options
         )
         c_obs = gym_utils.from_gym_data(self.observation_space, obs)
         return None, c_obs, info
@@ -279,7 +302,7 @@ class FromGymnasiumEnv(
     def has_wrapper_attr(self, name: str) -> bool:
         return hasattr(self, name) or (
             hasattr(self.env, name) or
-            (hasattr(self.env, 'has_wrapper_attr' and self.env.has_wrapper_attr(name)))
+            (hasattr(self.env, 'has_wrapper_attr') and self.env.has_wrapper_attr(name))
         )
 
     def get_wrapper_attr(self, name: str) -> Any:

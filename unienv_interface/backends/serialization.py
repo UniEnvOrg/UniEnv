@@ -50,6 +50,16 @@ def serialize_dtype(backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType
     for key, value in all_dtypes_mapping.items():
         if value == dtype:
             return key
+    # Some backends (e.g. JAX) use Python scalar types such as ``float`` as their
+    # default dtypes; resolve them to the concrete dtype of an array.
+    try:
+        concrete_dtype = backend.zeros((1,), dtype=dtype).dtype
+    except Exception:
+        concrete_dtype = None
+    if concrete_dtype is not None:
+        for key, value in all_dtypes_mapping.items():
+            if value == concrete_dtype:
+                return key
     raise ValueError(f"Unknown dtype: {dtype}")
 
 def deserialize_dtype(backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType], dtype_str: Optional[str]) -> Optional[BDtypeType]:

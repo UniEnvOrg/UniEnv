@@ -131,3 +131,41 @@ def test_crop_serialization(backend, seed):
     transform = CropTransformation(crop_low=-0.5, crop_high=0.5)
     
     verify_transformation_serialization(transform, space, rng, num_samples=5)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("bound_shape", [(4,), (3, 4)])
+def test_crop_with_lower_rank_array_bounds(backend, bound_shape):
+    """Array bounds with fewer dims than the space broadcast over the leading dims."""
+    from unienv_interface.space import BoxSpace
+    dtype = backend.default_floating_dtype
+    space = BoxSpace(backend, -5.0, 5.0, dtype, shape=(2, 3, 4))
+    crop_low = backend.full(bound_shape, -1.0, dtype=dtype)
+    crop_high = backend.full(bound_shape, 1.0, dtype=dtype)
+    transform = CropTransformation(crop_low=crop_low, crop_high=crop_high)
+    target = transform.get_target_space_from_source(space)
+    assert target.shape == space.shape
+    rng = backend.random.random_number_generator(0)
+    for _ in range(3):
+        rng, x = space.sample(rng)
+        y = transform.transform(space, x)
+        assert target.contains(y)
+        assert y.shape == x.shape
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("dtype_name,bounds", [("float32", (-1.0, 1.0)), ("int32", (-1, 2)), ("int32", (-1.5, 2.5))])
+def test_crop_keeps_array_type_and_dtype(backend, dtype_name, bounds):
+    """Cropping 0-d data or integer data with float bounds stays an array of the source dtype."""
+    from unienv_interface.space import BoxSpace
+    dtype = backend.__array_namespace_info__().dtypes()[dtype_name]
+    for shape in [(), (3,)]:
+        space = BoxSpace(backend, -5, 5, dtype, shape=shape)
+        transform = CropTransformation(*bounds)
+        target = transform.get_target_space_from_source(space)
+        rng = backend.random.random_number_generator(1)
+        for _ in range(4):
+            rng, x = space.sample(rng)
+            y = transform.transform(space, x)
+            assert backend.is_backendarray(y) and y.dtype == space.dtype
+            assert target.contains(y)

@@ -3,6 +3,40 @@ import numpy as np
 from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
+def _sample_integers_in_closed_interval(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    rng : BRNGType,
+    low : BArrayType,
+    high : BArrayType,
+    shape : Sequence[int],
+    dtype : BDtypeType,
+    device : Optional[BDeviceType] = None,
+) -> Tuple[BRNGType, BArrayType]:
+    """Uniformly sample integers from ``[low, high]`` (elementwise, both ends included).
+
+    The interval width is computed in floating point because ``high - low + 1``
+    overflows the integer dtype for (near) full-range bounds such as the ones
+    produced from ``-inf``/``inf``.
+    """
+    rng, uniform = backend.random.random_uniform(
+        shape, rng=rng, low=0.0, high=1.0, device=device
+    )
+    float_dtype = uniform.dtype
+    low_f = backend.astype(low, float_dtype)
+    high_f = backend.astype(high, float_dtype)
+    sample = low_f + backend.floor(uniform * (high_f - low_f + 1))
+    sample = backend.minimum(sample, high_f) # Fix for floating point errors
+
+    # Floats at or above ``max + 1`` cannot be cast to the integer dtype; such
+    # values only arise from rounding ``high`` up, so they map back to ``high``.
+    overflow = sample >= float(int(backend.iinfo(low.dtype).max) + 1)
+    sample = backend.where(overflow, backend.zeros_like(sample), sample)
+    sample = backend.astype(sample, dtype)
+    sample = backend.where(overflow, high, sample)
+    sample = backend.clip(sample, low, high)
+    # numpy turns 0-d results of elementwise ops into scalars
+    return rng, backend.asarray(sample, dtype=dtype, device=device)
+
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Continuous or integer hyper-rectangle defined by elementwise bounds."""
     def __init__(
@@ -22,6 +56,10 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             backend.dtype_is_real_floating(dtype) or backend.dtype_is_real_integer(dtype)
         ), f"Box dtype must be a real floating or integer type, actual dtype: {dtype}"
         self._dtype_is_float = backend.dtype_is_real_floating(dtype)
+        if dtype is int or dtype is float:
+            # Python scalar types (jax's default dtypes) -> the concrete dtype arrays get,
+            # so equality, serialization round-trips and data dtype checks agree
+            dtype = backend.empty((0,), dtype=dtype).dtype
 
         # determine shape if it isn't provided directly
         if shape is not None:
@@ -52,7 +90,8 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
         # Cast low and high to backend arrays
         if backend.dtype_is_real_integer(dtype):
-            dttype_iinfo = backend.iinfo(dtype)
+            # Query the materialised dtype: e.g. jax without x64 stores ``int`` as int32
+            dttype_iinfo = backend.iinfo(backend.empty((0,), dtype=dtype, device=device).dtype)
             dtype_min = dttype_iinfo.min
             dtype_max = dttype_iinfo.max
 
@@ -70,14 +109,17 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         else:
             _high = backend.astype(high, dtype)
         
-        _low = backend.abbreviate_array(
-            _low,
-            try_cast_scalar=False
-        )
-        _high = backend.abbreviate_array(
-            _high,
-            try_cast_scalar=False
-        )
+        # Empty arrays have nothing to abbreviate (and xbarray cannot abbreviate them)
+        if 0 not in tuple(_low.shape):
+            _low = backend.abbreviate_array(
+                _low,
+                try_cast_scalar=False
+            )
+        if 0 not in tuple(_high.shape):
+            _high = backend.abbreviate_array(
+                _high,
+                try_cast_scalar=False
+            )
         
         assert backend.all(_low <= _high), f"low is greater than high: low={_low}, high={_high}"
 
@@ -88,12 +130,13 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         assert not backend.any(backend.isnan(_low)), f"low contains NaN values: {_low}"
         assert not backend.any(backend.isnan(_high)), f"high contains NaN values: {_high}"
         
+        # Size-1 axes broadcast to any size, including 0
         assert len(_low.shape) == len(shape) and all(
-            (_low.shape[i] == shape[i] or (_low.shape[i] == 1 and shape[i] >= 1)) for i in range(len(shape))
+            (_low.shape[i] == shape[i] or _low.shape[i] == 1) for i in range(len(shape))
         ), f"_low.shape doesn't match provided shape and is not broadcastable, _low.shape: {_low.shape}, shape: {shape}"
         assert len(_high.shape) == len(shape) and all(
-            (_high.shape[i] == shape[i] or (_high.shape[i] == 1 and shape[i] >= 1)) for i in range(len(shape))
-        ), f"_low.shape doesn't match provided shape and is not broadcastable, high.shape: {_low.shape}, shape: {shape}"
+            (_high.shape[i] == shape[i] or _high.shape[i] == 1) for i in range(len(shape))
+        ), f"_high.shape doesn't match provided shape and is not broadcastable, _high.shape: {_high.shape}, shape: {shape}"
 
         self._shape: Tuple[int, ...] = shape
         
@@ -103,7 +146,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_above = self.backend.inf > _high
             below = bool(self.backend.all(bounded_below))
             above = bool(self.backend.all(bounded_above))
-            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {self.low}, high: {self.high}"
+            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {_low}, high: {_high}"
 
         self._low = _low
         self._high = _high
@@ -224,22 +267,9 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_sample += low[bounded]
             sample = self.backend.at(sample)[bounded].set(bounded_sample)
         else:
-            high=self.high + 1
-            rng, sample = self.backend.random.random_uniform(
-                self.shape, rng=rng, low=0.0, high=1.0, device=self.device
+            rng, sample = _sample_integers_in_closed_interval(
+                self.backend, rng, low, self.high, self.shape, self.dtype, device=self.device
             )
-            sample *= (high - low)
-            sample = self.backend.floor(sample)
-
-            # Fix for floating point errors
-            floating_point_error_idx = sample >= high - low
-            if self.backend.any(floating_point_error_idx):
-                sample = self.backend.at(sample)[floating_point_error_idx].set(
-                    self.backend.astype(high[floating_point_error_idx] - low[floating_point_error_idx] - 1, sample.dtype)
-                )
-
-            sample = self.backend.astype(sample, self.dtype)
-            sample += low
         return rng, sample
 
     def create_empty(self) -> BArrayType:
@@ -253,9 +283,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def contains(self, x: Any) -> bool:
         """Return boolean specifying if x is a valid member of this space."""
         if not self.backend.is_backendarray(x):
-            raise ValueError(
-                f"Box.contains expects x to be a backend array, actual type: {type(x)}"
-            )
+            return False
 
         return bool(
             self.backend.can_cast(x, self.dtype)

@@ -1,6 +1,7 @@
 from typing import Optional, Any, Dict, Generic, TypeVar, Type, Tuple, Union
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from abc import ABC, abstractmethod
+from unienv_interface.utils.control_util import is_integer_multiple
 import time
 
 class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -120,7 +121,7 @@ class World(ABC, Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         """Check whether a node control period aligns with ``world_timestep``."""
         if control_timestep is None or self.world_timestep is None:
             return True
-        return (control_timestep % self.world_timestep) == 0
+        return is_integer_multiple(control_timestep, self.world_timestep)
 
     # ========== Wrapper methods ==========
     # @property

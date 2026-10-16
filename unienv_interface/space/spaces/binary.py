@@ -50,10 +50,11 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         rng, uniform_sample = self.backend.random.random_uniform(
             self.shape, rng=rng, device=self.device
         )
-        return rng, self.backend.astype(
+        # ``asarray``: numpy turns the 0-d comparison result into a scalar
+        return rng, self.backend.asarray(
             uniform_sample > 0.5,
-            self.dtype,
-            copy=False
+            dtype=self.dtype,
+            device=self.device
         )
     
     def create_empty(self):

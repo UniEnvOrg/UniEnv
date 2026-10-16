@@ -173,6 +173,9 @@ def solve_hand_to_base(
     ValueError
         If fewer than ``min_poses`` observations were given or if any pose is
         not a valid rigid transform.
+    ImportError
+        If the installed OpenCV has no ``calibrateHandEye`` (OpenCV 5.0's
+        Python bindings dropped it; install ``opencv-contrib-python<5``).
     """
     poses = list(observations)
     if len(poses) < min_poses:
@@ -204,6 +207,13 @@ def solve_hand_to_base(
         R_target2cam.append(T_cam_board[:3, :3])
         t_target2cam.append(T_cam_board[:3, 3])
 
+    # TODO(opencv5): drop this guard and the <5 pin in pyproject.toml once an OpenCV 5.x
+    # release includes opencv/opencv@325e30db1d (re-exposes calibrateHandEye to Python).
+    if not hasattr(cv2, "calibrateHandEye"):
+        raise ImportError(
+            f"OpenCV {cv2.__version__} provides no cv2.calibrateHandEye (dropped from "
+            "the OpenCV 5.0 Python bindings); install 'opencv-contrib-python>=4.7,<5'."
+        )
     R_base_cam, t_base_cam = cv2.calibrateHandEye(
         R_gripper2base,
         t_gripper2base,

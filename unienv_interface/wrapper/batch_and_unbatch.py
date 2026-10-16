@@ -42,8 +42,31 @@ class BatchifyWrapper(
     def batch_size(self) -> int:
         return 1
     
+    def reset(
+        self,
+        *args,
+        mask : Optional[BArrayType] = None,
+        seed : Optional[int] = None,
+        **kwargs
+    ):
+        if mask is not None and not bool(mask[0]):
+            # Nothing selected: leave the inner env untouched and return empty (0-row) data.
+            context = None if self.context_space is None else sbu.get_at(
+                self.context_space, self.context_space.create_empty(), mask
+            )
+            obs = sbu.get_at(self.observation_space, self.observation_space.create_empty(), mask)
+            return context, obs, {}
+        # The inner env is unbatched and therefore does not accept a mask.
+        return super().reset(*args, mask=None, seed=seed, **kwargs)
+
     def step(self, action):
         obs, rewards, terminated, truncated, info = super().step(action)
+        if self.backend.is_backendarray(rewards):
+            rewards = self.backend.stack([rewards], axis=0)
+        else:
+            rewards = self.backend.asarray(
+                [float(rewards)], dtype=self.backend.default_floating_dtype, device=self.device
+            )
         if self.backend.is_backendarray(terminated):
             terminated = self.backend.stack([terminated], axis=0)
         else:
@@ -95,6 +118,7 @@ class UnBatchifyWrapper(
     
     def step(self, action):
         obs, rewards, terminated, truncated, info = super().step(action)
+        rewards = float(rewards[0])
         terminated = bool(terminated[0])
         truncated = bool(truncated[0])
         return obs, rewards, terminated, truncated, info

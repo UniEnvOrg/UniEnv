@@ -135,11 +135,13 @@ class TransformedBatch(
         assert self.transformation.has_inverse, "Cannot extend values on a transformed batch without an inverse transformation"
         assert self.batch.is_mutable, "Cannot extend values on an immutable batch"
         source_dat = self._transform_inv.transform(
-            self.batch._batched_space,
+            self._batched_space,
             value
         )
         self.batch.extend(source_dat)
 
     def close(self):
-        self.batch.close()
-        self.transformation.close()
+        """Release this view. The wrapped batch (and the transformation) are not owned by the view and stay open;
+        close them through whoever created it (``BatchBase.__del__`` calls ``close()``, so
+        closing the source here would tear it down whenever a view is garbage-collected)."""
+        pass

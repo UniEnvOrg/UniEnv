@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 
 from unienv_interface.backends import ComputeBackend, BDeviceType, get_backend_from_tensor
-from unienv_interface.backends.serialization import deserialize_backend, serialize_backend
+from unienv_interface.backends.serialization import deserialize_backend, serialize_backend, serialize_dtype
 
 __all__ = [
     "serialize_scalar_or_array_value",
@@ -24,6 +24,9 @@ def serialize_scalar_or_array_value(
     """
     if value is None:
         return None, None
+    if isinstance(value, np.generic):
+        # numpy scalars (e.g. np.float32(1.0)) are not backend arrays
+        value = value.item()
     if isinstance(value, (int, float)):
         return None, {"scalar": True, "value": value, "backend": None}
 
@@ -32,6 +35,7 @@ def serialize_scalar_or_array_value(
         "scalar": False,
         "value": backend.to_numpy(value).tolist(),
         "backend": serialize_backend(backend),
+        "dtype": serialize_dtype(backend, value.dtype),
     }
 
 
@@ -54,7 +58,12 @@ def deserialize_scalar_or_array_value(
         return None, value_data["value"]
 
     value_backend = override_backend or deserialize_backend(value_data["backend"])
-    value = value_backend.from_numpy(np.array(value_data["value"]))
+    # Payloads written before the dtype was recorded fall back to numpy's inference.
+    dtype_name = value_data.get("dtype", None)
+    value = value_backend.from_numpy(np.array(
+        value_data["value"],
+        dtype=None if dtype_name is None else np.dtype(dtype_name)
+    ))
     if override_device is not None:
         value = value_backend.to_device(value, override_device)
     return value_backend, value
