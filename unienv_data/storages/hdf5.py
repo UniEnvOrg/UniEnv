@@ -327,7 +327,8 @@ class HDF5Storage(SpaceStorage[
                 chunks=chunks,
             )
 
-        initial_capacity = initial_capacity or capacity
+        # `initial_capacity=0` is valid (an empty, growable dataset), so only fall back when it is None.
+        initial_capacity = capacity if initial_capacity is None else initial_capacity
         for key, space in single_instance_space.spaces.items():
             assert key not in root, f"Key '{key}' already exists in group"
             if not isinstance(space, DictSpace):
@@ -490,6 +491,9 @@ class HDF5Storage(SpaceStorage[
             "cache_path must be provided for HDF5Storage"
         assert not multiprocessing, \
             "HDF5Storage does not support multiprocessing safe creation. Please create the storage in the main process and then load it in child processes."
+        if capacity is None and initial_capacity is None:
+            # Unbounded storages start empty and grow through `extend_length`.
+            initial_capacity = 0
         root = h5py.File(
             cache_path,
             "w",
