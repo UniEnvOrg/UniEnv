@@ -201,3 +201,61 @@ def test_async_surfaces_worker_errors():
         assert "boom in worker" in repr(excinfo.value.__cause__) + str(excinfo.value)
     finally:
         async_env.close()
+
+
+# ---------------------------------------------------------------------------
+# Worker loop, exercised in-process (no subprocess) through a thread
+# ---------------------------------------------------------------------------
+
+def _run_worker_in_thread(env_fn):
+    import queue
+    import threading
+
+    from unienv_interface.env_base.vec_env import _async_worker_fn
+
+    parent, child = mp.Pipe()
+    dummy_parent, _ = mp.Pipe()
+    errors = queue.Queue()
+    thread = threading.Thread(target=_async_worker_fn, args=(0, env_fn, child, dummy_parent, errors), daemon=True)
+    thread.start()
+    return parent, errors, thread
+
+
+def test_worker_loop_serves_commands_and_closes_env():
+    env = StubEnv()
+    parent, errors, thread = _run_worker_in_thread(lambda: env)
+    parent.send(("reset", (), {"seed": 2}))
+    (context, obs, info), ok = parent.recv()
+    assert ok and info == {"step": 0}
+    np.testing.assert_array_equal(context, [2.0, 2.0])
+    parent.send(("step", (np.full(2, 0.5, np.float32),), {}))
+    (obs, reward, terminated, truncated, info), ok = parent.recv()
+    assert ok and info == {"step": 1}
+    parent.send(("render", (), {}))
+    frame, ok = parent.recv()
+    assert ok and frame.shape == (4, 6, 3)
+    parent.send(("close", (), {}))
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert env.closed == 1 and errors.empty()
+
+
+def test_worker_loop_reports_errors():
+    parent, errors, thread = _run_worker_in_thread(_FailingStepEnv)
+    parent.send(("step", (np.zeros(2, np.float32),), {}))
+    (name, message, tb), ok = parent.recv()
+    assert not ok and name == "ValueError" and message == "boom in worker"
+    assert "Traceback" in tb
+    index, exc = errors.get(timeout=5)
+    assert index == 0 and isinstance(exc, ValueError)
+    thread.join(timeout=10)
+
+
+def test_worker_loop_reports_construction_errors():
+    def broken():
+        raise RuntimeError("cannot build env")
+
+    parent, errors, thread = _run_worker_in_thread(broken)
+    (name, message, _), ok = parent.recv()
+    assert not ok and name == "RuntimeError" and message == "cannot build env"
+    thread.join(timeout=10)
