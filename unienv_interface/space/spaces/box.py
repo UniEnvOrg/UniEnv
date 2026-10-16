@@ -38,6 +38,96 @@ def _sample_integers_in_closed_interval(
     # numpy turns 0-d results of elementwise ops into scalars
     return rng, backend.asarray(sample, dtype=dtype, device=device)
 
+def _bounds_traced(low : BArrayType, high : BArrayType) -> bool:
+    """Whether the bounds only exist inside a jax trace (the space was built inside ``jax.jit``)."""
+    return _is_jax_tracer(low) or _is_jax_tracer(high)
+
+def _bounds_numpy(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    low : BArrayType,
+    high : BArrayType,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """The stored (abbreviated) bounds as numpy arrays, for building cached plans.
+
+    Returns ``None`` if they cannot be represented in numpy (e.g. torch bfloat16).
+    """
+    try:
+        return np.asarray(backend.to_numpy(low)), np.asarray(backend.to_numpy(high))
+    except Exception:
+        return None
+
+def _scalar_bounds(
+    bounds : Tuple[np.ndarray, np.ndarray],
+    dtype_is_float : bool,
+) -> Optional[Tuple[Union[int, float], Union[int, float]]]:
+    """Python-scalar ``(low, high)`` if every coordinate shares the same bounds, else ``None``."""
+    low, high = bounds
+    if low.size != 1 or high.size != 1:
+        return None
+    cast = float if dtype_is_float else int
+    return cast(low.reshape(-1)[0]), cast(high.reshape(-1)[0])
+
+# ``random_discrete_uniform`` takes an exclusive upper bound, which jax (without x64)
+# parses as int32: ``high + 1`` has to fit.
+_RANDINT_LIMIT = 2 ** 31 - 1
+
+def _build_sample_plan(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    dtype_is_float : bool,
+    low : BArrayType,
+    high : BArrayType,
+) -> Tuple[tuple, bool]:
+    """How to sample a box with stored bounds ``low``/``high``, and whether the plan may be cached.
+
+    * ``("uniform", high - low)``: every coordinate is bounded (float): one uniform
+      draw scaled to the bounds -- the same values the generic path draws for
+      bounded coordinates.
+    * ``("randint", low, high + 1)``: integer box whose coordinates share scalar
+      bounds: one discrete uniform draw.
+    * ``("generic",)``: per-coordinate sampling by interval type.
+    """
+    if _bounds_traced(low, high):
+        return ("generic",), False
+    bounds = _bounds_numpy(backend, low, high)
+    if bounds is None:
+        return ("generic",), True
+    if dtype_is_float:
+        if np.all(bounds[0] > -np.inf) and np.all(bounds[1] < np.inf):
+            span = high - low
+            # inside a trace the span is a tracer: use it for this call only
+            return ("uniform", span), not _is_jax_tracer(span)
+        return ("generic",), True
+    scalar_bounds = _scalar_bounds(bounds, dtype_is_float)
+    if scalar_bounds is not None:
+        lo, hi = scalar_bounds
+        if -_RANDINT_LIMIT - 1 <= lo and hi + 1 <= _RANDINT_LIMIT:
+            return ("randint", lo, hi + 1), True
+    return ("generic",), True
+
+def _sample_from_plan(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    plan : tuple,
+    rng : BRNGType,
+    shape : Sequence[int],
+    dtype : BDtypeType,
+    device : Optional[BDeviceType],
+    low : BArrayType,
+) -> Tuple[BRNGType, BArrayType]:
+    """Draw a sample of ``shape`` following a non-generic plan from ``_build_sample_plan``."""
+    if plan[0] == "uniform":
+        rng, sample = backend.random.random_uniform(
+            shape, rng=rng, low=0.0, high=1.0, dtype=dtype, device=device
+        )
+        sample = sample * plan[1] + low
+    else:
+        rng, sample = backend.random.random_discrete_uniform(
+            shape, plan[1], plan[2], rng=rng, dtype=dtype, device=device
+        )
+    if not backend.is_backendarray(sample):
+        # numpy turns 0-d results of elementwise ops into scalars
+        sample = backend.asarray(sample, dtype=dtype, device=device)
+    return rng, sample
+
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Continuous or integer hyper-rectangle defined by elementwise bounds.
 
@@ -45,7 +135,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     reassigned), so values derived from the bounds are computed lazily and
     cached on the instance; caches are dropped when pickling.
     """
-    _CACHE_ATTRS = ("_low_b", "_high_b", "_contains_plan")
+    _CACHE_ATTRS = ("_low_b", "_high_b", "_contains_plan", "_sample_plan")
 
     def __init__(
         self,
@@ -250,28 +340,6 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 self._high_b = high
         return high
 
-    def _bounds_traced(self) -> bool:
-        """Whether the bounds only exist inside a jax trace (the box was built inside ``jax.jit``)."""
-        return _is_jax_tracer(self._low) or _is_jax_tracer(self._high)
-
-    def _bounds_numpy(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """The stored (abbreviated) bounds as numpy arrays, for building cached plans.
-
-        Returns ``None`` if they cannot be represented in numpy (e.g. torch bfloat16).
-        """
-        try:
-            return np.asarray(self.backend.to_numpy(self._low)), np.asarray(self.backend.to_numpy(self._high))
-        except Exception:
-            return None
-
-    def _scalar_bounds(self, bounds : Tuple[np.ndarray, np.ndarray]) -> Optional[Tuple[Union[int, float], Union[int, float]]]:
-        """Python-scalar ``(low, high)`` if every coordinate shares the same bounds, else ``None``."""
-        low, high = bounds
-        if low.size != 1 or high.size != 1:
-            return None
-        cast = float if self._dtype_is_float else int
-        return cast(low.reshape(-1)[0]), cast(high.reshape(-1)[0])
-
     def to(
         self, 
         backend : Optional[ComputeBackend] = None,
@@ -332,8 +400,15 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             A sampled value from the Box
         """
 
+        plan = self._sample_plan
+        if plan is None:
+            plan, cacheable = _build_sample_plan(self.backend, self._dtype_is_float, self._low, self._high)
+            if cacheable:
+                self._sample_plan = plan
+        if plan[0] != "generic":
+            return _sample_from_plan(self.backend, plan, rng, self.shape, self.dtype, self.device, self._low)
+
         low = self.low
-        
 
         if self._dtype_is_float:
             high = self.high
@@ -401,12 +476,12 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
           whole dtype.
         * ``("generic",)``: elementwise comparison against the bounds.
         """
-        if self._bounds_traced():
+        if _bounds_traced(self._low, self._high):
             return None
-        bounds = self._bounds_numpy()
+        bounds = _bounds_numpy(self.backend, self._low, self._high)
         if bounds is None:
             return ("generic",)
-        scalar_bounds = self._scalar_bounds(bounds)
+        scalar_bounds = _scalar_bounds(bounds, self._dtype_is_float)
         if scalar_bounds is None:
             return ("generic",)
         low, high = scalar_bounds

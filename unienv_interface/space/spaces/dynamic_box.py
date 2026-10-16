@@ -1,7 +1,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
 import numpy as np
 from ..space import Space
-from .box import _sample_integers_in_closed_interval
+from .box import _sample_integers_in_closed_interval, _build_sample_plan, _sample_from_plan
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -179,6 +179,16 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         self._low = _low
         self._high = _high
         self.fill_value = fill_value
+        self._sample_plan = None  # lazily built; bounds never change after construction
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_sample_plan", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._sample_plan = None
 
     def get_low(self, shape : Sequence[int]) -> BArrayType:
         return self.backend.broadcast_to(self._low, shape)
@@ -291,7 +301,15 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         target_shape = self.backend.floor(target_shape * target_shape_bounds)
         target_shape = tuple(int(target_shape[i]) + self.shape_low[i] for i in range(len(target_shape)))
 
-        
+        plan = self._sample_plan
+        if plan is None:
+            plan, cacheable = _build_sample_plan(self.backend, self._dtype_is_float, self._low, self._high)
+            if cacheable:
+                self._sample_plan = plan
+        if plan[0] != "generic":
+            # The stored bounds broadcast to any shape in [shape_low, shape_high]
+            return _sample_from_plan(self.backend, plan, rng, target_shape, self.dtype, self.device, self._low)
+
         low = self.get_low(target_shape)
 
         if self._dtype_is_float:

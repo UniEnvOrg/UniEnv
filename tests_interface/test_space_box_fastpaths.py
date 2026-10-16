@@ -295,3 +295,162 @@ def test_contains_on_box_built_inside_jit_is_not_cached():
     np.testing.assert_allclose(np.asarray(jax.jit(f)(jnp.full(3, 2.0))), np.ones(3))
     assert seen["plan"] is None
     assert seen["space"]._contains_plan is None
+
+
+def _float_sample_boxes(backend, device):
+    asarr = lambda x: backend.from_numpy(np.asarray(x, dtype=np.float32), device=device)
+    f32 = backend.float32
+    boxes = [
+        BoxSpace(backend, -1.0, 2.0, f32, device=device, shape=(4, 7)),
+        BoxSpace(backend, -1.0, 2.0, f32, device=device, shape=()),
+        BoxSpace(backend, -1.0, 2.0, f32, device=device, shape=(0, 3)),
+        BoxSpace(backend, asarr(np.arange(7)), 10.0, f32, device=device),
+        BoxSpace(backend, asarr([[-1.0], [0.0]]), asarr([[1.0], [5.0]]), f32, device=device, shape=(2, 3)),
+        BoxSpace(backend, 3.0, 3.0, f32, device=device, shape=(2,)),
+    ]
+    if backend.__name__ != "JaxComputeBackend":  # jax without x64 has no float64
+        boxes.append(BoxSpace(backend, -5.0, 5.0, backend.float64, device=device, shape=(3,)))
+    return boxes
+
+
+def _draw(space, backend, device, seed=3, n=3):
+    rng = backend.random.random_number_generator(seed, device=device)
+    out = []
+    for _ in range(n):
+        rng, x = space.sample(rng)
+        out.append(x)
+    return out
+
+
+NON_JAX_BACKENDS = [p for p in CPU_BACKENDS if p.values[0].__name__ != "JaxComputeBackend"]
+
+
+@pytest.mark.parametrize("backend,device", NON_JAX_BACKENDS)
+def test_bounded_float_sample_is_bit_identical_to_generic_path(backend, device):
+    """numpy/torch: the single uniform draw yields exactly the old per-interval draw."""
+    from unienv_interface.space import DynamicBoxSpace
+    spaces = _float_sample_boxes(backend, device)
+    for space in spaces:
+        fast = _draw(space, backend, device)
+        assert space._sample_plan[0] == "uniform"
+        slow = _draw(_with_plan(space, "_sample_plan", ("generic",)), backend, device)
+        for a, b in zip(fast, slow):
+            assert backend.is_backendarray(a)
+            assert a.dtype == b.dtype and tuple(a.shape) == tuple(b.shape) == space.shape
+            np.testing.assert_array_equal(_np(backend, a), _np(backend, b))
+    dyn = DynamicBoxSpace(backend, -1.0, 2.0, (1, 3), (6, 3), backend.float32, device=device)
+    fast = _draw(dyn, backend, device, n=5)
+    assert dyn._sample_plan[0] == "uniform"
+    slow = _draw(_with_plan(dyn, "_sample_plan", ("generic",)), backend, device, n=5)
+    for a, b in zip(fast, slow):
+        assert tuple(a.shape) == tuple(b.shape)
+        np.testing.assert_array_equal(_np(backend, a), _np(backend, b))
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_bounded_float_sample_is_inside_the_box(backend, device):
+    for space in _float_sample_boxes(backend, device):
+        for x in _draw(space, backend, device, n=5):
+            assert backend.is_backendarray(x)
+            assert x.dtype == space.dtype and tuple(x.shape) == space.shape
+            assert space.contains(x)
+
+
+INT_SAMPLE_CASES = [
+    # (low, high, dtype name, expected plan kind)
+    (0, 255, "uint8", "randint"),
+    (-np.inf, np.inf, "int8", "randint"),
+    (-np.inf, np.inf, "int16", "randint"),
+    (0, 3, "int32", "randint"),
+    (-7, -7, "int64", "randint"),
+    (-(2 ** 31), 2 ** 31 - 3, "int64", "randint"),
+    (-np.inf, np.inf, "int32", "generic"),   # high + 1 does not fit int32
+    (0, 2 ** 40, "int64", "generic"),
+]
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+@pytest.mark.parametrize("low,high,dtype_name,plan_kind", INT_SAMPLE_CASES)
+def test_integer_sample_plan(backend, device, low, high, dtype_name, plan_kind):
+    space = BoxSpace(backend, low, high, getattr(backend, dtype_name), device=device, shape=(500,))
+    lo, hi = (int(v) for v in (_np(backend, space._low).reshape(-1)[0], _np(backend, space._high).reshape(-1)[0]))
+    if plan_kind == "generic" and backend.__name__ == "JaxComputeBackend" and hi - lo < 2 ** 32 - 2:
+        plan_kind = "randint"  # jax without x64 stores int64 boxes as int32: the bounds fit
+    xs = _draw(space, backend, device, n=4)
+    assert space._sample_plan[0] == plan_kind
+    values = np.concatenate([_np(backend, x) for x in xs])
+    for x in xs:
+        assert x.dtype == space._low.dtype and tuple(x.shape) == space.shape
+        assert space.contains(x)
+    assert values.min() >= lo and values.max() <= hi
+    if hi - lo <= 255:  # 2000 draws hit both ends of a small closed interval
+        assert values.min() == lo and values.max() == hi
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_array_bound_integer_box_uses_generic_sampling(backend, device):
+    low = backend.from_numpy(np.array([0, 10, 20], np.int32), device=device)
+    space = BoxSpace(backend, low, 30, backend.int32, device=device)
+    for x in _draw(space, backend, device, n=5):
+        assert space.contains(x)
+    assert space._sample_plan == ("generic",)
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_unbounded_float_box_keeps_generic_sampling(backend, device):
+    space = BoxSpace(backend, -np.inf, 1.0, backend.float32, device=device, shape=(3,))
+    xs = _draw(space, backend, device)
+    assert space._sample_plan == ("generic",)
+    slow = _draw(_with_plan(space, "_sample_plan", ("generic",)), backend, device)
+    for a, b in zip(xs, slow):
+        np.testing.assert_array_equal(_np(backend, a), _np(backend, b))
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_integer_scalar_box_samples_are_arrays(backend, device):
+    space = BoxSpace(backend, 0, 9, backend.int32, device=device, shape=())
+    (x,) = _draw(space, backend, device, n=1)
+    assert backend.is_backendarray(x) and tuple(x.shape) == ()
+    assert space.contains(x)
+
+
+def test_dynamic_box_integer_sample_plan():
+    from unienv_interface.backends.numpy import NumpyComputeBackend as B
+    from unienv_interface.space import DynamicBoxSpace
+    space = DynamicBoxSpace(B, 0, 255, (1, 2), (8, 2), B.uint8)
+    for x in _draw(space, B, None, n=20):
+        assert x.dtype == np.uint8 and x.shape[1] == 2 and 1 <= x.shape[0] <= 8
+        assert space.contains(x)
+    assert space._sample_plan[0] == "randint"
+    assert "_sample_plan" not in pickle.loads(pickle.dumps(space)).__getstate__()
+
+
+@pytest.mark.parametrize("backend,device", CPU_BACKENDS)
+def test_sample_plan_is_not_pickled(backend, device):
+    space = BoxSpace(backend, -1.0, 1.0, backend.float32, shape=(3,))
+    _draw(space, backend, None)
+    assert space._sample_plan is not None
+    restored = pickle.loads(pickle.dumps(space))
+    assert restored._sample_plan is None
+    assert restored.contains(_draw(restored, backend, None)[0])
+
+
+def test_sampling_inside_jit_does_not_cache_tracers():
+    jax = pytest.importorskip("jax")
+    from unienv_interface.backends.jax import JaxComputeBackend as B
+    from unienv_interface.space import DynamicBoxSpace
+    rng = B.random.random_number_generator(0)
+    for space in (
+        BoxSpace(B, -1.0, 1.0, B.float32, shape=(3,)),
+        BoxSpace(B, 0, 255, B.uint8, shape=(3,)),
+        BoxSpace(B, B.asarray([0, 1, 2]), 9, B.int32),  # generic integer path stays jittable
+    ):
+        x = jax.jit(lambda r: space.sample(r)[1])(rng)
+        assert space.contains(x)
+        if space._sample_plan is not None:
+            assert not any(isinstance(v, jax.core.Tracer) for v in space._sample_plan)
+        _, y = space.sample(rng)  # eager after jit: no leaked tracer
+        assert space.contains(y)
+    dyn = DynamicBoxSpace(B, -1.0, 1.0, (1, 2), (4, 2), B.float32)
+    _, y = dyn.sample(rng)
+    assert dyn.contains(y)
