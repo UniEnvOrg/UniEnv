@@ -1,4 +1,4 @@
-from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, cast
+from typing import Generic, TypeVar, Generic, Optional, Any, Dict, Tuple, Sequence, Union, List, Iterable, Type, Literal, Set, cast
 from fractions import Fraction
 from collections import deque
 import uuid
@@ -61,21 +61,27 @@ class PyAvVideoReader:
         from av.codec.hwaccel import hwdevices_available
         return hwdevices_available()
     
+    # Hardware accelerators (``HWAccel`` objects, by identity) that failed to initialise in this
+    # process; forked children inherit the set. They are never retried: besides wasting ~100 ms
+    # per open, re-initialising a device whose initialisation failed before a fork crashes the
+    # child inside FFmpeg (e.g. CUDA hidden via CUDA_VISIBLE_DEVICES segfaults).
+    _failed_hwaccels : Set[Any] = set()
+    # One ``HWAccel`` per device type for ``hwaccel='auto'``, so failures can be remembered
+    _auto_hwaccels : Dict[str, Any] = {}
+
     @staticmethod
     def get_auto_hwaccel() -> Optional[HWAccel]:
         available_hwdevices = __class__.available_hwdevices()
-        target_hwaccel = None
-        if "d3d11va" in available_hwdevices:
-            target_hwaccel = PyAvHWAccel(device_type="d3d11va", allow_software_fallback=True)
-        elif "cuda" in available_hwdevices:
-            target_hwaccel = PyAvHWAccel(device_type="cuda", allow_software_fallback=True)
-        elif "vaapi" in available_hwdevices:
-            target_hwaccel = PyAvHWAccel(device_type="vaapi", allow_software_fallback=True)
-        elif "videotoolbox" in available_hwdevices:
-            target_hwaccel = PyAvHWAccel(device_type="videotoolbox", allow_software_fallback=True)
-        elif "vulkan" in available_hwdevices:
-            target_hwaccel = PyAvHWAccel(device_type="vulkan", allow_software_fallback=True)
-        return target_hwaccel
+        for device_type in ("d3d11va", "cuda", "vaapi", "videotoolbox", "vulkan"):
+            if device_type not in available_hwdevices:
+                continue
+            hwaccel = __class__._auto_hwaccels.get(device_type)
+            if hwaccel is None:
+                hwaccel = PyAvHWAccel(device_type=device_type, allow_software_fallback=True)
+                __class__._auto_hwaccels[device_type] = hwaccel
+            if hwaccel not in __class__._failed_hwaccels:
+                return hwaccel
+        return None
 
     def __init__(
         self, 
@@ -89,12 +95,20 @@ class PyAvVideoReader:
         self.container = None # so close()/__del__ work if opening fails
         if hwaccel == 'auto':
             hwaccel = __class__.get_auto_hwaccel()
+        if (
+            hwaccel is not None and hwaccel in __class__._failed_hwaccels
+            and getattr(hwaccel, 'allow_software_fallback', False)
+        ):
+            hwaccel = None
         try:
             self.container = av.open(filename, mode='r', hwaccel=hwaccel)
         except av.error.FFmpegError:
             # A listed hardware device can still fail to initialise (e.g. CUDA hidden
             # via CUDA_VISIBLE_DEVICES or a driver mismatch); decode in software then
-            if hwaccel is None or not getattr(hwaccel, 'allow_software_fallback', False):
+            if hwaccel is None:
+                raise
+            __class__._failed_hwaccels.add(hwaccel)
+            if not getattr(hwaccel, 'allow_software_fallback', False):
                 raise
             self.container = av.open(filename, mode='r')
         self.video_stream = self.container.streams.video[0]

@@ -310,6 +310,14 @@ def test_hwaccel_selection(monkeypatch):
     assert isinstance(PyAvVideoReader.available_hwdevices(), list)
 
 
+@pytest.fixture(autouse=True)
+def isolated_failed_hwdevices(monkeypatch):
+    """Each test starts with no remembered hardware-decoder failures."""
+    from unienv_data.storages.video_storage import PyAvVideoReader
+    monkeypatch.setattr(PyAvVideoReader, "_failed_hwaccels", set())
+    monkeypatch.setattr(PyAvVideoReader, "_auto_hwaccels", {})
+
+
 def _failing_hwaccel_open(monkeypatch):
     """Make ``av.open`` fail whenever a hardware accelerator is requested."""
     import av
@@ -341,6 +349,62 @@ def test_reader_falls_back_to_software_when_hwaccel_init_fails(tmp_path, monkeyp
     with PyAvVideoReader(B, filename, buffer_pixel_format="rgb24", hwaccel="auto") as reader:
         np.testing.assert_array_equal(next(reader), frames[0])
     assert calls[0] is not None and calls[1] is None
+
+
+def test_failed_hwaccel_device_is_not_retried(tmp_path, monkeypatch):
+    from av.codec.hwaccel import HWAccel
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    storage = _storage(tmp_path)
+    storage.set(slice(None), _frames(6))
+    filename = storage._make_filename(0, 5)
+    calls = _failing_hwaccel_open(monkeypatch)
+    cuda = HWAccel(device_type="cuda", allow_software_fallback=True)
+
+    PyAvVideoReader(B, filename, hwaccel=cuda).close()
+    assert calls == [cuda, None]
+    PyAvVideoReader(B, filename, hwaccel=cuda).close()
+    assert calls == [cuda, None, None]  # straight to software decoding
+
+    # ``hwaccel='auto'`` skips a failed device and tries the next available one
+    monkeypatch.setattr(PyAvVideoReader, "available_hwdevices", staticmethod(lambda: ["cuda", "vaapi"]))
+    auto_cuda = PyAvVideoReader.get_auto_hwaccel()
+    assert PyAvVideoReader.get_auto_hwaccel() is auto_cuda
+    PyAvVideoReader(B, filename, hwaccel="auto").close()
+    auto_vaapi = PyAvVideoReader.get_auto_hwaccel()
+    assert auto_vaapi is not None and auto_vaapi is not auto_cuda
+
+
+def test_forked_child_does_not_retry_a_failed_hwaccel_device(tmp_path, monkeypatch):
+    # Re-initialising a device whose initialisation failed before the fork can crash the
+    # child inside FFmpeg (seen with CUDA hidden via CUDA_VISIBLE_DEVICES), so the child
+    # must inherit the failure and decode in software.
+    import multiprocessing as mp
+    from av.codec.hwaccel import HWAccel
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    frames = _frames(6)
+    storage = _storage(tmp_path)
+    storage.set(slice(None), frames)
+    filename = storage._make_filename(0, 5)
+    calls = _failing_hwaccel_open(monkeypatch)
+    cuda = HWAccel(device_type="cuda", allow_software_fallback=True)
+    PyAvVideoReader(B, filename, hwaccel=cuda).close()
+
+    def child(queue):
+        del calls[:]
+        with PyAvVideoReader(B, filename, buffer_pixel_format="rgb24", hwaccel=cuda) as reader:
+            frame = next(reader)
+        queue.put(([c is None for c in calls], frame))
+
+    ctx = mp.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=child, args=(queue,))
+    proc.start()
+    opened_in_software, frame = queue.get(timeout=60)
+    proc.join(timeout=30)
+    assert opened_in_software == [True]
+    np.testing.assert_array_equal(frame, frames[0])
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
