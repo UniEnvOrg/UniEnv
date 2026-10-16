@@ -86,6 +86,7 @@ def get_chained_residual_space(
             space.backend,
             {},
             device=space.device,
+            metadata=space.metadata,
         )
 
     for key, subspace in space.spaces.items():
@@ -111,6 +112,7 @@ def get_chained_residual_space(
         space.backend,
         residual_spaces,
         device=space.device,
+        metadata=space.metadata,
     )
 
 def get_chained_space(
