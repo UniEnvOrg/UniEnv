@@ -335,3 +335,21 @@ def test_reader_frame_index_conversions(tmp_path):
     from fractions import Fraction
     assert PyAvVideoReader._to_fraction(Fraction(1, 3)) == Fraction(1, 3)
     assert PyAvVideoReader._to_fraction(0.5) == Fraction(1, 2)
+
+
+def _pretend_torchcodec_installed(monkeypatch):
+    import importlib.util
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a, **k: object() if name == "torchcodec" else real_find_spec(name, *a, **k))
+
+
+def test_auto_decode_backend_uses_pyav_for_non_rgb_buffers(tmp_path, monkeypatch):
+    # TorchCodecVideoReader only supports rgb24, so depth (gray16le) videos must not pick it.
+    _pretend_torchcodec_installed(monkeypatch)
+    space = BoxSpace(B, 0, 65535, np.uint16, shape=(4, 6))
+    kwargs = dict(LOSSLESS_DEPTH_KWARGS, decode_backend="auto")
+    depth = VideoStorage.create(space, capacity=2, cache_path=str(tmp_path / "d"), **kwargs)
+    assert depth.decode_backend == "pyav"
+    rgb = _storage(tmp_path, name="rgb", decode_backend="auto")
+    assert rgb.decode_backend == "torchcodec"

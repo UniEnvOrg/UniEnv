@@ -808,7 +808,8 @@ class VideoStorage(EpisodeStorageBase[
         self.codec = self.get_auto_codec() if codec == 'auto' else codec
         
         if decode_backend == 'auto':
-            if importlib.util.find_spec("torchcodec"):
+            # TorchCodecVideoReader only decodes rgb24; other buffer formats (e.g. gray16le depth) need PyAV.
+            if buffer_pixel_format == 'rgb24' and importlib.util.find_spec("torchcodec"):
                 decode_backend = 'torchcodec'
             else:
                 decode_backend = 'pyav'
