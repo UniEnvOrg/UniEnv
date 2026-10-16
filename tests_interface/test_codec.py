@@ -14,6 +14,7 @@ from hypothesis.extra import numpy as hnp
 from unienv_interface.remote.codec import Codec, CodecError, map_arrays
 from unienv_interface.space import GraphInstance
 from tests_common.backends import cpu_backend_params
+from tests_common.space_strategies import build_space, seeds, space_specs
 from tests_common.trees import assert_tree_equal
 
 
@@ -101,6 +102,19 @@ def test_mutated_or_truncated_payloads_only_raise_codec_error(value, data):
         codec.decode(bytes(flipped))
     except CodecError:
         pass  # Any other exception type fails the test
+
+
+@given(space_specs(), seeds)
+def test_roundtrip_of_sampled_space_data(spec, seed):
+    from unienv_interface.backends.numpy import NumpyComputeBackend as B
+    space = build_space(spec, B)
+    codec = Codec()
+    rng = B.random.random_number_generator(seed)
+    for _ in range(2):
+        rng, x = space.sample(rng)
+        decoded = codec.decode(codec.encode(x))
+        assert space.contains(decoded)
+        assert_tree_equal(decoded, x)
 
 
 # ---------------------------------------------------------------------------
