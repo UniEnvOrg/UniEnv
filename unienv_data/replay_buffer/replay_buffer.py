@@ -138,6 +138,52 @@ def _segment_length_from_inclusive(
         return end - start + 1
     return (capacity - start) + (end + 1)
 
+def _linear_pieces(
+    segment: Tuple[int, int],
+    capacity: Optional[int],
+) -> List[Tuple[int, int]]:
+    """Inclusive, non-wrapping pieces of a physical segment, in ring (expansion) order."""
+    start, end = int(segment[0]), int(segment[1])
+    if capacity is None or start <= end:
+        return [(start, end)]
+    return [(start, capacity - 1), (0, end)]
+
+def _subtract_physical_range(
+    segment: Tuple[int, int],
+    victims: Sequence[Tuple[int, int]],
+    capacity: Optional[int],
+) -> List[Tuple[int, int]]:
+    """
+    Interval form of
+    `_compress_physical_indices([i for i in _expand_physical_segment(segment) if i not in victims], capacity)`
+    for inclusive, non-wrapping `victims`: O(#pieces) instead of O(capacity) per call.
+    """
+    survivors: List[Tuple[int, int]] = []
+    for lo, hi in _linear_pieces(segment, capacity):
+        current = [(lo, hi)]
+        for victim_lo, victim_hi in victims:
+            remaining = []
+            for x, y in current:
+                if victim_hi < x or victim_lo > y:
+                    remaining.append((x, y))
+                    continue
+                if x < victim_lo:
+                    remaining.append((x, victim_lo - 1))
+                if victim_hi < y:
+                    remaining.append((victim_hi + 1, y))
+            current = remaining
+        survivors.extend(current)
+    # Re-join runs that continue each other (also across the end of the ring), as `_compress_physical_indices` does
+    merged: List[Tuple[int, int]] = []
+    for x, y in survivors:
+        if merged:
+            prev_x, prev_y = merged[-1]
+            if x == prev_y + 1 or (capacity is not None and prev_y == capacity - 1 and x == 0):
+                merged[-1] = (prev_x, y)
+                continue
+        merged.append((x, y))
+    return merged
+
 def _physical_segments_to_logical_half_open(
     physical_segments: Sequence[Tuple[int, int]],
     *,
@@ -151,26 +197,33 @@ def _physical_segments_to_logical_half_open(
             key=lambda item: item[0],
         )
 
+    if len(physical_segments) == 0:
+        return []
+    offset = int(offset) % capacity
+    count = int(count)
     logical_segments: List[Tuple[int, int]] = []
     for segment in physical_segments:
-        logical_positions: List[int] = []
-        for physical_index in _expand_physical_segment(segment, capacity):
-            logical_index = int((physical_index - offset) % capacity)
-            if logical_index < count:
-                logical_positions.append(logical_index)
-
-        if not logical_positions:
+        # Rotate every non-wrapping physical piece by `offset` into logical half-open ranges, keep `< count`
+        ranges: List[Tuple[int, int]] = []
+        for lo, hi in _linear_pieces(segment, capacity):
+            # physical [max(lo, offset), hi] -> logical p - offset
+            a, b = max(lo, offset), hi
+            if a <= b:
+                ranges.append((a - offset, b - offset + 1))
+            # physical [lo, min(hi, offset - 1)] -> logical p + capacity - offset
+            a, b = lo, min(hi, offset - 1)
+            if a <= b:
+                ranges.append((a + capacity - offset, b + capacity - offset + 1))
+        clipped = sorted((a, min(b, count)) for a, b in ranges if a < count)
+        if not clipped:
             continue
-
-        logical_positions.sort()
-        run_start = logical_positions[0]
-        run_end = logical_positions[0]
-        for logical_index in logical_positions[1:]:
-            if logical_index != run_end + 1:
-                logical_segments.append((run_start, run_end + 1))
-                run_start = logical_index
-            run_end = logical_index
-        logical_segments.append((run_start, run_end + 1))
+        run_start, run_end = clipped[0]
+        for a, b in clipped[1:]:
+            if a != run_end:
+                logical_segments.append((run_start, run_end))
+                run_start = a
+            run_end = max(run_end, b)
+        logical_segments.append((run_start, run_end))
 
     logical_segments.sort(key=lambda item: item[0])
     return logical_segments
@@ -650,28 +703,30 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             return
 
         if self.capacity is None:
-            victim_indices = set(range(int(start_physical), int(start_physical) + int(length)))
+            victims = [(int(start_physical), int(start_physical) + int(length) - 1)]
         else:
-            end_physical = (int(start_physical) + int(length) - 1) % self.capacity
-            victim_indices = set(_expand_physical_segment((int(start_physical), end_physical), self.capacity))
+            start_physical = int(start_physical) % self.capacity
+            end_physical = (start_physical + int(length) - 1) % self.capacity
+            victims = _linear_pieces((start_physical, end_physical), self.capacity)
 
         updated_segments: List[Tuple[int, int]] = []
         for segment in self._physical_segments:
-            surviving_indices = [
-                index
-                for index in _expand_physical_segment(segment, self.capacity)
-                if index not in victim_indices
-            ]
-            updated_segments.extend(_compress_physical_indices(surviving_indices, self.capacity))
+            seg_start, seg_end = segment
+            if seg_start <= seg_end and all(victim_hi < seg_start or victim_lo > seg_end for victim_lo, victim_hi in victims):
+                updated_segments.append(segment)  # untouched (the common case: only the oldest segment loses samples)
+                continue
+            updated_segments.extend(_subtract_physical_range(segment, victims, self.capacity))
         self._physical_segments = updated_segments
 
-        active_indices = [index for index in self._active_segment_physical_indices() if index not in victim_indices]
-        if len(active_indices) == 0:
+        if self._active_segment_start_physical is None or self._active_segment_length <= 0:
             self._active_segment_start_physical = None
             self._active_segment_length = 0
             return
-
-        active_runs = _compress_physical_indices(active_indices, self.capacity)
+        active_start = int(self._active_segment_start_physical)
+        active_end = active_start + int(self._active_segment_length) - 1
+        if self.capacity is not None:
+            active_end %= self.capacity
+        active_runs = _subtract_physical_range((active_start, active_end), victims, self.capacity)
         if len(active_runs) == 0:
             self._active_segment_start_physical = None
             self._active_segment_length = 0
