@@ -14,38 +14,55 @@ def data_stack(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
     device : Optional[BDeviceType] = None,
 ):
-    """Recursively stack Python/array data into a batched backend representation."""
+    """Recursively stack per-environment data into a batched backend representation.
+
+    * A mapping is processed value by value.
+    * A sequence of mappings that share the same keys (e.g. one ``info`` dict
+      per sub-environment) becomes a mapping of stacked values.
+    * A sequence of arrays or Python numbers is stacked into one array.
+    * Strings, bytes and other objects are kept as a list.
+    """
     if isinstance(data, Mapping):
-        data = {
-            key: data_stack(value, backend)
+        return {
+            key: data_stack(value, backend, device)
             for key, value in data.items()
         }
-    if isinstance(data, Sequence):
-        if len(data) == 0:
-            return data
-        if backend.is_backendarray(data[0]):
-            return backend.stack(data, axis=0)
-        elif isinstance(data[0], np.ndarray):
-            return np.stack(data, axis=0)
-        elif isinstance(data[0], (int, float, bool)):
-            dtype = (
-                backend.default_boolean_dtype if isinstance(data[0], bool) else
-                backend.default_floating_dtype if isinstance(data[0], float) else
-                backend.default_integer_dtype
-            )
-            return backend.asarray(data, dtype=dtype, device=device)
-        elif isinstance(data[0], SupportsFloat):
-            return backend.asarray(
-                [float(d) for d in data],
-                dtype=backend.default_floating_dtype,
-                device=device
-            )
-        else:
-            data = [
-                data_stack(value, backend)
-                for value in data
-            ]
-    return data
+    if not isinstance(data, Sequence) or isinstance(data, (str, bytes)):
+        return data
+    if len(data) == 0:
+        return data
+    first = data[0]
+    if isinstance(first, Mapping):
+        keys = first.keys()
+        if all(isinstance(d, Mapping) and d.keys() == keys for d in data):
+            return {
+                key: data_stack([d[key] for d in data], backend, device)
+                for key in keys
+            }
+        return [data_stack(value, backend, device) for value in data]
+    if backend.is_backendarray(first):
+        return backend.stack(data, axis=0)
+    elif isinstance(first, np.ndarray):
+        return np.stack(data, axis=0)
+    elif isinstance(first, (int, float, bool)):
+        dtype = (
+            backend.default_boolean_dtype if isinstance(first, bool) else
+            backend.default_floating_dtype if isinstance(first, float) else
+            backend.default_integer_dtype
+        )
+        return backend.asarray(data, dtype=dtype, device=device)
+    elif isinstance(first, (str, bytes)) or first is None:
+        return list(data)
+    elif isinstance(first, SupportsFloat):
+        return backend.asarray(
+            [float(d) for d in data],
+            dtype=backend.default_floating_dtype,
+            device=device
+        )
+    return [
+        data_stack(value, backend, device)
+        for value in data
+    ]
 
 class SyncVecEnv(Env[
     BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
