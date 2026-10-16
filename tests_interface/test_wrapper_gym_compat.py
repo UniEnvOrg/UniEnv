@@ -52,6 +52,17 @@ def test_to_gymnasium_passes_check_env(env_cls):
     gym_env.close()
 
 
+def test_to_gymnasium_observations_do_not_share_the_episode_context():
+    gym_env = ToGymnasiumEnv(StubEnv())
+    reset_obs, _ = gym_env.reset(seed=3)
+    step_obs, *_ = gym_env.step(gym_env.action_space.sample())
+    assert step_obs["context"] is not reset_obs["context"]
+    reset_obs["context"][:] = -100.0
+    next_obs, *_ = gym_env.step(gym_env.action_space.sample())
+    np.testing.assert_array_equal(next_obs["context"], np.full(2, 3.0, np.float32))
+    gym_env.close()
+
+
 def test_to_gymnasium_combines_context_and_observation():
     env = StubEnv()
     gym_env = ToGymnasiumEnv(env)

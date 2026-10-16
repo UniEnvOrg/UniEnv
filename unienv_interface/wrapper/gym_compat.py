@@ -135,7 +135,9 @@ class ToGymnasiumEnv(
         obs, rew, terminated, truncated, info = self.env.step(c_action)
         c_obs = gym_utils.to_gym_data(
             self._unienv_combined_space, 
-            self.combine_context_obs(self._episode_context, obs
+            # Copy so each step's observation owns its context data (gymnasium requires
+            # observations from different calls not to share objects)
+            self.combine_context_obs(copy.deepcopy(self._episode_context), obs
         ))
         c_rew = float(rew)
         c_terminated = bool(terminated)
@@ -164,7 +166,7 @@ class ToGymnasiumEnv(
         self._episode_context = context
         c_obs = gym_utils.to_gym_data(
             self._unienv_combined_space,
-            self.combine_context_obs(context, obs)
+            self.combine_context_obs(copy.deepcopy(context), obs)
         )
         return c_obs, info
 
