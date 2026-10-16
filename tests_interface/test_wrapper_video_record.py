@@ -331,3 +331,16 @@ def test_episode_video_wrapper_close_writes_each_episode_once(tmp_path, monkeypa
     wrapper.close()
     assert len(written) == 1
     assert (tmp_path / "videos" / "episode_0_step_0.mp4").exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("fmt", ["gif", "webm"])
+def test_episode_video_wrapper_supports_declared_formats(tmp_path, fmt):
+    env = DummyRenderEnv([make_rgb_frame(1), make_rgb_frame(2), make_rgb_frame(3)])
+    wrapper = EpisodeVideoWrapper(env, store_dir=tmp_path, format=fmt)
+    wrapper.reset()
+    wrapper.step(None)
+    wrapper.reset()  # flush episode 0
+    written_path = tmp_path / f"episode_0_step_0.{fmt}"
+    assert written_path.exists()
+    assert written_path.stat().st_size > 0
