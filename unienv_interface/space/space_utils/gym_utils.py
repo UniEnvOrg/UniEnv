@@ -102,7 +102,7 @@ def _from_gym_space_discrete(
     return BoxSpace(
         backend,
         low=gym_space.start,
-        high=gym_space.start + gym_space.n, # No need to -1 as BoxSpace will include only [low, high)
+        high=gym_space.start + gym_space.n - 1, # BoxSpace bounds are inclusive: [low, high]
         dtype=dtype or backend.default_integer_dtype,
         device=device,
         shape=(),
@@ -121,7 +121,7 @@ def _from_gym_space_multi_discrete(
     return BoxSpace(
         backend,
         low=start,
-        high=start + nvec,  # No need to -1 as BoxSpace will include only [low, high)
+        high=start + nvec - 1,  # BoxSpace bounds are inclusive: [low, high]
         dtype=dtype or backend.default_integer_dtype,
         device=device,
         shape=gym_space.shape
@@ -132,10 +132,15 @@ def _from_gym_data_box(
     space: BoxSpace,
     data: Any,
 ) -> Any:
+    if isinstance(data, (int, float, np.integer, np.floating)) and not isinstance(data, bool):
+        # e.g. gym.spaces.Discrete samples are numpy integer scalars
+        data = np.asarray(data)
     if isinstance(data, np.ndarray):
-        return space.backend.from_numpy(data, dtype=space.dtype, device=space.device)
-    elif isinstance(data, int):
-        return space.backend.from_numpy(np.array(data), dtype=space.dtype, device=space.device)
+        # ``from_numpy`` may ignore ``dtype`` (numpy backend), so cast explicitly
+        return space.backend.astype(
+            space.backend.from_numpy(data, dtype=space.dtype, device=space.device),
+            space.dtype
+        )
     else:
         raise TypeError(f"Unsupported data type for BoxSpace: {type(data)}")
 
@@ -153,7 +158,7 @@ def _to_gym_space_binary(
     space: BinarySpace,
 ) -> gym.spaces.MultiBinary:
     return gym.spaces.MultiBinary(
-        shape=space.shape,
+        n=space.shape,
     )
 
 @from_gym_space.register(gym.spaces.MultiBinary)
@@ -176,10 +181,15 @@ def _from_gym_data_binary(
     space: BinarySpace,
     data: Any,
 ) -> Any:
+    if isinstance(data, (bool, int, np.bool_, np.integer)):
+        # e.g. a 0-d gym.spaces.MultiBinary sample is a numpy integer scalar
+        data = np.asarray(data)
     if isinstance(data, np.ndarray):
-        return space.backend.from_numpy(data, dtype=space.dtype, device=space.device)
-    elif isinstance(data, bool):
-        return space.backend.from_numpy(np.array(data), dtype=space.dtype, device=space.device)
+        # gym.spaces.MultiBinary samples are int8; ``from_numpy`` may ignore ``dtype``
+        return space.backend.astype(
+            space.backend.from_numpy(data, dtype=space.dtype, device=space.device),
+            space.dtype
+        )
     else:
         raise TypeError(f"Unsupported data type for BinarySpace: {type(data)}")
 
@@ -212,7 +222,7 @@ def _from_gym_space_graph(
     dtype : Optional[Any] = None,
     device : Optional[Any] = None,
     *,
-    is_edge: bool = False,
+    is_edge: typing.Optional[bool] = None,
     min_nodes: int = 1, 
     max_nodes: typing.Optional[int] = None, 
     min_edges: int = 1, 
@@ -230,6 +240,9 @@ def _from_gym_space_graph(
         dtype=dtype,
         device=device
     ) if gym_space.edge_space is not None else None
+    if is_edge is None:
+        # gymnasium graphs only carry edges when an edge space is defined
+        is_edge = edge_space is not None
 
     return GraphSpace(
         backend,
@@ -251,7 +264,12 @@ def _from_gym_data_graph(
 ) -> Any:
     if isinstance(data, gym.spaces.GraphInstance):
         node_number = data.nodes.shape[0]
-        edge_number = data.edges.shape[0] if data.edges is not None else None
+        if data.edge_links is not None:
+            edge_number = data.edge_links.shape[0]
+        elif data.edges is not None:
+            edge_number = data.edges.shape[0]
+        else:
+            edge_number = None
         node_features = from_gym_data(space.node_feature_space, data.nodes)
         edge_features = from_gym_data(space.edge_feature_space, data.edges) if data.edges is not None else None
         edges = space.backend.from_numpy(data.edge_links, dtype=space.backend.default_integer_dtype, device=space.device) if data.edge_links is not None else None
@@ -276,7 +294,8 @@ def _to_gym_data_graph(
 
     node_data = to_gym_data(space.node_feature_space, data.nodes_features)
     edge_data = to_gym_data(space.edge_feature_space, data.edges_features) if data.edges_features is not None else None
-    edge_links = space.backend.to_numpy(data.edges) if data.edges is not None else None
+    # gymnasium only accepts edge links together with edge features
+    edge_links = space.backend.to_numpy(data.edges) if (data.edges is not None and edge_data is not None) else None
 
     return gym.spaces.GraphInstance(
         nodes=node_data,
@@ -437,8 +456,9 @@ if "OneOf" in dir(gym.spaces):
         data: typing.Tuple[int, Any],
     ) -> Any:
         data_idx, data_value = data
+        data_idx = int(data_idx)
         assert 0 <= data_idx < len(space.spaces), f"Data index {data_idx} out of bounds for UnionSpace with {len(space.spaces)} spaces"
-        return from_gym_data(space.spaces[data_idx], data_value)
+        return (data_idx, from_gym_data(space.spaces[data_idx], data_value))
     
     @to_gym_data.register(UnionSpace)
     def _to_gym_data_union(

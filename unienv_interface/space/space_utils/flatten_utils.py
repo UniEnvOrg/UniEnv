@@ -14,6 +14,13 @@ __all__ = [
     "unflatten_data",
 ]
 
+def _dict_items(space: DictSpace) -> typing.List[typing.Tuple[Any, Space]]:
+    """Items of a ``DictSpace`` in flattening order (sorted keys, insertion order if unsortable)."""
+    try:
+        return sorted(space.spaces.items(), key=lambda x: x[0])
+    except TypeError:
+        return list(space.spaces.items())
+
 def is_flattenable(space: Space, start_dim : int = 0) -> bool:
     return flat_dim(space, start_dim) is not None
 
@@ -98,6 +105,24 @@ def _flatten_space_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> B
     assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
     low = space.get_low(space.shape_high)
     high = space.get_high(space.shape_high)
+    # Flattened data is padded with ``fill_value`` up to ``shape_high``; the
+    # positions that may hold padding must admit that value.
+    ndim = len(space.shape_high)
+    padding_mask = None
+    for axis in range(ndim):
+        if space.shape_low[axis] == space.shape_high[axis]:
+            continue
+        axis_idx = space.backend.reshape(
+            space.backend.arange(space.shape_high[axis], device=space.device),
+            (1,) * axis + (-1,) + (1,) * (ndim - axis - 1)
+        )
+        axis_mask = axis_idx >= space.shape_low[axis]
+        padding_mask = axis_mask if padding_mask is None else space.backend.logical_or(padding_mask, axis_mask)
+    if padding_mask is not None:
+        padding_mask = space.backend.broadcast_to(padding_mask, space.shape_high)
+        fill_value = space.backend.full((), space.fill_value, dtype=space.dtype, device=space.device)
+        low = space.backend.where(padding_mask, space.backend.minimum(low, fill_value), low)
+        high = space.backend.where(padding_mask, space.backend.maximum(high, fill_value), high)
     return BoxSpace(
         space.backend,
         low=space.backend.reshape(
@@ -124,7 +149,7 @@ def _flatten_space_binary(space: BinarySpace, start_dim : int = 0) -> BoxSpace:
 @flatten_space.register(TupleSpace)
 @flatten_space.register(DictSpace)
 def _flatten_space_composition(space: typing.Union[TupleSpace, DictSpace], start_dim : int = 0) -> BoxSpace:
-    space_list = [flatten_space(s, start_dim) for s in space.spaces] if isinstance(space, TupleSpace) else [flatten_space(s, start_dim) for s in space.spaces.values()]
+    space_list = [flatten_space(s, start_dim) for s in space.spaces] if isinstance(space, TupleSpace) else [flatten_space(s, start_dim) for _, s in _dict_items(space)]
     flat_low = space.backend.concat([s.low for s in space_list], axis=start_dim)
     flat_high = space.backend.concat([s.high for s in space_list], axis=start_dim)
 
@@ -158,19 +183,18 @@ def _flatten_space_oneof(space: UnionSpace, start_dim : int = 0) -> BoxSpace:
     max_flatdim = max(flat_dim(s, start_dim) for s in space.spaces) + 1
 
     space_list = [flatten_space(s, start_dim) for s in space.spaces]
-    lows = space.backend.asarray([space.backend.min(s.low) for s in space_list])
-    highs = space.backend.asarray([space.backend.max(s.high) for s in space_list])
+    # Unused trailing slots are padded with zeros, so the bounds must include 0
+    overall_low = min([float(space.backend.min(s.low)) for s in space_list if s.shape[0] > 0] + [0.0])
+    overall_high = max([float(space.backend.max(s.high)) for s in space_list if s.shape[0] > 0] + [0.0])
 
-    overall_low = space.backend.min(lows)
-    overall_high = space.backend.max(highs)
-
+    flat_dtype = space.backend.default_floating_dtype
     low = space.backend.concat([
-        space.backend.zeros(1), 
-        space.backend.full(max_flatdim - 1, overall_low)
+        space.backend.zeros(1, dtype=flat_dtype, device=space.device),
+        space.backend.full(max_flatdim - 1, overall_low, dtype=flat_dtype, device=space.device)
     ])
     high = space.backend.concat([
-        space.backend.asarray([num_subspaces - 1]), 
-        space.backend.full(max_flatdim - 1, overall_high)
+        space.backend.full(1, num_subspaces - 1, dtype=flat_dtype, device=space.device),
+        space.backend.full(max_flatdim - 1, overall_high, dtype=flat_dtype, device=space.device)
     ])
 
     return BoxSpace(
@@ -219,13 +243,15 @@ def _flatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_di
 def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
     padded_data = space.backend.reshape(data, data.shape[:start_dim] + space.shape_high[start_dim:])
+    # The flat array may have been promoted to a common dtype (e.g. inside a Dict/Tuple)
+    padded_data = space.backend.astype(padded_data, space.dtype)
     data = space.unpad_data(padded_data, start_axis=start_dim)
     return data
 
 @flatten_data.register(DictSpace)
 def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> BArrayType:
     to_concat = []
-    for key, subspace in sorted(space.spaces.items(), key=lambda x: x[0]):
+    for key, subspace in _dict_items(space):
         flat_sample = flatten_data(subspace, data[key], start_dim)
         flat_dim_data = flat_dim(subspace, start_dim)
         assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}, original data {data[key].shape}, original space {subspace}"
@@ -237,7 +263,7 @@ def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], sta
 def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> Any:
     result = {}
     start = 0
-    for key, subspace in sorted(space.spaces.items(), key=lambda x: x[0]):
+    for key, subspace in _dict_items(space):
         end = start + flat_dim(subspace, start_dim)
         part_idx = space.backend.arange(start, end, dtype=space.backend.default_integer_dtype, device=space.backend.device(data))
         part_data = space.backend.take(data, part_idx, axis=start_dim)
@@ -269,7 +295,7 @@ def _flatten_data_text(space: TextSpace, data: str, start_dim : int = 0) -> BArr
 def _unflatten_data_text(space: TextSpace, data: BArrayType, start_dim : int = 0) -> str:
     assert start_dim == 0 and space.charset is not None, "Text space can only be unflattened at start_dim 0 with a defined character set."
     return "".join([
-        space.charset_list[int(data[i])] for i in data.shape[0] if data[i] < len(space.charset_list)
+        space.charset_list[int(data[i])] for i in range(data.shape[0]) if int(data[i]) < len(space.charset_list)
     ])
 
 @flatten_data.register(TupleSpace)
@@ -294,18 +320,22 @@ def _unflatten_data_tuple(space: TupleSpace, data: BArrayType, start_dim : int =
 def _flatten_data_oneof(space: UnionSpace, data: typing.Tuple[int, Any], start_dim : int = 0) -> BArrayType:
     assert start_dim == 0
     space_idx, space_data = data
+    flat_dtype = space.backend.default_floating_dtype
     flat_sample = flatten_data(space.spaces[space_idx], space_data, start_dim)
-    padding_size = flat_dim(space, start_dim=start_dim) - len(flat_sample)
+    flat_sample = space.backend.astype(flat_sample, flat_dtype)
+    device = space.backend.device(flat_sample)
+    # One slot holds the index, the remaining ``flat_dim - 1`` slots hold the (padded) data
+    padding_size = flat_dim(space, start_dim=start_dim) - 1 - flat_sample.shape[0]
     if padding_size > 0:
-        padding = space.backend.zeros(padding_size, dtype=space.dtype)
+        padding = space.backend.zeros(padding_size, dtype=flat_dtype, device=device)
         flat_sample = space.backend.concat((flat_sample, padding))
-    index_array = space.backend.full(1, space_idx)
+    index_array = space.backend.full(1, space_idx, dtype=flat_dtype, device=device)
     return space.backend.concat((index_array, flat_sample))
 
 @unflatten_data.register(UnionSpace)
 def _unflatten_data_oneof(space: UnionSpace, data: BArrayType, start_dim : int = 0) -> typing.Tuple[int, Any]:
     assert start_dim == 0
-    space_idx = data[0]
+    space_idx = int(data[0])
     subspace = space.spaces[space_idx]
     subspace_data = data[1:flat_dim(subspace)+1]
     return (space_idx, unflatten_data(subspace, subspace_data))

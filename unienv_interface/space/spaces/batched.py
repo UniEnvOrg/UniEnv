@@ -17,13 +17,21 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         batch_shape = tuple(int(dim) for dim in batch_shape)  # This changes any np types to int
         super().__init__(
             backend=single_space.backend,
-            shape=batch_shape + ((),) if single_space.shape is None else batch_shape + single_space.shape,
+            shape=batch_shape if single_space.shape is None else batch_shape + single_space.shape,
             device=single_space.device,
             dtype=single_space.dtype,
         )
 
         self.batch_shape = batch_shape
         self.single_space = single_space
+
+    def _make_object_array(self, items : Sequence[Any]) -> np.ndarray:
+        # Fill element-wise so that sequence-like items (arrays, tuples) are kept
+        # as single objects instead of being expanded into extra dimensions.
+        ret = np.empty(self.batch_shape, dtype=object)
+        for i, item in enumerate(items):
+            ret.flat[i] = item
+        return ret
 
     def to(self, backend = None, device = None):
         return BatchedSpace(
@@ -39,28 +47,20 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         for i in range(flat_shape):
             rng, single_sample = self.single_space.sample(rng)
             samples.append(single_sample)
-        return rng, np.asarray(samples, dtype=object).reshape(self.batch_shape)
+        return rng, self._make_object_array(samples)
     
     def create_empty(self):
         flat_shape = np.prod(self.batch_shape)
         empties = [self.single_space.create_empty() for _ in range(flat_shape)]
-        return np.asarray(empties, dtype=object).reshape(self.batch_shape)
+        return self._make_object_array(empties)
     
     def is_bounded(self, manner = "both"):
         return self.single_space.is_bounded(manner=manner)
 
-    def contains(self, x: BArrayType) -> bool:
-        def is_contained_func(x):
-            return self.single_space.contains(x)
-        for _dim in reversed(self.batch_shape):
-            def new_is_contained_func(x):
-                if (not isinstance(x, np.ndarray)) or (not x.dtype == object):
-                    return False
-                if len(x) != _dim:
-                    return False
-                return all(is_contained_func(xi) for xi in x)
-            is_contained_func = new_is_contained_func
-        return is_contained_func(x)
+    def contains(self, x: Any) -> bool:
+        if not isinstance(x, np.ndarray) or x.dtype != object or x.shape != self.batch_shape:
+            return False
+        return all(self.single_space.contains(xi) for xi in x.flat)
 
     def get_repr(
         self, 
@@ -97,7 +97,7 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
         return self.single_space.is_subspaceeq(other.single_space)
     
     def data_to(self, data, backend = None, device = None):
-        if isinstance(data, np.ndarray) and data.dtype == object:
-            return tuple(self.data_to(d, backend=backend, device=device) for d in data)
-        else:
-            return self.single_space.data_to(data, backend=backend, device=device)
+        ret = np.empty(data.shape, dtype=object)
+        for i, d in enumerate(data.flat):
+            ret.flat[i] = self.single_space.data_to(d, backend=backend, device=device)
+        return ret

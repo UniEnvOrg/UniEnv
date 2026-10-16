@@ -8,7 +8,7 @@ from .flatten_dict_transform import FlattenDictTransformation, UnflattenDictTran
 from .chained_transform import ChainedTransformation
 from .crop import CropTransformation
 from .image_resize import ImageResizeTransformation
-from .iter_transform import IterativeTransformation
+from .iter_transform import IterativeTransformation, LeafwiseTransformation
 
 # Export serialization utilities
 from .serialization_utils import (

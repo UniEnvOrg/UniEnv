@@ -188,3 +188,46 @@ def test_dict_transformation_serialization(backend, seed):
     transform = DictTransformation(mapping={"value": RescaleTransformation(new_low=0.0, new_high=1.0)})
     
     verify_transformation_serialization(transform, space, rng, num_samples=3)
+
+
+def _nested_space():
+    from unienv_interface.space import BoxSpace
+    box = lambda lo, hi: BoxSpace(NumpyComputeBackend, lo, hi, np.float32, shape=(2,))
+    return DictSpace(NumpyComputeBackend, {"a": {"x": box(-2.0, 2.0), "y": box(0.0, 4.0)}, "b": box(5.0, 6.0)})
+
+
+def test_dict_transformation_nested_keys_and_inverse():
+    from unienv_interface.transformations import RescaleTransformation, transformation_to_json, json_to_transformation
+    space = _nested_space()
+    t = DictTransformation({"a/x": RescaleTransformation(0.0, 1.0), "b": RescaleTransformation(-1.0, 1.0)})
+    target = t.get_target_space_from_source(space)
+    assert float(target["a"]["x"].low.min()) == 0.0 and target["a"]["y"] == space["a"]["y"]
+    _, x = space.sample(NumpyComputeBackend.random.random_number_generator(0))
+    y = t.transform(space, x)
+    assert target.contains(y)
+    inverse = t.direction_inverse(space)
+    back = inverse.transform(target, y)
+    np.testing.assert_allclose(back["a"]["x"], x["a"]["x"], rtol=1e-5, atol=1e-5)
+    np.testing.assert_array_equal(back["a"]["y"], x["a"]["y"])
+    restored = json_to_transformation(transformation_to_json(t, space), space)
+    np.testing.assert_allclose(restored.transform(space, x)["b"], y["b"])
+
+
+def test_dict_transformation_missing_keys():
+    from unienv_interface.transformations import IdentityTransformation, RescaleTransformation
+    space = _nested_space()
+    with pytest.raises(KeyError):
+        DictTransformation({"missing": IdentityTransformation()}).get_target_space_from_source(space)
+    with pytest.raises(KeyError):
+        DictTransformation({"a/missing": IdentityTransformation()}).get_target_space_from_source(space)
+    with pytest.raises(ValueError):
+        DictTransformation({"a": IdentityTransformation()}).get_target_space_from_source(space["b"])
+    t = DictTransformation({"missing": RescaleTransformation(0.0, 1.0), "b": RescaleTransformation(0.0, 1.0)},
+                           ignore_missing_keys=True)
+    target = t.get_target_space_from_source(space)
+    _, x = space.sample(NumpyComputeBackend.random.random_number_generator(1))
+    assert target.contains(t.transform(space, x))
+    inverse = t.direction_inverse(space)
+    assert set(inverse.mapping) == {"b"}
+    no_inverse = DictTransformation({"b": DictIncludeKeyTransformation(["q"])})
+    assert not no_inverse.has_inverse and no_inverse.direction_inverse(space) is None

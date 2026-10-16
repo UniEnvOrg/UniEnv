@@ -224,3 +224,52 @@ def test_iterative_serialization_with_custom_fn(backend, seed):
     )
     
     verify_transformation_serialization(transform, space, rng, num_samples=3)
+
+
+@pytest.mark.parametrize("backend", ALL_BACKENDS)
+@pytest.mark.parametrize("container", ["box", "dict", "tuple", "nested"])
+def test_iterative_rescale_inverse_roundtrip(backend, container):
+    """The inverse of an iterative rescale needs each leaf's own source bounds."""
+    from unienv_interface.space import BoxSpace
+    from unienv_interface.transformations import json_to_transformation, transformation_to_json
+    # Materialised dtype: jax's default ``float`` cannot be serialised (see test_space_serialization)
+    dtype = backend.zeros((), dtype=backend.default_floating_dtype).dtype
+    box_a = BoxSpace(backend, -2.0, 3.0, dtype, shape=(2,))
+    box_b = BoxSpace(backend, 10.0, 20.0, dtype, shape=(3,))
+    space = {
+        "box": box_a,
+        "dict": DictSpace(backend, {"a": box_a, "b": box_b}),
+        "tuple": TupleSpace(backend, [box_a, box_b]),
+        "nested": DictSpace(backend, {"t": TupleSpace(backend, [box_b, box_a]), "c": box_a}),
+    }[container]
+    transform = IterativeTransformation(RescaleTransformation(new_low=0.0, new_high=1.0))
+    target = transform.get_target_space_from_source(space)
+    inverse = transform.direction_inverse(space)
+    assert inverse is not None and inverse.has_inverse
+    assert inverse.get_target_space_from_source(target) == space
+
+    rng = backend.random.random_number_generator(0)
+    rng, x = space.sample(rng)
+    y = transform.transform(space, x)
+    restored = inverse.transform(target, y)
+    assert space.contains(restored)
+    flat = lambda v: np.concatenate([np.ravel(np.asarray(backend.to_numpy(a), dtype=np.float64)) for a in _leaves(v)])
+    np.testing.assert_allclose(flat(restored), flat(x), rtol=1e-5, atol=1e-5)
+
+    # The inverse is serialisable relative to the forward target space
+    restored_inverse = json_to_transformation(transformation_to_json(inverse, target), target)
+    np.testing.assert_allclose(flat(restored_inverse.transform(target, y)), flat(x), rtol=1e-5, atol=1e-5)
+    # ... and inverts back to the forward transformation
+    forward_again = inverse.direction_inverse(target)
+    np.testing.assert_allclose(flat(forward_again.transform(space, x)), flat(y), rtol=1e-5, atol=1e-5)
+
+
+def _leaves(value):
+    if isinstance(value, dict):
+        for k in sorted(value):
+            yield from _leaves(value[k])
+    elif isinstance(value, tuple):
+        for v in value:
+            yield from _leaves(v)
+    else:
+        yield value

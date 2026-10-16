@@ -36,7 +36,7 @@ class CropTransformation(DataTransformation):
             if len(new_low.shape) < len(source_space.shape):
                 new_low = source_space.backend.reshape(
                     new_low,
-                    (-1,) * (len(source_space.shape) - len(new_low.shape)) + new_low.shape
+                    (1,) * (len(source_space.shape) - len(new_low.shape)) + tuple(new_low.shape)
                 )
             new_low = source_space.backend.astype(new_low, source_space.dtype)
             if source_space.device is not None:
@@ -46,7 +46,7 @@ class CropTransformation(DataTransformation):
             if len(new_high.shape) < len(source_space.shape):
                 new_high = source_space.backend.reshape(
                     new_high,
-                    (-1,) * (len(source_space.shape) - len(new_high.shape)) + new_high.shape
+                    (1,) * (len(source_space.shape) - len(new_high.shape)) + tuple(new_high.shape)
                 )
             new_high = source_space.backend.astype(new_high, source_space.dtype)
             if source_space.device is not None:
@@ -68,7 +68,9 @@ class CropTransformation(DataTransformation):
     def transform(self, source_space, data):
         self.validate_source_space(source_space)
         crop_low, crop_high = self.get_crop_range(source_space)
-        return source_space.backend.clip(data, crop_low, crop_high)
+        clipped = source_space.backend.clip(data, crop_low, crop_high)
+        # numpy returns scalars for 0-d input and promotes integer data clipped by float bounds
+        return source_space.backend.asarray(clipped, dtype=source_space.dtype, device=source_space.backend.device(data))
 
     def direction_inverse(self, source_space=None):
         return IdentityTransformation()

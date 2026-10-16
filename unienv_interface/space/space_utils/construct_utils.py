@@ -66,7 +66,16 @@ def construct_space_from_data(
                 device=backend.device(data)
             )
         elif isinstance(candidate_space, BoxSpace):
-            if candidate_space.shape != data.shape:
+            if candidate_space.shape == data.shape:
+                return BoxSpace(
+                    backend,
+                    low=backend.minimum(candidate_space.low, data) if add_bounds else candidate_space._low,
+                    high=backend.maximum(candidate_space.high, data) if add_bounds else candidate_space._high,
+                    shape=data.shape,
+                    dtype=data.dtype,
+                    device=backend.device(data)
+                )
+            else:
                 assert len(candidate_space.shape) == len(data.shape)
                 new_low_shape, new_high_shape = _dynamic_box_find_shape(
                     candidate_space.shape,
@@ -117,10 +126,10 @@ def construct_space_from_data(
             and set(candidate_space.spaces.keys()) == set(data.keys())
         )
         if candidate_space is None:
-            spaces = {k: construct_space_from_data(v, backend) for k, v in data.items()}
+            spaces = {k: construct_space_from_data(v, backend, add_bounds=add_bounds) for k, v in data.items()}
         else:
             spaces = {
-                k: construct_space_from_data(v, backend, candidate_space.spaces[k])
+                k: construct_space_from_data(v, backend, candidate_space.spaces[k], add_bounds=add_bounds)
                 for k, v in data.items()
             }
         return DictSpace(backend, spaces)
@@ -141,10 +150,10 @@ def construct_space_from_data(
             and len(candidate_space.spaces) == len(data)
         )
         if candidate_space is None:
-            spaces = [construct_space_from_data(d, backend) for d in data]
+            spaces = [construct_space_from_data(d, backend, add_bounds=add_bounds) for d in data]
         else:
             spaces = [
-                construct_space_from_data(d, backend, candidate_space.spaces[i])
+                construct_space_from_data(d, backend, candidate_space.spaces[i], add_bounds=add_bounds)
                 for i, d in enumerate(data)
             ]
         return TupleSpace(backend, spaces)

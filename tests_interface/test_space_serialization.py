@@ -92,3 +92,27 @@ def test_builtin_space_roundtrip(backend_device: Tuple[ComputeBackend, Optional[
         if isinstance(restored, BatchedSpace):
             assert restored.batch_shape == (3,)
             assert restored.single_space["value"].shape == (2,)
+
+
+@pytest.mark.parametrize("backend_name", ["numpy", "pytorch"])  # jax: see the strict xfail below
+def test_default_dtype_spaces_roundtrip(backend_name: str) -> None:
+    if backend_name == "pytorch":
+        from unienv_interface.backends.pytorch import PyTorchComputeBackend as backend
+    else:
+        backend = B
+    space = DictSpace(backend, {
+        "f": BoxSpace(backend, 0.0, 1.0, backend.default_floating_dtype, shape=(2,)),
+        "i": BoxSpace(backend, 0, 3, backend.default_integer_dtype, shape=(1,)),
+    })
+    assert json_to_space(json.loads(json.dumps(space_to_json(space))), backend, None) == space
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "cross-scope: unienv_interface/backends/serialization.py:49-53 serialize_dtype compares against "
+    "jnp dtype objects, so jax's default python-type dtypes (float/int) raise 'Unknown dtype'"
+))
+def test_jax_default_float_dtype_serializes() -> None:
+    pytest.importorskip("jax")
+    from unienv_interface.backends.jax import JaxComputeBackend as J
+    space = BoxSpace(J, 0.0, 1.0, J.default_floating_dtype, shape=(2,))
+    assert json_to_space(space_to_json(space), J, None) == space
