@@ -162,3 +162,13 @@ def test_scalar_box_samples_are_arrays(backend, device, dtype_name):
     _, x = space.sample(backend.random.random_number_generator(0, device=device))
     assert backend.is_backendarray(x) and tuple(x.shape) == ()
     assert space.contains(x)
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+@pytest.mark.parametrize("shape", [(0,), (2, 0)])
+def test_zero_size_box(backend, device, shape):
+    dtype = backend.__array_namespace_info__().dtypes()["float32"]
+    space = BoxSpace(backend, 0.0, 1.0, dtype, shape=shape, device=device)
+    assert space.shape == shape and tuple(space.low.shape) == shape
+    _, x = space.sample(backend.random.random_number_generator(0, device=device))
+    assert tuple(x.shape) == shape and space.contains(x)

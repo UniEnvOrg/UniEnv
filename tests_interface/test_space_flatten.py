@@ -94,3 +94,9 @@ def test_batched_start_dim_one():
     flat = sfu.flatten_data(batched, x, start_dim=1)
     assert flat.shape == (4, sfu.flat_dim(single))
     _check_roundtrip(batched, x, start_dim=1)
+
+
+def test_zero_length_text_flattens_to_empty_box():
+    space = TextSpace(B, 0, charset="ab")
+    assert sfu.flat_dim(space) == 0
+    _check_roundtrip(space, "")

@@ -123,12 +123,13 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         assert not backend.any(backend.isnan(_low)), f"low contains NaN values: {_low}"
         assert not backend.any(backend.isnan(_high)), f"high contains NaN values: {_high}"
         
+        # Size-1 axes broadcast to any size, including 0
         assert len(_low.shape) == len(shape) and all(
-            (_low.shape[i] == shape[i] or (_low.shape[i] == 1 and shape[i] >= 1)) for i in range(len(shape))
+            (_low.shape[i] == shape[i] or _low.shape[i] == 1) for i in range(len(shape))
         ), f"_low.shape doesn't match provided shape and is not broadcastable, _low.shape: {_low.shape}, shape: {shape}"
         assert len(_high.shape) == len(shape) and all(
-            (_high.shape[i] == shape[i] or (_high.shape[i] == 1 and shape[i] >= 1)) for i in range(len(shape))
-        ), f"_low.shape doesn't match provided shape and is not broadcastable, high.shape: {_low.shape}, shape: {shape}"
+            (_high.shape[i] == shape[i] or _high.shape[i] == 1) for i in range(len(shape))
+        ), f"_high.shape doesn't match provided shape and is not broadcastable, _high.shape: {_high.shape}, shape: {shape}"
 
         self._shape: Tuple[int, ...] = shape
         
