@@ -102,7 +102,7 @@ def _from_gym_space_discrete(
     return BoxSpace(
         backend,
         low=gym_space.start,
-        high=gym_space.start + gym_space.n, # No need to -1 as BoxSpace will include only [low, high)
+        high=gym_space.start + gym_space.n - 1, # BoxSpace bounds are inclusive: [low, high]
         dtype=dtype or backend.default_integer_dtype,
         device=device,
         shape=(),
@@ -121,7 +121,7 @@ def _from_gym_space_multi_discrete(
     return BoxSpace(
         backend,
         low=start,
-        high=start + nvec,  # No need to -1 as BoxSpace will include only [low, high)
+        high=start + nvec - 1,  # BoxSpace bounds are inclusive: [low, high]
         dtype=dtype or backend.default_integer_dtype,
         device=device,
         shape=gym_space.shape
@@ -132,10 +132,15 @@ def _from_gym_data_box(
     space: BoxSpace,
     data: Any,
 ) -> Any:
+    if isinstance(data, (int, float, np.integer, np.floating)) and not isinstance(data, bool):
+        # e.g. gym.spaces.Discrete samples are numpy integer scalars
+        data = np.asarray(data)
     if isinstance(data, np.ndarray):
-        return space.backend.from_numpy(data, dtype=space.dtype, device=space.device)
-    elif isinstance(data, int):
-        return space.backend.from_numpy(np.array(data), dtype=space.dtype, device=space.device)
+        # ``from_numpy`` may ignore ``dtype`` (numpy backend), so cast explicitly
+        return space.backend.astype(
+            space.backend.from_numpy(data, dtype=space.dtype, device=space.device),
+            space.dtype
+        )
     else:
         raise TypeError(f"Unsupported data type for BoxSpace: {type(data)}")
 
@@ -153,7 +158,7 @@ def _to_gym_space_binary(
     space: BinarySpace,
 ) -> gym.spaces.MultiBinary:
     return gym.spaces.MultiBinary(
-        shape=space.shape,
+        n=space.shape,
     )
 
 @from_gym_space.register(gym.spaces.MultiBinary)
@@ -176,10 +181,15 @@ def _from_gym_data_binary(
     space: BinarySpace,
     data: Any,
 ) -> Any:
+    if isinstance(data, (bool, int, np.bool_, np.integer)):
+        # e.g. a 0-d gym.spaces.MultiBinary sample is a numpy integer scalar
+        data = np.asarray(data)
     if isinstance(data, np.ndarray):
-        return space.backend.from_numpy(data, dtype=space.dtype, device=space.device)
-    elif isinstance(data, bool):
-        return space.backend.from_numpy(np.array(data), dtype=space.dtype, device=space.device)
+        # gym.spaces.MultiBinary samples are int8; ``from_numpy`` may ignore ``dtype``
+        return space.backend.astype(
+            space.backend.from_numpy(data, dtype=space.dtype, device=space.device),
+            space.dtype
+        )
     else:
         raise TypeError(f"Unsupported data type for BinarySpace: {type(data)}")
 
@@ -446,8 +456,9 @@ if "OneOf" in dir(gym.spaces):
         data: typing.Tuple[int, Any],
     ) -> Any:
         data_idx, data_value = data
+        data_idx = int(data_idx)
         assert 0 <= data_idx < len(space.spaces), f"Data index {data_idx} out of bounds for UnionSpace with {len(space.spaces)} spaces"
-        return from_gym_data(space.spaces[data_idx], data_value)
+        return (data_idx, from_gym_data(space.spaces[data_idx], data_value))
     
     @to_gym_data.register(UnionSpace)
     def _to_gym_data_union(
