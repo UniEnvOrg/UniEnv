@@ -38,7 +38,7 @@ class TransformWrapper(
     def context_transformation(self, value: Optional[DataTransformation]):
         if value is not None:
             assert self.env.context_space is not None, "env.context_space must be defined if context_transformation is provided"
-        self._context_space = None if value is None else value.get_target_space_from_source(self.env.context_space)
+        self._context_space = self.env.context_space if value is None else value.get_target_space_from_source(self.env.context_space)
         self._context_transformation = value
     
     @property
@@ -118,7 +118,7 @@ class ContextObservationTransformWrapper(
     def context_transformation(self, value: Optional[DataTransformation]):
         if value is not None:
             assert self.env.context_space is not None, "env.context_space must be defined if context_transformation is provided"
-        self._context_space = None if value is None else value.get_target_space_from_source(self.env.context_space)
+        self._context_space = self.env.context_space if value is None else value.get_target_space_from_source(self.env.context_space)
         self._context_transformation = value
         self._context_transformation_inv = None if value is None or not value.has_inverse else value.direction_inverse(self.env.context_space)
     
