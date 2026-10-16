@@ -158,7 +158,7 @@ class _StringInfoEnv(StubEnv):
         return obs, reward, terminated, truncated, info
 
 
-@pytest.fixture(params=["fork", "spawn"])
+@pytest.fixture(params=["forkserver", "spawn"])
 def mp_context(request):
     if request.param not in mp.get_all_start_methods():
         pytest.skip(f"{request.param} not available")
@@ -193,7 +193,7 @@ def test_async_matches_sync(mp_context):
 @pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_async_surfaces_worker_errors():
-    async_env = AsyncVecEnv([_FailingStepEnv for _ in range(2)], ctx=mp.get_context("fork"))
+    async_env = AsyncVecEnv([_FailingStepEnv for _ in range(2)], ctx=mp.get_context("spawn"))
     try:
         async_env.reset(seed=0)
         with pytest.raises(RuntimeError, match="worker") as excinfo:
