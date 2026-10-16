@@ -12,7 +12,7 @@ It gives you:
 - a functional environment variant for explicit state passing
 - backend-aware spaces, wrappers, and transformations
 - world and node composition utilities for multi-component environments
-- transport-independent remote execution and observer streams, with an optional WebSocket adapter
+- lightweight remote execution (RPC over TCP, Unix sockets or WebSocket) with observer streams
 - replay buffers, storages, samplers, and dataset adapters for offline data workflows
 
 The project is designed around one idea: environment code and dataset code should not have to be rewritten every time the simulator, robot, or tensor library changes.
