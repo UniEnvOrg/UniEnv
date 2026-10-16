@@ -103,3 +103,17 @@ def test_box():
                 np_rng = np.random.default_rng(seed)
                 rng = backend.random.random_number_generator(seed, device=device)
                 perform_box_test(backend, device, rng, np_rng)
+
+@pytest.mark.parametrize("dtype", [np.int8, np.int32, np.int64, np.uint8])
+def test_full_range_integer_box_samples_vary(dtype):
+    space = BoxSpace(NumpyComputeBackend, -np.inf, np.inf, dtype, shape=(16,))
+    rng = NumpyComputeBackend.random.random_number_generator(0)
+    rng, x = space.sample(rng)
+    assert space.contains(x)
+    assert len(np.unique(x)) > 1
+
+
+def test_integer_box_samples_cover_closed_interval():
+    space = BoxSpace(NumpyComputeBackend, -1, 2, np.int64, shape=(64,))
+    _, x = space.sample(NumpyComputeBackend.random.random_number_generator(0))
+    assert set(x.tolist()) == {-1, 0, 1, 2}

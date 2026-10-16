@@ -1,6 +1,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
 import numpy as np
 from ..space import Space
+from .box import _sample_integers_in_closed_interval
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -168,7 +169,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_above = self.backend.inf > _high
             below = bool(self.backend.all(bounded_below))
             above = bool(self.backend.all(bounded_above))
-            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {self.low}, high: {self.high}"
+            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {_low}, high: {_high}"
 
         self._low = _low
         self._high = _high
@@ -333,22 +334,9 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_sample += low[bounded]
             sample = self.backend.at(sample)[bounded].set(bounded_sample)
         else:
-            high=self.get_high(target_shape) + 1
-            rng, sample = self.backend.random.random_uniform(
-                target_shape, rng=rng, low=0.0, high=1.0, device=self.device
+            rng, sample = _sample_integers_in_closed_interval(
+                self.backend, rng, low, self.get_high(target_shape), target_shape, self.dtype, device=self.device
             )
-            sample *= (high - low)
-            sample = self.backend.floor(sample)
-
-            # Fix for floating point errors
-            floating_point_error_idx = sample >= high - low
-            if self.backend.any(floating_point_error_idx):
-                sample = self.backend.at(sample)[floating_point_error_idx].set(
-                    self.backend.astype(high[floating_point_error_idx] - low[floating_point_error_idx] - 1, sample.dtype)
-                )
-
-            sample = self.backend.astype(sample, self.dtype)
-            sample += low
         return rng, sample
 
     def pad_data(

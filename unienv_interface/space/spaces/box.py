@@ -3,6 +3,38 @@ import numpy as np
 from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
+def _sample_integers_in_closed_interval(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    rng : BRNGType,
+    low : BArrayType,
+    high : BArrayType,
+    shape : Sequence[int],
+    dtype : BDtypeType,
+    device : Optional[BDeviceType] = None,
+) -> Tuple[BRNGType, BArrayType]:
+    """Uniformly sample integers from ``[low, high]`` (elementwise, both ends included).
+
+    The interval width is computed in floating point because ``high - low + 1``
+    overflows the integer dtype for (near) full-range bounds such as the ones
+    produced from ``-inf``/``inf``.
+    """
+    rng, uniform = backend.random.random_uniform(
+        shape, rng=rng, low=0.0, high=1.0, device=device
+    )
+    float_dtype = uniform.dtype
+    low_f = backend.astype(low, float_dtype)
+    high_f = backend.astype(high, float_dtype)
+    sample = low_f + backend.floor(uniform * (high_f - low_f + 1))
+    sample = backend.minimum(sample, high_f) # Fix for floating point errors
+
+    # Floats at or above ``max + 1`` cannot be cast to the integer dtype; such
+    # values only arise from rounding ``high`` up, so they map back to ``high``.
+    overflow = sample >= float(int(backend.iinfo(low.dtype).max) + 1)
+    sample = backend.where(overflow, backend.zeros_like(sample), sample)
+    sample = backend.astype(sample, dtype)
+    sample = backend.where(overflow, high, sample)
+    return rng, backend.clip(sample, low, high)
+
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Continuous or integer hyper-rectangle defined by elementwise bounds."""
     def __init__(
@@ -103,7 +135,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_above = self.backend.inf > _high
             below = bool(self.backend.all(bounded_below))
             above = bool(self.backend.all(bounded_above))
-            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {self.low}, high: {self.high}"
+            assert below and above, f"Box bounds must be finite for integer dtype, actual low: {_low}, high: {_high}"
 
         self._low = _low
         self._high = _high
@@ -224,22 +256,9 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             bounded_sample += low[bounded]
             sample = self.backend.at(sample)[bounded].set(bounded_sample)
         else:
-            high=self.high + 1
-            rng, sample = self.backend.random.random_uniform(
-                self.shape, rng=rng, low=0.0, high=1.0, device=self.device
+            rng, sample = _sample_integers_in_closed_interval(
+                self.backend, rng, low, self.high, self.shape, self.dtype, device=self.device
             )
-            sample *= (high - low)
-            sample = self.backend.floor(sample)
-
-            # Fix for floating point errors
-            floating_point_error_idx = sample >= high - low
-            if self.backend.any(floating_point_error_idx):
-                sample = self.backend.at(sample)[floating_point_error_idx].set(
-                    self.backend.astype(high[floating_point_error_idx] - low[floating_point_error_idx] - 1, sample.dtype)
-                )
-
-            sample = self.backend.astype(sample, self.dtype)
-            sample += low
         return rng, sample
 
     def create_empty(self) -> BArrayType:
