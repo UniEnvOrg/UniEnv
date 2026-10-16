@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+A performance audit of the core code (benchmarks now live in `benchmarks/`) produced the following. Behaviour changes worth noting first:
+
+- **`AsyncVecEnv` uses shared memory by default** (`shared_memory=True`) for observations, contexts and actions; groups that cannot be shared (spaces other than Box/Binary leaves in Dict/Tuple) fall back to the pipe with an INFO log, see `env.shared_groups`. Observations/contexts must match their declared spaces exactly (shape and dtype) in shared mode; pass `shared_memory=False` for the previous pipe-only behaviour.
+- **`AsyncVecEnv` no longer builds an environment in the parent process**; workers report spaces, backend, device and metadata, and worker construction errors are raised by the constructor.
+- **`BoxSpace`/`DynamicBoxSpace.sample` draws different values for a given seed** for integer boxes (all backends) and for float boxes on JAX; NumPy/PyTorch float samples are unchanged.
+- **`HDF5Storage` chooses dataset layouts itself**: contiguous for fixed-capacity uncompressed data, whole-row ~64 KiB chunks otherwise (`chunks=(1,)` gives a per-step layout; explicit chunk tuples are honoured). Old and new files load in both versions; gzip-compressed files are somewhat larger.
+- **`ParquetStorage` writes only complete pieces while growing**; the partial last piece is written by `dumps()` / `close()`.
+- **`get_column` on `SliceStackedBatch`/`FrameStackedBatch`/`CombinedBatch`** reads only the selected column and returns a dedicated view class instead of `SubItemBatch` (values, spaces, metadata and flat layout are unchanged).
+- `ControlFrequencyLimitWrapper` reports late actions through rate-limited `logging` warnings (`late_warning_interval`) instead of printing every step.
+- In-place changes to spaces (`DictSpace.__setitem__`/`__delitem__`, mutating `DictSpace.spaces`, reassigning attributes) and reassigned transformation attributes invalidate cached spaces/constants; arrays or containers held by a transformation should be replaced rather than mutated in place.
+
+Fixes:
+- `MultiprocessingSampler` workers started with `fork` no longer deadlock after the parent ran a parallel torch op (workers run torch ops single-threaded).
+- `FrameStackWrapper`/`FuncFrameStackWrapper` resets no longer modify stacked observations returned earlier (or, for the functional wrapper, the state passed in).
+- `DictStorage` mixing a `VideoStorage` with other children no longer fails on the second `append()`.
+- `ReplayBuffer(multiprocessing=True)` readers always see a consistent `(count, offset)` pair, and the buffer works with `spawn`/`forkserver` processes.
+- Bounded float and integer `BoxSpace.sample` work inside `jax.jit`.
+- Video readers never retry a hardware decoder that failed to initialise (e.g. CUDA hidden via `CUDA_VISIBLE_DEVICES`); forked workers previously segfaulted retrying it. `hwaccel="auto"` moves on to the next available device.
+
+New:
+- `AsyncVecEnv(shared_memory=..., copy=...)`: host shared memory for NumPy, PyTorch CPU and JAX CPU; zero-copy CUDA IPC for PyTorch CUDA and JAX GPU (JAX via DLPack, requires PyTorch); host staging for TPUs and other devices. `copy=False` returns buffers valid until the next `step`/`reset`. `ctx=None` keeps the platform default start method; CUDA sharing works with `fork` as long as the parent had not initialised CUDA before forking.
+- `MultiprocessingSampler(shared_memory=True)` (off by default) returns `sample()`/`sample_with_metadata()` batches through pre-allocated shared memory.
+- `LeRobotAsUniEnvDataset.from_local(video_hwaccel=...)` (default `"auto"`, unchanged).
+
+Performance:
+- Spaces: faster `BoxSpace` construction/`sample`/`contains`, `flat_dim`, `unflatten_data`, `set_at`, `batch_space`/`unbatch_spaces`, `ChainedTransformation` and `RescaleTransformation` (cached, pickle-safe plans; ~5x geometric mean across benchmarked operations).
+- Wrappers: frame stacking 2–4x faster for NumPy/PyTorch Box/Binary observations; `ToBackendOrDeviceWrapper` skips no-op device moves.
+- Remote: 3 codec encodes/decodes per step instead of 12/10 (wire format unchanged), large arrays copied once, unchanged proxy spaces not re-serialized.
+- `AsyncVecEnv` with shared memory: ~3x (NumPy images) and ~20–35x (PyTorch CPU) more steps/s than the pipe with 8 workers; PyTorch CUDA ~1.3–1.5x.
+- `HDF5Storage`: ~50x faster appends and ~200x faster random reads with the default layout; slice-based sparse IO.
+- `ReplayBuffer`: interval-arithmetic segment bookkeeping, slice-based extends, faster `PytorchTensorStorage.append`; collection wrapper steps ~2.7x faster.
+- File-backed storages (images, NPZ, video) decode on a shared, bounded IO thread pool; `VideoStorage` decodes forward within a GOP for sparse reads (use `encoder_options={"g": "15"}` for random-access sampling).
+- Batches: column views of stacked/combined batches up to ~100x faster; slice/frame-stack fills re-gather only rows with invalid frames; `CombinedBatch` reuses its thread pool and memoises batched spaces.
+- LeRobot: per-file parquet cache with column projection (~100x on tabular reads) and reused video readers (~95x on video reads).
+- `ImageDecompressTransformation` decodes JPEG batches with torchvision when available (bit-identical to PIL).
+
 A test-coverage push (line coverage 64% → 92%, ~3000 tests) surfaced and fixed a large number of bugs. Behaviour changes worth noting first:
 
 - **Batch views no longer close the batch they wrap.** `close()` on a frame/slice-stacked, sub-index, sub-item, backend/device, transformed or combined batch leaves the source open (previously garbage-collecting a FrameStack view emptied its `ReplayBuffer`). Wrapper *storages* (`DictStorage`, `TransformedStorage`, `ToBackendOrDeviceStorage`) still close their children on an explicit `close()`.
