@@ -353,3 +353,99 @@ def test_auto_decode_backend_uses_pyav_for_non_rgb_buffers(tmp_path, monkeypatch
     assert depth.decode_backend == "pyav"
     rgb = _storage(tmp_path, name="rgb", decode_backend="auto")
     assert rgb.decode_backend == "torchcodec"
+
+
+# ---------------------------------------------------------------------------
+# TorchCodec adapter (exercised with a minimal in-process stand-in for torchcodec)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def fake_torchcodec(monkeypatch):
+    import contextlib
+    import sys
+    import types
+
+    import av
+    import torch
+
+    class _Frames:
+        def __init__(self, data):
+            self.data = data
+
+    class VideoDecoder:
+        instances = []
+
+        def __init__(self, filename, device="cpu", seek_mode="exact"):
+            with av.open(filename) as container:
+                frames = [f.to_ndarray(format="rgb24") for f in container.decode(video=0)]
+            self._frames = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2)  # (N, C, H, W)
+            self.device = device
+            VideoDecoder.instances.append(self)
+
+        def __len__(self):
+            return self._frames.shape[0]
+
+        def get_frame_at(self, index):
+            return _Frames(self._frames[index])
+
+        def get_frames_in_range(self, start, stop, step=1):
+            return _Frames(self._frames[start:stop:step])
+
+        def get_frames_at(self, indices):
+            assert indices.dtype == torch.int64
+            return _Frames(self._frames[indices])
+
+    @contextlib.contextmanager
+    def set_cuda_backend(name):
+        yield
+
+    module = types.ModuleType("torchcodec")
+    decoders = types.ModuleType("torchcodec.decoders")
+    decoders.VideoDecoder = VideoDecoder
+    decoders.set_cuda_backend = set_cuda_backend
+    module.decoders = decoders
+    monkeypatch.setitem(sys.modules, "torchcodec", module)
+    monkeypatch.setitem(sys.modules, "torchcodec.decoders", decoders)
+    return VideoDecoder
+
+
+@pytest.mark.parametrize("cache_decoders", [False, True])
+def test_torchcodec_reader_index_types(tmp_path, fake_torchcodec, cache_decoders):
+    frames = _frames(6)
+    storage = _storage(tmp_path, decode_backend="torchcodec", cache_decoders=cache_decoders)
+    storage.set(slice(None), frames)
+    np.testing.assert_array_equal(storage.get(2), frames[2])
+    np.testing.assert_array_equal(storage.get(slice(1, 5, 2)), frames[1:5:2])
+    np.testing.assert_array_equal(storage.get(Ellipsis), frames)
+    np.testing.assert_array_equal(storage.get(np.array([5, 0, 5])), frames[[5, 0, 5]])
+    np.testing.assert_array_equal(storage.get(np.array([True, False, False, False, False, True])), frames[[0, 5]])
+    if cache_decoders:
+        assert len(fake_torchcodec.instances) == 1
+    storage.close()
+
+
+def test_torchcodec_reader_with_torch_backend_and_hwaccel(tmp_path, fake_torchcodec, monkeypatch):
+    import torch
+    from unienv_data.storages.video_storage import TorchCodecVideoReader
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert TorchCodecVideoReader.get_auto_hwaccel() is None
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    assert TorchCodecVideoReader.get_auto_hwaccel() == "beta"
+
+    space = BoxSpace(PyTorchComputeBackend, 0, 255, torch.uint8, shape=(8, 8, 3), device="cpu")
+    frames = torch.from_numpy(_frames(4))
+    kwargs = dict(LOSSLESS_RGB_KWARGS, decode_backend="torchcodec", hardware_acceleration="auto")
+    storage = VideoStorage.create(space, capacity=4, cache_path=str(tmp_path / "t"), **kwargs)
+    storage.set(slice(None), frames)
+    assert torch.equal(storage.get(torch.tensor([3, 1])).cpu(), frames[[3, 1]])
+    assert fake_torchcodec.instances[-1].device == "cuda"  # hardware decoding was requested
+    storage.close()
+
+
+def test_torchcodec_reader_requires_rgb24(tmp_path, fake_torchcodec):
+    from unienv_data.storages.video_storage import TorchCodecVideoReader
+
+    with pytest.raises(AssertionError):
+        TorchCodecVideoReader(B, "unused.mkv", buffer_pixel_format="gray16le")
