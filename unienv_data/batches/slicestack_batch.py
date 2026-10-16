@@ -191,6 +191,12 @@ class SliceStackedBatch(BatchBase[
     ) -> Union[BArrayType, BatchT, Any]:
         """
         Fill the data with the mask as if the frames were frame-stacked.
+
+        ``data`` is updated in place where the backend allows it (``backend.at(...).set``;
+        JAX and read-only arrays are copied). This is safe because ``data`` is the result
+        of fetching an index array from the wrapped batch, a fresh gather: batches wrapped
+        by a ``SliceStackedBatch`` must not return arrays aliasing their storage from
+        ``get_at*`` / ``get_flattened_at*`` with index arrays.
         Args:
             space (Optional[Space]): The space to fill the data with. If None, the data is assumed to be a backend array.
             data (Union[BArrayType, BatchT, Any]): The data to fill sized (B, T, *D)
@@ -227,19 +233,25 @@ class SliceStackedBatch(BatchBase[
                 last_valid_idx[:, None]
             ))
         
-        batch_idx = self.backend.repeat(self.backend.arange(
-            B, device=data_device
-        )[:, None], T, axis=1)
+        # Valid frames map to themselves, so only rows holding an invalid frame change: re-gather
+        # just those rows instead of copying the whole (B, T, *D) batch again.
+        rows = self.backend.nonzero(self.backend.any(
+            self.backend.logical_not(valid_mask), axis=1
+        ))[0]
+        if rows.shape[0] == 0:
+            return data
+        if data_device is not None:
+            rows = self.backend.to_device(rows, data_device)
+        gather_idx = (rows[:, None], time_idx[rows])
 
         if space is None:
-            filled_data = data[batch_idx, time_idx]
-        else:
-            filled_data = sbu.get_at(
-                space,
-                data,
-                (batch_idx, time_idx)
-            )
-        return filled_data
+            return self.backend.at(data)[rows].set(data[gather_idx])
+        return sbu.set_at(
+            space,
+            data,
+            rows,
+            sbu.get_at(space, data, gather_idx),
+        )
 
     def get_flattened_at(self, idx):
         return self.get_flattened_at_with_metadata(idx)[0]
