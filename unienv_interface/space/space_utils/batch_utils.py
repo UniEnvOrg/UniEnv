@@ -419,7 +419,8 @@ def batch_space(space: Space, n: int = 1) -> Space:
 
 @batch_space.register(BoxSpace)
 def _batch_space_box(space: BoxSpace, n: int = 1):
-    return BoxSpace(
+    # The bounds come from an already validated box: skip re-validation
+    return BoxSpace._from_validated(
         backend=space.backend,
         low=space._low[None],
         high=space._high[None],
@@ -614,11 +615,20 @@ def _unbatch_spaces_box(space: BoxSpace):
     assert len(space.shape) > 0, "Expected BoxSpace to be batched, but it is not."
     low = space._low
     high = space._high
+
+    def _row(bound, i):
+        row = bound[i] if bound.shape[0] > i else bound[0]
+        # A row of an abbreviated array may abbreviate further (e.g. per-env constant bounds)
+        if any(d > 1 for d in row.shape) and 0 not in row.shape:
+            row = space.backend.abbreviate_array(row, try_cast_scalar=False)
+        return row
+
     for i in range(space.shape[0]):
-        yield BoxSpace(
+        # The bounds come from an already validated box: skip re-validation
+        yield BoxSpace._from_validated(
             backend=space.backend,
-            low=low[i] if low.shape[0] > i else low[0],
-            high=high[i] if high.shape[0] > i else high[0],
+            low=_row(low, i),
+            high=_row(high, i),
             dtype=space.dtype,
             device=space.device,
             shape=space.shape[1:],

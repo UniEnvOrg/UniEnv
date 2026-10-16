@@ -1,7 +1,19 @@
 from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Optional, Tuple, Literal
+import sys
 import numpy as np
 from unienv_interface.backends import ComputeBackend, ArrayAPIArray
 import abc
+
+def _is_jax_tracer(value : Any) -> bool:
+    """Return whether ``value`` is a jax tracer (a value staged inside ``jax.jit`` & co.).
+
+    Spaces and transformations cache values derived from their (immutable)
+    bounds. A tracer is only valid inside the trace that created it, so such
+    caches must never store one: computing a derived value inside a trace and
+    reusing it afterwards would leak the tracer.
+    """
+    jax = sys.modules.get("jax")  # no jax imported -> there cannot be any tracer
+    return jax is not None and isinstance(value, jax.core.Tracer)
 
 SpaceDataT = TypeVar("SpaceDataT", covariant=True)
 _SpaceBDeviceT = TypeVar("_SpaceBDeviceT", covariant=True)

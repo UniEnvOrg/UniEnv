@@ -1,6 +1,7 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
+import math
 import numpy as np
-from ..space import Space
+from ..space import Space, _is_jax_tracer
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 def _sample_integers_in_closed_interval(
@@ -38,7 +39,14 @@ def _sample_integers_in_closed_interval(
     return rng, backend.asarray(sample, dtype=dtype, device=device)
 
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
-    """Continuous or integer hyper-rectangle defined by elementwise bounds."""
+    """Continuous or integer hyper-rectangle defined by elementwise bounds.
+
+    A box is immutable after construction (``_low``/``_high`` are never
+    reassigned), so values derived from the bounds are computed lazily and
+    cached on the instance; caches are dropped when pickling.
+    """
+    _CACHE_ATTRS = ("_low_b", "_high_b")
+
     def __init__(
         self,
         backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -64,7 +72,7 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         # determine shape if it isn't provided directly
         if shape is not None:
             assert all(
-                np.issubdtype(type(dim), np.integer) for dim in shape
+                type(dim) is int or np.issubdtype(type(dim), np.integer) for dim in shape
             ), f"Expect all shape elements to be an integer, actual type: {tuple(type(dim) for dim in shape)}"
             shape = tuple(int(dim) for dim in shape)  # This changes any np types to int
         elif backend.is_backendarray(low) or backend.is_backendarray(high):
@@ -99,7 +107,19 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 low = dtype_min if low == -backend.inf else dtype_max
             if isinstance(high, (int, float)) and (high == backend.inf or high == -backend.inf):
                 high = dtype_max if high == backend.inf else dtype_min
-            
+
+        if (
+            type(low) in (int, float) and type(high) in (int, float)
+            and self._scalar_bounds_ok(backend, low, high, dtype, device)
+        ):
+            # Fast path: both bounds are Python scalars that passed every check below
+            # in Python (see ``_scalar_bounds_ok``), and a ``[1] * ndim`` array is
+            # already abbreviated, so the backend-side validation is redundant.
+            self._low = backend.full([1] * len(shape), low, dtype=dtype, device=device)
+            self._high = backend.full([1] * len(shape), high, dtype=dtype, device=device)
+            self._init_caches()
+            return
+
         if isinstance(low, (int, float)):
             _low = backend.full([1] * len(shape), low, dtype=dtype, device=device)
         else:
@@ -150,14 +170,85 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
         self._low = _low
         self._high = _high
+        self._init_caches()
+
+    @staticmethod
+    def _scalar_bounds_ok(backend, low, high, dtype, device) -> bool:
+        """Validate Python-scalar bounds without touching the backend.
+
+        Returns ``True`` only if the array-based checks in ``__init__`` are
+        guaranteed to pass on the bounds produced by ``backend.full``; otherwise
+        (NaN, casts that overflow or truncate into ``low > high``, ...) returns
+        ``False`` so the generic path runs and raises exactly as before.
+        """
+        if low != low or high != high:  # NaN
+            return False
+        if backend.dtype_is_real_integer(dtype):
+            if not (math.isfinite(low) and math.isfinite(high)):
+                return False
+            # Materialised dtype: e.g. jax without x64 stores int64 as int32
+            info = backend.iinfo(backend.empty((0,), dtype=dtype, device=device).dtype)
+            low_c, high_c = int(low), int(high)  # float -> int truncates like ``full``/``astype``
+            return info.min <= low_c <= high_c <= info.max
+        # Rounding to a narrower float dtype is monotonic: low <= high is preserved
+        return low <= high
+
+    @classmethod
+    def _from_validated(
+        cls,
+        backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+        low : BArrayType,
+        high : BArrayType,
+        dtype : BDtypeType,
+        shape : Sequence[int],
+        device : Optional[BDeviceType] = None,
+    ) -> "BoxSpace[BArrayType, BDeviceType, BDtypeType, BRNGType]":
+        """Internal constructor that skips validation.
+
+        Only for bounds derived from an already validated ``BoxSpace`` (e.g. by
+        batching / unbatching), i.e. ``low``/``high`` already have ``dtype``,
+        live on ``device``, have ``len(shape)`` dims that are either 1 or equal
+        to ``shape`` and satisfy ``low <= high``.
+        """
+        self = cls.__new__(cls)
+        Space.__init__(self, backend=backend, shape=shape, device=device, dtype=dtype)
+        self._dtype_is_float = backend.dtype_is_real_floating(dtype)
+        self._low = low
+        self._high = high
+        self._init_caches()
+        return self
+
+    def _init_caches(self) -> None:
+        for name in self._CACHE_ATTRS:
+            setattr(self, name, None)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for name in self._CACHE_ATTRS:
+            state.pop(name, None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._init_caches()
 
     @property
     def low(self) -> BArrayType:
-        return self.backend.broadcast_to(self._low, self.shape)
+        low = self._low_b
+        if low is None:
+            low = self.backend.broadcast_to(self._low, self.shape)
+            if not _is_jax_tracer(low):
+                self._low_b = low
+        return low
     
     @property
     def high(self) -> BArrayType:
-        return self.backend.broadcast_to(self._high, self.shape)
+        high = self._high_b
+        if high is None:
+            high = self.backend.broadcast_to(self._high, self.shape)
+            if not _is_jax_tracer(high):
+                self._high_b = high
+        return high
 
     def to(
         self, 
