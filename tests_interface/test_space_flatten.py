@@ -9,6 +9,7 @@ from unienv_interface.space import (
 )
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_interface.space.space_utils import flatten_utils as sfu
+from tests_common.backends import cpu_backend_params
 from tests_common.trees import assert_tree_equal
 
 
@@ -113,3 +114,21 @@ def test_dynamic_box_in_mixed_dict_keeps_dtype(dtype):
     for seed in range(3):
         _, x = space.sample(_rng(seed))
         _check_roundtrip(space, x)
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_union_flatten_on_every_backend(backend, device):
+    float32 = backend.__array_namespace_info__().dtypes()["float32"]
+    int32 = backend.__array_namespace_info__().dtypes()["int32"]
+    space = UnionSpace(backend, [
+        BoxSpace(backend, 1.0, 2.0, float32, shape=(2,), device=device),
+        BoxSpace(backend, 0, 3, int32, shape=(1,), device=device),
+    ], device=device)
+    rng = backend.random.random_number_generator(0, device=device)
+    for _ in range(4):
+        rng, x = space.sample(rng)
+        flat = sfu.flatten_data(space, x)
+        assert sfu.flatten_space(space).contains(flat)
+        idx, value = sfu.unflatten_data(space, flat)
+        assert idx == x[0]
+        assert_tree_equal(value, x[1])

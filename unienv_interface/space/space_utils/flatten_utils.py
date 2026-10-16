@@ -183,12 +183,9 @@ def _flatten_space_oneof(space: UnionSpace, start_dim : int = 0) -> BoxSpace:
     max_flatdim = max(flat_dim(s, start_dim) for s in space.spaces) + 1
 
     space_list = [flatten_space(s, start_dim) for s in space.spaces]
-    lows = space.backend.asarray([space.backend.min(s.low) for s in space_list])
-    highs = space.backend.asarray([space.backend.max(s.high) for s in space_list])
-
     # Unused trailing slots are padded with zeros, so the bounds must include 0
-    overall_low = space.backend.minimum(space.backend.min(lows), 0)
-    overall_high = space.backend.maximum(space.backend.max(highs), 0)
+    overall_low = min([float(space.backend.min(s.low)) for s in space_list if s.shape[0] > 0] + [0.0])
+    overall_high = max([float(space.backend.max(s.high)) for s in space_list if s.shape[0] > 0] + [0.0])
 
     flat_dtype = space.backend.default_floating_dtype
     low = space.backend.concat([
