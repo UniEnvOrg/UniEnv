@@ -152,3 +152,13 @@ def test_infinite_bounds_with_default_integer_dtype(backend, device):
     assert int(space.low.min()) == int(info.min) and int(space.high.max()) == int(info.max)
     _, x = space.sample(backend.random.random_number_generator(0, device=device))
     assert space.contains(x)
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+@pytest.mark.parametrize("dtype_name", ["int32", "float32"])
+def test_scalar_box_samples_are_arrays(backend, device, dtype_name):
+    dtype = backend.__array_namespace_info__().dtypes()[dtype_name]
+    space = BoxSpace(backend, 0, 5, dtype, shape=(), device=device)
+    _, x = space.sample(backend.random.random_number_generator(0, device=device))
+    assert backend.is_backendarray(x) and tuple(x.shape) == ()
+    assert space.contains(x)

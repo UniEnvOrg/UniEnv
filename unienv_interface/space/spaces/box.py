@@ -33,7 +33,9 @@ def _sample_integers_in_closed_interval(
     sample = backend.where(overflow, backend.zeros_like(sample), sample)
     sample = backend.astype(sample, dtype)
     sample = backend.where(overflow, high, sample)
-    return rng, backend.clip(sample, low, high)
+    sample = backend.clip(sample, low, high)
+    # numpy turns 0-d results of elementwise ops into scalars
+    return rng, backend.asarray(sample, dtype=dtype, device=device)
 
 class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     """Continuous or integer hyper-rectangle defined by elementwise bounds."""
