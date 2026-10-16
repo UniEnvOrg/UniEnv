@@ -9,7 +9,21 @@ from multiprocessing.context import BaseContext as MPContext
 from multiprocessing.synchronize import Event as MPEvent
 import copy
 import queue
+import sys
 import time
+
+def _limit_worker_intraop_threads() -> None:
+    """
+    Run each worker's tensor ops single-threaded, as torch's ``DataLoader`` workers do.
+
+    A ``fork``-ed child inherits the parent's OpenMP thread-pool state but not its threads,
+    so once the parent has run a parallel torch op, the worker's first parallel op (e.g.
+    gathering a large image batch) waits forever for threads that do not exist. The workers
+    provide the parallelism instead. torch is only touched if it is already imported.
+    """
+    torch = sys.modules.get("torch")
+    if torch is not None:
+        torch.set_num_threads(1)
 
 def worker_loop(
     fetch_fn : Callable[[BatchSampler[
@@ -23,6 +37,7 @@ def worker_loop(
     init_fn : Optional[Callable[[int], None]] = None,
     seed : Optional[int] = None,
 ):
+    _limit_worker_intraop_threads()
     # Every worker starts from a copy of the parent's sampler (and RNG state); reseed it so
     # that workers do not all draw the same batches.
     if init_fn is not None and seed is not None:

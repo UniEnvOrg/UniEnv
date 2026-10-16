@@ -135,3 +135,63 @@ def test_invalid_arguments_raise_cleanly():
     with pytest.raises(AssertionError):
         MultiprocessingSampler(StepSampler(make_rb(4), batch_size=2), n_workers=0)
     gc.collect()
+
+
+_FORK_AFTER_PARALLEL_OP = """
+import multiprocessing as mp, torch
+from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+from unienv_interface.space import BoxSpace
+from unienv_data import ReplayBuffer
+from unienv_data.samplers import MultiprocessingSampler, StepSampler
+from unienv_data.storages.pytorch import PytorchTensorStorage
+
+space = BoxSpace(TB, 0, 255, torch.uint8, shape=(3, 64, 64), device="cpu")
+rb = ReplayBuffer.create(PytorchTensorStorage, space, capacity=1000, is_memmap=False)
+rb.extend(torch.randint(0, 256, (1000, 3, 64, 64), dtype=torch.uint8))
+# 256 images of 3*64*64 bytes: well above the intra-op parallel grain size.
+StepSampler(rb, batch_size=256, seed=0).sample()  # the parent runs a parallel gather
+sampler = MultiprocessingSampler(
+    StepSampler(rb, batch_size=256, seed=0), n_workers=2, n_buffers=1, ctx=mp.get_context("fork"),
+)
+assert sampler.sample().shape == (256, 3, 64, 64)
+assert sampler.sample().shape == (256, 3, 64, 64)
+sampler.close()
+print("ok")
+"""
+
+
+def test_fork_workers_do_not_deadlock_after_parent_used_intraop_pool():
+    # Regression: a fork-ed worker inherits torch's OpenMP thread-pool state but
+    # not its threads, so once the parent had run a parallel op (here a large
+    # image gather), the worker's first parallel op waited forever on threads
+    # that do not exist and sample() never returned. Workers now run their
+    # tensor ops single-threaded, as torch's DataLoader workers do.
+    # Runs in a fresh interpreter: the pool state belongs to the thread that used
+    # it, so the parent must use it, and fork, from its main thread, and a hang
+    # must be killable (whole process group) without leaving stuck workers behind.
+    import os, signal, subprocess, sys
+    if torch.get_num_threads() < 2:
+        pytest.skip("needs a multi-threaded intra-op pool")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _FORK_AFTER_PARALLEL_OP], cwd=root, start_new_session=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        pytest.fail("fork-ed sampler workers deadlocked")
+    assert proc.returncode == 0 and out.strip().endswith("ok"), err
+
+def test_worker_threads_are_limited_only_if_torch_is_imported(monkeypatch):
+    import sys
+    from unienv_data.samplers import multiprocessing_sampler as mps
+    calls = []
+    monkeypatch.setattr(torch, "set_num_threads", calls.append)
+    mps._limit_worker_intraop_threads()
+    assert calls == [1]
+    monkeypatch.delitem(sys.modules, "torch")
+    mps._limit_worker_intraop_threads()
+    assert calls == [1]
