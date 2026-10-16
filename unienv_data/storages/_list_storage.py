@@ -104,14 +104,24 @@ class ListStorageBase(SpaceStorage[
         filename = os.path.join(self._cache_path, f"{index}.{self.file_ext}")
         self.set_to_file(filename, value)
 
+    def _empty_batch(self) -> BatchT:
+        return sbu.get_at(
+            self._batched_single_space,
+            self._batched_single_space.create_empty(),
+            slice(0, 0),
+        )
+
     def get(self, index):
         if isinstance(index, int):
             result = self.get_single(index)
         else:
+            indexes = batched_index_to_list(self.backend, index, len(self))
+            if len(indexes) == 0:
+                return self._empty_batch()
             result = sbu.concatenate(
                 self._batched_single_space,    
                 [
-                    self.get_single(i) for i in batched_index_to_list(self.backend, index, len(self))
+                    self.get_single(i) for i in indexes
                 ]
             )
         return result
