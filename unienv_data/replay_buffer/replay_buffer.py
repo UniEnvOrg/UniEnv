@@ -496,7 +496,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
         if hasattr(self.storage, "get_flattened"):
-            data = self.storage.get_flattened(idx)
+            data = self.storage.get_flattened(index_with_offset(
+                self.backend,
+                idx,
+                self.count,
+                self.offset,
+                self.device
+            ))
             return data, None
 
         data, metadata = self.get_at_with_metadata(idx)
