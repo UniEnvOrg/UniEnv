@@ -77,6 +77,16 @@ class SliceStackedBatch(BatchBase[
         self.get_valid_mask_function = get_valid_mask_function
         self.stack_metadata = stack_metadata
 
+        # Spaces of the source data / metadata once reshaped to (B, T, ...) (with a placeholder B of 1).
+        # Unlike `_batched_metadata_space`, these do not contain the `slice_valid_mask` entry.
+        num_offsets = fixed_offset.shape[0]
+        self._source_stacked_space = sbu.batch_space(
+            sbu.batch_space(batch.single_space, num_offsets), 1
+        )
+        self._source_stacked_metadata_space = sbu.batch_space(
+            sbu.batch_space(batch.single_metadata_space, num_offsets), 1
+        ) if batch.single_metadata_space is not None else None
+
     @property
     def backend(self) -> ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]:
         return self.batch.backend
@@ -115,9 +125,6 @@ class SliceStackedBatch(BatchBase[
             assert index.shape[0] == len(self.batch), f"Index shape {index.shape} does not match batch size {len(self.batch)}"
             index = self.backend.nonzero(index)[0] # (T, )
 
-        # index_shifts = self.backend.arange( # (T, )
-        #     -self.prefetch_horizon, self.postfetch_horizon + 1, dtype=index.dtype, device=self.backend.device(index)
-        # )
         index = index[:, None] + self.fixed_offset[None, :] # (B, T)
         index = self.backend.clip(index, 0, len(self.batch) - 1)
         return index
@@ -142,7 +149,7 @@ class SliceStackedBatch(BatchBase[
             return self.get_valid_mask(
                 expanded_idx,
                 sfu.unflatten_data(
-                    self._batched_space,
+                    self._source_stacked_space,
                     data,
                     start_dim=2
                 ),
@@ -278,18 +285,11 @@ class SliceStackedBatch(BatchBase[
             )
             if self.stack_metadata and metadata is not None:
                 metadata = self.fill_data_with_stack_mask(
-                    self._batched_metadata_space,
+                    self._source_stacked_metadata_space,
                     metadata,
                     valid_mask
                 )
-        if not self.stack_metadata and metadata is not None:
-            metadata = sbu.get_at(
-                self._batched_metadata_space,  # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
-                metadata,
-                (slice(None), self.prefetch_horizon)
-            )
-
-        metadata['slice_valid_mask'] = valid_mask
+        metadata = self._finalize_metadata(metadata, valid_mask)
         return batched_data, metadata
 
     def get_at(self, idx : Union[IndexableType, BArrayType]) -> BatchT:
@@ -337,7 +337,7 @@ class SliceStackedBatch(BatchBase[
                 batched_data, metadata = self.fill_data_with_stack_mask(
                     TupleSpace(
                         self.backend, 
-                        (self._batched_space, self._batched_metadata_space),
+                        (self._source_stacked_space, self._source_stacked_metadata_space),
                         device=self.device
                     ),
                     (batched_data, metadata),
@@ -345,19 +345,34 @@ class SliceStackedBatch(BatchBase[
                 )
             else:
                 batched_data = self.fill_data_with_stack_mask(
-                    self._batched_space,
+                    self._source_stacked_space,
                     batched_data,
                     valid_mask
                 )
-        if not self.stack_metadata and metadata is not None:
-            metadata = sbu.get_at(
-                self._batched_metadata_space, # This does not necessarily have to be the space we have with metadata, as it is not temporally stacked
-                metadata,
-                (slice(None), self.prefetch_horizon)
-            )
-        metadata = {} if metadata is None else metadata
-        metadata['slice_valid_mask'] = valid_mask
+        metadata = self._finalize_metadata(metadata, valid_mask)
         return batched_data, metadata
+
+    def _finalize_metadata(
+        self,
+        metadata : Optional[Dict[str, Any]],
+        valid_mask : BArrayType,
+    ) -> Dict[str, Any]:
+        """
+        Turn the (B, T, ...) source metadata into this batch's metadata: when metadata is not
+        stacked, keep the entry of the anchor frame (offset 0); then attach the valid mask.
+        """
+        if metadata is None:
+            metadata = {}
+        elif not self.stack_metadata:
+            metadata = sbu.get_at(
+                self._source_stacked_metadata_space,
+                metadata,
+                (slice(None), self._idx_zero)
+            )
+        else:
+            metadata = dict(metadata)
+        metadata['slice_valid_mask'] = valid_mask
+        return metadata
 
     def close(self) -> None:
         self.batch.close()
