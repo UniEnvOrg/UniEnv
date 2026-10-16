@@ -91,3 +91,54 @@ def test_unbounded_replay_buffer_with_hdf5_storage(tmp_path):
     loaded = ReplayBuffer.load_from(cache, backend=B)
     np.testing.assert_array_equal(loaded.get_at(slice(None)), np.arange(8, dtype=np.float32).reshape(4, 2))
     loaded.storage.close()
+
+
+@pytest.fixture
+def nested_storage(tmp_path):
+    storage = HDF5Storage.create(_nested_space(), capacity=4, cache_path=str(tmp_path / "nested.hdf5"))
+    storage.set(slice(None), _nested_batch(4))
+    yield storage
+    storage.close()
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["new-file", "existing-file"])
+def test_dumps_to_another_path_is_loadable(tmp_path, nested_storage, existing):
+    target = tmp_path / "sub" / "copy.hdf5"
+    if existing:
+        target.parent.mkdir()
+        with h5py.File(target, "w") as f:
+            f.create_dataset("stale", data=np.zeros(3))
+    nested_storage.dumps(str(target))
+    loaded = HDF5Storage.load_from(str(target), _nested_space(), capacity=4)
+    assert set(loaded.root.keys()) == {"obs", "reward"}
+    assert_tree_equal(loaded.get(slice(None)), _nested_batch(4))
+    loaded.close()
+    # the source storage is untouched and still usable
+    assert_tree_equal(nested_storage.get(slice(None)), _nested_batch(4))
+
+
+def test_dumps_to_own_path_flushes(tmp_path, nested_storage):
+    nested_storage.set(1, {"obs": {"pos": np.ones(2, np.float32), "vel": np.ones(1, np.float32)}, "reward": np.float32(7.0)})
+    path = nested_storage.cache_filename
+    nested_storage.dumps(path)
+    assert nested_storage.root is not None  # still open after dumping in place
+    nested_storage.close()
+    loaded = HDF5Storage.load_from(path, _nested_space(), capacity=4)
+    assert loaded.get(1)["reward"] == 7.0
+    loaded.close()
+
+
+def test_dumps_group_column_view_to_another_path(tmp_path, nested_storage):
+    view = nested_storage.get_column(["obs"])
+    target = str(tmp_path / "obs.hdf5")
+    view.dumps(target)
+    loaded = HDF5Storage.load_from(target, _nested_space()["obs"], capacity=4)
+    assert_tree_equal(loaded.get(slice(None)), _nested_batch(4)["obs"])
+    loaded.close()
+
+
+def test_dumps_column_view_onto_its_own_file_is_rejected(nested_storage):
+    view = nested_storage.get_column(["obs"])
+    with pytest.raises(ValueError):
+        view.dumps(nested_storage.cache_filename)
+    assert_tree_equal(nested_storage.get(slice(None)), _nested_batch(4))

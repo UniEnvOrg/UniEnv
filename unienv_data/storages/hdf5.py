@@ -743,16 +743,25 @@ class HDF5Storage(SpaceStorage[
 
     def dumps(self, path):
         root = self._ensure_root()
-        if isinstance(root, h5py.File) and os.path.samefile(root.filename, path):
+        if os.path.exists(path) and os.path.samefile(root.file.filename, path):
+            if not isinstance(root, h5py.File):
+                raise ValueError(
+                    f"Cannot dump a column view of {root.file.filename} onto the file it is a view of"
+                )
             root.flush()
-        else:
-            target_file = h5py.File(path, 'w')
-            target_file.copy(
-                root,
-                target_file,
-            )
+            return
+
+        parent_dir = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent_dir, exist_ok=True)
+        with h5py.File(path, 'w') as target_file:
+            # Copy the members (not the root object itself) so that the dumped
+            # file has the same layout that `load_from` expects for this space.
+            if isinstance(root, h5py.Dataset):
+                root.file.copy(root, target_file, name=__class__.DEFAULT_KEY)
+            else:
+                for key in root.keys():
+                    root.copy(root[key], target_file, name=key)
             target_file.flush()
-            target_file.close()
 
     def close(self):
         root = getattr(self, "root", None)
