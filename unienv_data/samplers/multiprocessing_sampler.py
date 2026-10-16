@@ -459,8 +459,9 @@ class MultiprocessingSampler(
 
         Workers pay off when producing a batch is expensive (decoding, transformations,
         storage reads). For data already in RAM (e.g. an in-memory ``ReplayBuffer``),
-        sampling in-process is usually faster: every batch is otherwise copied to the
-        parent through shared memory.
+        sampling in-process is usually faster (e.g. 0.7 ms vs 3 ms for 256 samples of 48 KiB
+        with 4 workers): every batch is otherwise copied to the parent through shared memory.
+        Workers run their torch ops single-threaded (see ``_limit_worker_intraop_threads``).
 
         Args:
             shared_memory: For ``sample()`` / ``sample_with_metadata()`` of samplers producing

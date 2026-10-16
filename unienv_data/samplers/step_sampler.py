@@ -10,6 +10,20 @@ class StepSampler(
         BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType
     ]
 ):
+    """
+    Samples mini-batches of individual steps (uniformly, with replacement) from ``data``.
+
+    Performance notes:
+
+    * For data held in RAM (e.g. an in-memory ``ReplayBuffer`` and views over it), sampling
+      in-process is usually faster than ``MultiprocessingSampler``: worker processes only pay
+      off when producing a batch is expensive (decoding, transformations, storage reads),
+      since every batch is copied to the main process.
+    * ``sample_flat()`` / ``get_flattened_at()`` flatten a sample into one array of a common
+      dtype, so ``uint8`` images next to ``float32`` fields are cast to ``float32`` (4x the
+      bytes and a conversion per batch). Prefer ``sample()`` for image data.
+    * Read single fields through ``data.get_column(keys)`` rather than sampling whole samples.
+    """
     def __init__(
         self,
         data : BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType],
