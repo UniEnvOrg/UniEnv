@@ -47,10 +47,11 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         Tuple[int, Any]
     ]:
         rng, subspace_idx = self.backend.random.random_discrete_uniform(
-            1,
+            (1,),
             0,
             len(self.spaces),
             rng=rng,
+            device=self.device,
         )
         subspace_idx = int(subspace_idx[0])
 
