@@ -21,6 +21,9 @@ class SubIndexedBatch(BatchBase[
         self.batch = batch
 
         if isinstance(sub_indexes, int):
+            assert -len(batch) <= sub_indexes < len(batch), f"Index {sub_indexes} out of bounds for batch of size {len(batch)}"
+            if sub_indexes < 0:
+                sub_indexes += len(batch)
             sub_indexes = slice(sub_indexes, sub_indexes + 1)
         if isinstance(sub_indexes, slice):
             sub_indexes = self.backend.arange(*sub_indexes.indices(len(batch)), device=batch.device, dtype=self.backend.default_index_dtype)
@@ -52,41 +55,35 @@ class SubIndexedBatch(BatchBase[
     def __len__(self) -> int:
         return len(self.sub_indexes) if self.sub_indexes is not Ellipsis else len(self.batch)
 
-    def get_flattened_at(self, idx):
+    def _parent_index(self, idx : Union[IndexableType, BArrayType]) -> Union[IndexableType, BArrayType]:
+        """Map an index into this view to an index into the parent batch.
+
+        An ``int`` stays an ``int`` (a single sample), so parents receive the same index
+        kind they would get without the view.
+        """
         if self.sub_indexes is Ellipsis:
-            return self.batch.get_flattened_at(idx)
-        else:
-            return self.batch.get_flattened_at(self.sub_indexes[idx])
+            return idx
+        if isinstance(idx, int):
+            return int(self.sub_indexes[idx])
+        return self.sub_indexes[idx]
+
+    def get_flattened_at(self, idx):
+        return self.batch.get_flattened_at(self._parent_index(idx))
 
     def get_flattened_at_with_metadata(self, idx):
-        if self.sub_indexes is Ellipsis:
-            return self.batch.get_flattened_at_with_metadata(idx)
-        else:
-            return self.batch.get_flattened_at_with_metadata(self.sub_indexes[idx])
+        return self.batch.get_flattened_at_with_metadata(self._parent_index(idx))
 
     def get_at(self, idx):
-        if self.sub_indexes is Ellipsis:
-            return self.batch.get_at(idx)
-        else:
-            return self.batch.get_at(self.sub_indexes[idx])
+        return self.batch.get_at(self._parent_index(idx))
 
     def get_at_with_metadata(self, idx) -> Tuple[BatchT, Dict[str, Any]]:
-        if self.sub_indexes is Ellipsis:
-            return self.batch.get_at_with_metadata(idx)
-        else:
-            return self.batch.get_at_with_metadata(self.sub_indexes[idx])
+        return self.batch.get_at_with_metadata(self._parent_index(idx))
     
     def set_at(self, idx, value):
-        if self.sub_indexes is Ellipsis:
-            self.batch.set_at(idx, value)
-        else:
-            self.batch.set_at(self.sub_indexes[idx], value)
+        self.batch.set_at(self._parent_index(idx), value)
     
     def set_flattened_at(self, idx, value):
-        if self.sub_indexes is Ellipsis:
-            self.batch.set_flattened_at(idx, value)
-        else:
-            self.batch.set_flattened_at(self.sub_indexes[idx], value)
+        self.batch.set_flattened_at(self._parent_index(idx), value)
 
     def extend(self, value):
         if self.sub_indexes is Ellipsis:
