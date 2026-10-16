@@ -182,3 +182,80 @@ def test_index_conversion_helpers():
     assert [g[0] for g in groups] == [0, 2, 3]
     with pytest.raises(ValueError):
         convert_index_to_batch(NB, starts, 9, 3)
+
+
+def _all_reads(combined, idx):
+    return (combined.get_at(idx), combined.get_at_with_metadata(idx),
+            combined.get_flattened_at(idx), combined.get_flattened_at_with_metadata(idx))
+
+
+def test_thread_pool_is_reused_and_shut_down_on_close():
+    combined, _ = _combined(use_thread_pool=True)
+    serial, _ = _combined(use_thread_pool=False)
+    idx = torch.tensor([0, 5, 11, 3, 7])
+    for _ in range(3):
+        assert_tree_equal(_all_reads(combined, idx), _all_reads(serial, idx))
+    executor = combined._executor
+    assert executor is not None and executor._max_workers == len(SIZES)
+    combined.get_at(idx)
+    assert combined._executor is executor
+    combined.close()
+    assert combined._executor is None and executor._shutdown
+    assert_tree_equal(combined.get_at(idx), serial.get_at(idx))  # a closed view still reads
+    combined.close()
+
+
+def test_thread_pool_is_not_pickled_and_is_recreated_after_fork():
+    import multiprocessing as mp
+    import pickle
+    combined, _ = _combined(use_thread_pool=True)
+    idx = torch.tensor([0, 5, 11])
+    expected = combined.get_at(idx)
+    assert combined._executor is not None
+    clone = pickle.loads(pickle.dumps(combined))
+    assert clone._executor is None
+    assert_tree_equal(clone.get_at(idx), expected)
+    clone.close()
+
+    def child(queue):
+        # The inherited pool has no threads in this process: work submitted to it never runs.
+        queue.put({k: v.numpy() for k, v in combined.get_at(idx).items()})
+
+    ctx = mp.get_context("fork")
+    queue = ctx.Queue()
+    proc = ctx.Process(target=child, args=(queue,), daemon=True)
+    proc.start()
+    try:
+        assert_tree_equal(queue.get(timeout=30), expected)
+    finally:
+        proc.join(timeout=10)
+        if proc.is_alive():
+            proc.kill()
+    combined.close()
+
+
+def test_batched_spaces_are_memoised_per_batch_size():
+    combined, _ = _combined()
+    idx = torch.tensor([0, 5, 11])
+    assert_tree_equal(combined.get_at(idx), _ref_at(12, idx))
+    space = combined._cached_batch_space(combined.single_space, 3)
+    assert space == sbu.batch_space(combined.single_space, 3)
+    assert combined._cached_batch_space(combined.single_space, 3) is space
+    assert combined._cached_batch_space(combined.single_space, 4) == sbu.batch_space(combined.single_space, 4)
+    for n in range(1, 40):
+        combined._cached_batch_space(combined.single_space, n)
+    assert len(combined._batch_space_cache) <= 16
+
+
+def test_view_pickled_without_pool_attributes_still_reads():
+    import pickle
+    combined, _ = _combined(use_thread_pool=True)
+    state = combined.__getstate__()
+    for name in ("_executor", "_executor_pid", "_batch_space_cache"):
+        del state[name]
+    old = CombinedBatch.__new__(CombinedBatch)
+    old.__setstate__(pickle.loads(pickle.dumps(state)))
+    idx = torch.tensor([0, 5, 11])
+    assert_tree_equal(old.get_at(idx), combined.get_at(idx))
+    old.close()
+    combined.close()
