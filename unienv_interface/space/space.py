@@ -107,14 +107,13 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         attrs = self.__dict__
         if "backend" in attrs:  # re-initialised in place
             Space._notify_mutation()
+            attrs.pop("_metadata", None)
         attrs["backend"] = backend
         attrs["_shape"] = None if shape is None else tuple(shape)
         attrs["dtype"] = dtype
         attrs["_device"] = device
         if metadata is not None and metadata is not EMPTY_METADATA:
             attrs["_metadata"] = metadata if type(metadata) is SpaceMetadata else coerce_metadata(metadata)
-        elif "_metadata" in attrs:  # re-initialised in place without metadata
-            del attrs["_metadata"]
 
     @property
     def device(self) -> Optional[_SpaceBDeviceT]:
