@@ -7,6 +7,10 @@ __all__ = [
     "nested_get",
 ]
 
+def _items(d : Union[Mapping[str, Any], DictSpace]):
+    # DictSpace is not a Mapping and has no items(); iterate its sub-spaces.
+    return d.spaces.items() if isinstance(d, DictSpace) else d.items()
+
 def flatten_keys_in_mapping(
     d : Union[Mapping[str, Any], DictSpace],
     nested_separator : str = '/'
@@ -19,9 +23,9 @@ def flatten_keys_in_mapping(
         Union[Mapping[str, Any], DictSpace]
     """
     result : Dict[str, Any] = {}
-    for key, value in d.items():
+    for key, value in _items(d):
         if isinstance(value, (DictSpace, Mapping)):
-            for sub_key, sub_value in flatten_keys_in_mapping(value, nested_separator=nested_separator).items():
+            for sub_key, sub_value in _items(flatten_keys_in_mapping(value, nested_separator=nested_separator)):
                 result[f'{key}{nested_separator}{sub_key}'] = sub_value
         else:
             result[key] = value
@@ -54,7 +58,7 @@ def unflatten_keys_in_mapping(
         if firstlevel_key in d.keys():
             result[firstlevel_key] = d[firstlevel_key]
         else:
-            for key, value in d.items():
+            for key, value in _items(d):
                 if key.startswith(f'{firstlevel_key}{nested_separator}'):
                     sub_key = key[len(firstlevel_key) + len(nested_separator):]
                     sub_dict[sub_key] = value
