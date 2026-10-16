@@ -250,3 +250,75 @@ def test_nonstandard_json_constants_and_bad_utf8_rejected():
         codec.decode(struct.pack("!I", len(raw)) + raw)
     with pytest.raises(CodecError):
         codec.decode(b"\x00\x00")
+
+
+# ---------------------------------------------------------------------------
+# Zero-copy attachments must not change the wire format
+# ---------------------------------------------------------------------------
+
+def _tobytes_codec_encode(value, monkeypatch):
+    """Encode with every array attached via ``tobytes`` (the original implementation)."""
+    import unienv_interface.remote.codec as codec_module
+    with monkeypatch.context() as patch:
+        patch.setattr(codec_module, "_ZERO_COPY_MIN_BYTES", float("inf"))
+        return Codec().encode(value)
+
+
+_large_arrays = _dtypes.flatmap(lambda dt: hnp.arrays(
+    dt, hnp.array_shapes(min_dims=1, max_dims=3, min_side=1, max_side=40)))
+_large_values = st.recursive(st.one_of(_scalars, _large_arrays), _containers, max_leaves=6)
+
+
+@given(_large_values)
+def test_zero_copy_attachments_are_byte_identical(value):
+    monkeypatch = pytest.MonkeyPatch()
+    assert Codec().encode(value) == _tobytes_codec_encode(value, monkeypatch)
+
+
+def test_zero_copy_attachments_byte_identical_on_varied_layouts(monkeypatch):
+    rng = np.random.default_rng(0)
+    image = rng.integers(0, 255, (84, 84, 3), dtype=np.uint8)
+    graph = GraphInstance(n_nodes=np.array(600), nodes_features=rng.random((600, 4)).astype(np.float32),
+                          n_edges=np.array(2), edges=np.array([[0, 2], [1, 3]]))
+    value = {
+        "image": image,
+        "fortran": np.asfortranarray(rng.random((64, 32))),
+        "strided": np.arange(40000, dtype=np.int32).reshape(200, 200)[::2, 1::3],
+        "big_endian": np.arange(3000, dtype=">f4"),
+        "complex": (rng.random(600) + 1j * rng.random(600)).astype(">c16"),
+        "bools": rng.random(5000) > 0.5,
+        "half": rng.random(4096).astype(np.float16),
+        "scalar": np.float32(1.5),
+        "small": np.arange(3, dtype=np.int64),
+        "boundary": np.zeros(4096, np.uint8),
+        "below_boundary": np.zeros(4095, np.uint8),
+        "graph": graph,
+        "nested": [(image[::2], b"x" * 5000), {"blob": b"\x00\x01"}],
+    }
+    payload = Codec().encode(value)
+    assert payload == _tobytes_codec_encode(value, monkeypatch)
+    _assert_same(Codec().decode(payload)["nested"][0][1], b"x" * 5000)
+    np.testing.assert_array_equal(Codec().decode(payload)["strided"], value["strided"])
+
+
+def test_zero_copy_envelope_matches_hand_built_layout():
+    image = np.arange(84 * 84 * 3, dtype=np.uint16).reshape(84, 84, 3)
+    header = {"t": "dict", "v": [["image", {"t": "array", "dtype": "<u2", "shape": [84, 84, 3],
+                                            "offset": 0, "length": image.nbytes}]]}
+    raw = json.dumps(header, separators=(",", ":")).encode("utf-8")
+    expected = struct.pack("!I", len(raw)) + raw + image.tobytes()
+    assert Codec().encode({"image": image}) == expected
+
+
+def test_zero_copy_encode_snapshots_array_memory():
+    array = np.zeros(10000, np.float32)
+    payload = Codec().encode(array)
+    array[:] = 1.0  # later writes must not leak into an already encoded payload
+    np.testing.assert_array_equal(Codec().decode(payload), 0.0)
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_zero_copy_backend_arrays_byte_identical(backend, device, monkeypatch):
+    x = backend.asarray(np.arange(4096, dtype=np.float32).reshape(64, 64), device=device)
+    value = {"x": x, "t": [x[::2]]}
+    assert Codec().encode(value) == _tobytes_codec_encode(value, monkeypatch)

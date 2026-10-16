@@ -19,6 +19,9 @@ PROTOCOL_VERSION: int = 1
 DEFAULT_MAX_MESSAGE_SIZE: int = 64 * 1024 * 1024
 _DTYPE_SIZES: Dict[str, Set[int]] = {"b": {1}, "i": {1, 2, 4, 8}, "u": {1, 2, 4, 8}, "f": {2, 4, 8}, "c": {8, 16}}
 _GRAPH_FIELDS: Tuple[str, ...] = ("n_nodes", "n_edges", "nodes_features", "edges_features", "edges")
+# Arrays at least this large are attached as zero-copy byte views and copied once, by the
+# final join; smaller ones use ``tobytes`` (cheaper than building a view).
+_ZERO_COPY_MIN_BYTES: int = 4096
 
 
 def _valid_dtype(dtype: np.dtype) -> bool:
@@ -42,7 +45,7 @@ class Codec:
         self.max_message_size = max_message_size
 
     def encode(self, value: Any) -> bytes:
-        attachments: List[bytes] = []
+        attachments: List[Any] = []  # bytes or byte views of C-contiguous array memory
         offset = 0
 
         def encode_value(value: Any, depth: int = 0) -> Any:
@@ -86,7 +89,10 @@ class Codec:
                     raise CodecError("Message size limit exceeded")
                 node = {"t": "array", "dtype": array.dtype.str, "shape": list(array.shape),
                         "offset": offset, "length": array.nbytes}
-                data = array.tobytes(order="C")
+                if array.nbytes < _ZERO_COPY_MIN_BYTES:
+                    data = array.tobytes(order="C")
+                else:
+                    data = memoryview(np.ascontiguousarray(array).reshape(-1).view(np.uint8))
             offset += len(data)
             if offset > self.max_message_size:
                 raise CodecError("Message size limit exceeded")
@@ -99,7 +105,7 @@ class Codec:
             raise CodecError(str(exc)) from exc
         if 4 + len(header) + offset > self.max_message_size:
             raise CodecError("Message size limit exceeded")
-        return struct.pack("!I", len(header)) + header + b"".join(attachments)
+        return b"".join([struct.pack("!I", len(header)), header, *attachments])
 
     def decode(self, payload: bytes) -> Any:
         if not isinstance(payload, bytes) or not 4 <= len(payload) <= self.max_message_size:

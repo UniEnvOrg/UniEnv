@@ -48,6 +48,15 @@ try:
 except PackageNotFoundError:
     SERVER_VERSION = "unknown"
 
+
+class _FrozenResult(dict):
+    """A call result already detached by ``RemoteServer._freeze``.
+
+    It (and the snapshots captured from ``resource.latest``) only references
+    server-owned decoded memory, so it need not be frozen again.
+    """
+
+
 @dataclass
 class _Domain:
     executor: Optional[ThreadPoolExecutor] = None
@@ -87,6 +96,9 @@ class _Session:
         self.condition = Condition()
         self.responses: Deque[bytes] = deque()
         self.snapshots: Dict[str, bytes] = {}
+        # request_id -> (message, payload): the latest encoding of a response (or of its
+        # result) for the request being handled, so it is not encoded again unchanged.
+        self.encoded: Dict[str, Tuple[Any, bytes]] = {}
         self.closed = False
         self.ready = False
         self.writer = Thread(target=self._write, name="unienv-send", daemon=True)
@@ -104,6 +116,14 @@ class _Session:
             else:
                 self.snapshots[subscription] = payload
             self.condition.notify_all()
+
+    def remember_encoded(self, request_id: Any, message: Any, payload: bytes) -> None:
+        self.encoded[request_id] = (message, payload)
+
+    def take_encoded(self, request_id: Any, message: Any) -> Optional[bytes]:
+        """Payload remembered for ``request_id`` if it was encoded from ``message`` itself."""
+        cached = self.encoded.pop(request_id, None)
+        return cached[1] if cached is not None and cached[0] is message else None
 
     def _write(self) -> None:
         try:
@@ -133,7 +153,10 @@ class _Session:
             while not self.closed:
                 request = self.codec.decode(self.transport.recv())
                 response = self.server._request(self, request)
-                self.enqueue(self.codec.encode(response))
+                payload = (self.take_encoded(response.get("request_id"), response)
+                           if isinstance(response, dict) else None)
+                self.encoded.clear()
+                self.enqueue(self.codec.encode(response) if payload is None else payload)
         except (ConnectionError, OSError, CodecError):
             pass
         finally:
@@ -555,7 +578,11 @@ class RemoteServer:
                     result = resource.domain.executor.submit(self._execute, session, resource, request).result()
             response["result"] = result
             # Freeze mutable array references while still serialized by _execute.
-            session.codec.encode(response)
+            # _freeze_result usually encoded this exact envelope already.
+            payload = session.take_encoded(response["request_id"], result)
+            if payload is None:
+                payload = session.codec.encode(response)
+            session.remember_encoded(response["request_id"], response, payload)
         except Exception as exc:
             response.update(type="error", error={"code": exc.code if isinstance(exc, RemoteError) else
                             ("serialization_error" if isinstance(exc, CodecError) else "execution_error"),
@@ -694,7 +721,7 @@ class RemoteServer:
             if resource.kind == "env" and mutation:
                 # Detach mandatory values before optional getters can refresh
                 # buffers still referenced by the method's return tuple.
-                result = self._freeze(result)
+                result = _FrozenResult(self._freeze(result))
                 fields = (("observation", "reward", "terminated", "truncated", "info") if method == "step"
                           else ("context", "observation", "info"))
                 resource.latest = dict(zip(fields, result["value"]))
@@ -744,7 +771,12 @@ class RemoteServer:
             key = (resource.id, field)
             if key not in captured:
                 try:
-                    captured[key] = (self._freeze(self._snapshot(resource, [field])), None)
+                    data = self._snapshot(resource, [field])
+                    # Env fields other than render come from ``resource.latest``, the
+                    # already frozen step / reset result; everything else is live.
+                    if resource.kind != "env" or field == "render":
+                        data = self._freeze(data)
+                    captured[key] = (data, None)
                 except Exception as exc:
                     captured[key] = ({}, exc)
             data, error = captured[key]
@@ -755,10 +787,12 @@ class RemoteServer:
 
     def _freeze_result(self, session: _Session, request: WireMessage, result: Any) -> Any:
         def encode() -> Any:
-            frozen = self._freeze(result)
-            session.codec.encode({"version": PROTOCOL_VERSION, "type": "response", "session_id": session.id,
-                                  "request_id": request["request_id"], "resource_id": request.get("resource_id"),
-                                  "operation_id": request.get("operation_id"), "result": frozen})
+            frozen = result if isinstance(result, _FrozenResult) else self._freeze(result)
+            payload = session.codec.encode({"version": PROTOCOL_VERSION, "type": "response", "session_id": session.id,
+                                            "request_id": request["request_id"], "resource_id": request.get("resource_id"),
+                                            "operation_id": request.get("operation_id"), "result": frozen})
+            # _request encodes the same envelope around ``frozen``; let it reuse this.
+            session.remember_encoded(request["request_id"], frozen, payload)
             return frozen
 
         try:

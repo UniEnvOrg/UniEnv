@@ -50,6 +50,8 @@ class _Proxy:
     def __init__(self, client: RemoteClient, resource_id: str) -> None:
         self.client, self.resource_id = client, resource_id
         self._closed = False
+        # name -> (wire descriptor the current space was checked against, that space)
+        self._space_descriptors: Dict[str, Any] = {}
         descriptor = client.descriptors.get(resource_id) or client.describe(resource_id)
         self._refresh(descriptor)
         client._proxies[resource_id] = self
@@ -65,8 +67,15 @@ class _Proxy:
             if name in descriptor:
                 value = descriptor[name]
                 current = getattr(self, name, None)
+                # Every response repeats the descriptors: when the space attribute is still
+                # the one last checked and the wire value is unchanged, skip serializing it.
+                checked = self._space_descriptors.get(name)
+                if (current is not None and value is not None and checked is not None
+                        and checked[1] is current and _descriptors_equal(checked[0], value)):
+                    continue
                 if current is None or value is None or not _descriptors_equal(space_to_json(current), value):
                     setattr(self, name, None if value is None else json_to_space(value, self.client.backend, self.client.device))
+                self._space_descriptors[name] = (value, getattr(self, name, None))
         for name in PRIORITIES:
             if name in descriptor:
                 setattr(self, name, set(descriptor[name]))
