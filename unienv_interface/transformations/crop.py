@@ -68,7 +68,9 @@ class CropTransformation(DataTransformation):
     def transform(self, source_space, data):
         self.validate_source_space(source_space)
         crop_low, crop_high = self.get_crop_range(source_space)
-        return source_space.backend.clip(data, crop_low, crop_high)
+        clipped = source_space.backend.clip(data, crop_low, crop_high)
+        # numpy returns scalars for 0-d input and promotes integer data clipped by float bounds
+        return source_space.backend.asarray(clipped, dtype=source_space.dtype, device=source_space.backend.device(data))
 
     def direction_inverse(self, source_space=None):
         return IdentityTransformation()
