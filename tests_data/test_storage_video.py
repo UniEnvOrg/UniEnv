@@ -1,5 +1,8 @@
 """VideoStorage specifics: codec selection, decoding paths and segment handling."""
 
+import json
+import os
+
 import numpy as np
 import pytest
 
@@ -88,3 +91,247 @@ def test_get_with_duplicate_indices(tmp_path, index):
     storage.set(slice(None), frames)
     np.testing.assert_array_equal(storage.get(index), frames[index])
     storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Segments
+# ---------------------------------------------------------------------------
+
+def _storage(tmp_path, capacity=6, name="v", **overrides):
+    kwargs = dict(LOSSLESS_RGB_KWARGS)
+    kwargs.update(overrides)
+    return VideoStorage.create(_rgb_space(), capacity=capacity, cache_path=str(tmp_path / name), **kwargs)
+
+
+def test_open_segment_blocks_overlapping_reads_dumps_and_is_aborted_on_close(tmp_path):
+    frames = _frames(6)
+    storage = _storage(tmp_path)
+    storage.set(slice(None), frames)
+    storage.mark_segment_start(2)
+    storage.append(frames[0])
+    storage.append(frames[1])
+    assert storage.pending_segment_length == 2
+    with pytest.raises(AssertionError):
+        storage.mark_segment_start(0)
+    with pytest.raises(RuntimeError, match="segment is open"):
+        storage.get(3)
+    with pytest.raises(RuntimeError, match="segment is open"):
+        storage.get(np.array([True, False, True, False, False, False]))
+    np.testing.assert_array_equal(storage.get(slice(4, 6)), frames[4:6])
+    with pytest.raises(RuntimeError, match="segment is open"):
+        storage.dumps(storage.cache_filename)
+    temp_files = [f for f in os.listdir(storage.cache_filename) if f.startswith(".active-")]
+    assert len(temp_files) == 1
+    storage.close()
+    assert not storage.has_open_segment
+    assert not [f for f in os.listdir(storage.cache_filename) if f.startswith(".active-")]
+
+
+def test_full_segment_rejects_more_frames(tmp_path):
+    frames = _frames(3)
+    storage = _storage(tmp_path, capacity=2)
+    storage.mark_segment_start(0)
+    storage.append(frames[0])
+    storage.append(frames[1])
+    with pytest.raises(RuntimeError, match="full"):
+        storage.append(frames[2])
+    storage.mark_segment_end()
+    np.testing.assert_array_equal(storage.get(slice(None)), frames[:2])
+    assert storage.get_segments() == [(0, 1)]
+
+
+def test_empty_segment_leaves_no_files(tmp_path):
+    storage = _storage(tmp_path, capacity=None)
+    storage.mark_segment_start(0)
+    storage.mark_segment_end()
+    assert os.listdir(storage.cache_filename) == []
+    assert storage.get_segments() == []
+
+
+def test_read_only_storage_rejects_segments(tmp_path):
+    storage = _storage(tmp_path)
+    storage.set(slice(None), _frames(6))
+    storage.dumps(storage.cache_filename)
+    loaded = VideoStorage.load_from(storage.cache_filename, _rgb_space(), hardware_acceleration=None,
+                                    decode_backend="pyav", codec="ffv1")
+    with pytest.raises(AssertionError):
+        loaded.mark_segment_start(0)
+    with pytest.raises(RuntimeError):
+        loaded.append(_frames(1)[0])
+
+
+def test_invalid_codec_cleans_up_segment_temp_file(tmp_path):
+    storage = _storage(tmp_path, codec="definitely-not-a-codec")
+    with pytest.raises(Exception):
+        storage.mark_segment_start(0)
+    assert not storage.has_open_segment
+    assert os.listdir(storage.cache_filename) == []
+
+
+# ---------------------------------------------------------------------------
+# Loading and metadata
+# ---------------------------------------------------------------------------
+
+def _dumped(tmp_path, capacity=6):
+    frames = _frames(6)
+    storage = _storage(tmp_path, capacity=capacity)
+    if capacity is None:
+        storage.extend_length(6)
+    storage.set(slice(None), frames)
+    storage.dumps(storage.cache_filename)
+    path = storage.cache_filename
+    storage.close()
+    return path, frames
+
+
+def test_load_from_legacy_metadata_name(tmp_path):
+    path, frames = _dumped(tmp_path)
+    os.rename(os.path.join(path, "video_metadata.json"), os.path.join(path, "image_metadata.json"))
+    loaded = VideoStorage.load_from(path, _rgb_space(), hardware_acceleration=None, decode_backend="pyav")
+    assert loaded.codec == "ffv1"
+    np.testing.assert_array_equal(loaded.get(slice(None)), frames)
+
+
+def test_load_from_missing_metadata_raises(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError):
+        VideoStorage.load_from(str(tmp_path / "empty"), _rgb_space())
+
+
+def test_load_with_auto_codec_and_hardware_uses_codec_base(tmp_path, monkeypatch):
+    path, frames = _dumped(tmp_path)
+    monkeypatch.setattr(VideoStorage, "_encoder_available", staticmethod(lambda name: name in {"ffv1", "h264"}))
+    loaded = VideoStorage.load_from(path, _rgb_space(), hardware_acceleration="auto", decode_backend="pyav")
+    assert loaded.codec == "ffv1"
+
+
+def test_load_without_codec_base_requires_hardware_or_codec(tmp_path):
+    path, _ = _dumped(tmp_path)
+    meta_path = os.path.join(path, "video_metadata.json")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    meta.pop("codec_base")
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    with pytest.raises(AssertionError, match="Codec base"):
+        VideoStorage.load_from(path, _rgb_space(), hardware_acceleration=None, decode_backend="pyav")
+
+
+def test_mutable_multiprocessing_is_rejected(tmp_path):
+    with pytest.raises(AssertionError):
+        _storage(tmp_path, multiprocessing=True)
+    path, _ = _dumped(tmp_path, capacity=6)
+    with pytest.raises(AssertionError):
+        VideoStorage.load_from(path, _rgb_space(), read_only=False, multiprocessing=True,
+                               hardware_acceleration=None, decode_backend="pyav", codec="ffv1")
+
+
+def test_create_requires_new_cache_path(tmp_path):
+    with pytest.raises(ValueError):
+        VideoStorage.create(_rgb_space(), capacity=2, cache_path=None, **LOSSLESS_RGB_KWARGS)
+    (tmp_path / "exists").mkdir()
+    with pytest.raises(AssertionError):
+        VideoStorage.create(_rgb_space(), capacity=2, cache_path=str(tmp_path / "exists"), **LOSSLESS_RGB_KWARGS)
+
+
+def test_auto_decode_backend_falls_back_to_pyav(tmp_path, monkeypatch):
+    import importlib.util
+    real_find_spec = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name, *a, **k: None if name == "torchcodec" else real_find_spec(name, *a, **k))
+    storage = _storage(tmp_path, decode_backend="auto")
+    assert storage.decode_backend == "pyav"
+
+
+def test_unknown_decode_backend_raises_on_read(tmp_path):
+    storage = _storage(tmp_path, decode_backend="nope")
+    storage.set(slice(None), _frames(6))
+    with pytest.raises(ValueError, match="decode_backend"):
+        storage.get(0)
+
+
+# ---------------------------------------------------------------------------
+# Decoding paths
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("seek_mode", ["exact"])
+@pytest.mark.parametrize("cache_decoders", [False, True])
+def test_seek_modes_and_decoder_cache(tmp_path, seek_mode, cache_decoders):
+    frames = _frames(12, seed=3)
+    storage = _storage(tmp_path, capacity=12, seek_mode=seek_mode, cache_decoders=cache_decoders)
+    storage.set(slice(None), frames)
+    for index in (0, 7, 11, 3):
+        np.testing.assert_array_equal(storage.get(index), frames[index])
+    np.testing.assert_array_equal(storage.get(np.array([10, 1])), frames[[10, 1]])
+    np.testing.assert_array_equal(storage.get(slice(None, None, 3)), frames[::3])
+    storage.close()
+
+
+def test_depth_video_round_trip(tmp_path):
+    space = BoxSpace(B, 0, 65535, np.uint16, shape=(4, 6))
+    depth = np.random.default_rng(1).integers(0, 65536, size=(5, 4, 6), dtype=np.uint16)
+    storage = VideoStorage.create(space, capacity=None, cache_path=str(tmp_path / "d"), **LOSSLESS_DEPTH_KWARGS)
+    storage.extend_length(5)
+    storage.set(slice(None), depth)
+    np.testing.assert_array_equal(storage.get(slice(None)), depth)
+    np.testing.assert_array_equal(storage.get(2), depth[2])
+    storage.close()
+
+
+def test_torch_backend_frames(tmp_path):
+    import torch
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+
+    space = BoxSpace(PyTorchComputeBackend, 0, 255, torch.uint8, shape=(8, 8, 3), device="cpu")
+    frames = torch.from_numpy(_frames(4))
+    storage = VideoStorage.create(space, capacity=4, cache_path=str(tmp_path / "t"), **LOSSLESS_RGB_KWARGS)
+    storage.set(slice(None), frames)
+    assert torch.equal(storage.get(slice(None)), frames)
+    assert torch.equal(storage.get(torch.tensor([3, 0])), frames[[3, 0]])
+    assert torch.equal(storage.get(1), frames[1])
+    storage.mark_segment_start(1)
+    storage.append(frames[0])
+    storage.mark_segment_end()
+    assert torch.equal(storage.get(1), frames[0])
+    storage.close()
+
+
+def test_hwaccel_selection(monkeypatch):
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    for devices, expected in [(["d3d11va", "cuda"], "d3d11va"), (["cuda"], "cuda"), (["vaapi"], "vaapi"),
+                              (["videotoolbox"], "videotoolbox"), (["vulkan"], "vulkan")]:
+        monkeypatch.setattr(PyAvVideoReader, "available_hwdevices", staticmethod(lambda d=devices: d))
+        accel = PyAvVideoReader.get_auto_hwaccel()
+        assert accel is not None
+    monkeypatch.setattr(PyAvVideoReader, "available_hwdevices", staticmethod(lambda: []))
+    assert PyAvVideoReader.get_auto_hwaccel() is None
+    assert isinstance(PyAvVideoReader.available_hwdevices(), list)
+
+
+def test_reader_frame_index_conversions(tmp_path):
+    from unienv_data.storages.video_storage import PyAvVideoReader
+
+    frames = _frames(6)
+    storage = _storage(tmp_path)
+    storage.set(slice(None), frames)
+    filename = storage._make_filename(0, 5)
+    reader = PyAvVideoReader(B, filename, buffer_pixel_format="rgb24")
+    with reader:
+        for i in range(6):
+            assert reader.pts_to_frame_index(reader.frame_index_to_pts(i)) == i
+        with pytest.raises(IndexError):
+            reader.frame_index_to_pts(-1)
+        with pytest.raises(IndexError):
+            reader.seek(-1)
+        reader.seek(4)
+        assert reader.tell() == 4
+        np.testing.assert_array_equal(next(reader), frames[4])
+        np.testing.assert_array_equal(np.stack(list(reader)), frames[5:])
+    reader.close()
+    reader.close()
+    assert PyAvVideoReader._to_fraction(None) is None
+    assert PyAvVideoReader._to_fraction("not-a-number") is None
+    from fractions import Fraction
+    assert PyAvVideoReader._to_fraction(Fraction(1, 3)) == Fraction(1, 3)
+    assert PyAvVideoReader._to_fraction(0.5) == Fraction(1, 2)
