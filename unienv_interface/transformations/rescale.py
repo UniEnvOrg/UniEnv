@@ -68,25 +68,63 @@ class RescaleTransformation(DataTransformation):
         )
         return target_space
 
-    def transform(self, source_space, data):
-        assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box spaces"
+    def _transform_constants(self, source_space : BoxSpace, data : BArrayType) -> tuple:
+        """Constants of the affine map for ``source_space``, cached on the instance.
+
+        ``transform`` is called every step with the same source space, so the span,
+        zero-span mask, scaling factor and the device transfer of array targets are
+        computed once per (source space identity, data device) instead of per call.
+        ``BoxSpace`` bounds are immutable; reassigning ``new_low``/``new_high``
+        rebuilds the constants (see ``DataTransformation.__setattr__``), but array
+        targets must not be mutated in place.
+
+        Nothing is cached on jax: inside ``jax.jit`` these values are tracers that
+        must not outlive the trace, and the zero-span mask cannot be concretized.
+        """
+        backend = source_space.backend
+        array_targets = backend.is_backendarray(self.new_low) or backend.is_backendarray(self.new_high)
+        device = backend.device(data) if array_targets else None
+        cache = self.__dict__.get("_constants_cache")
+        if (
+            cache is not None
+            and cache[0] is source_space
+            and cache[1] == device
+            and cache[2] == DataTransformation._config_epoch
+        ):
+            return cache[3]
+
         target_ndim = len(source_space.shape)
-        target_low = source_space.backend.to_device(_get_broadcastable_value(
-            source_space.backend,
+        target_low = backend.to_device(_get_broadcastable_value(
+            backend,
             self.new_low,
             target_ndim
-        ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_low) else self.new_low
-        target_high = source_space.backend.to_device(_get_broadcastable_value(
-            source_space.backend,
+        ), device) if backend.is_backendarray(self.new_low) else self.new_low
+        target_high = backend.to_device(_get_broadcastable_value(
+            backend,
             self.new_high,
             target_ndim
-        ), source_space.backend.device(data)) if source_space.backend.is_backendarray(self.new_high) else self.new_high
-        
+        ), device) if backend.is_backendarray(self.new_high) else self.new_high
+
         source_span = source_space._high - source_space._low
         source_span_zero_mask = source_span == 0
-        scaling_factor = (target_high - target_low) / source_space.backend.where(source_span_zero_mask, 1, source_span)
-        target_data = (data - source_space._low) * scaling_factor + target_low
-        target_data = source_space.backend.where(source_span_zero_mask, target_low, target_data)
+        scaling_factor = (target_high - target_low) / backend.where(source_span_zero_mask, 1, source_span)
+        if backend.simplified_name == "jax":
+            # Keep the unconditional ``where`` (see the docstring)
+            return (source_space._low, scaling_factor, target_low, source_span_zero_mask, True)
+        any_zero_span = bool(backend.any(source_span_zero_mask))
+        constants = (source_space._low, scaling_factor, target_low, source_span_zero_mask, any_zero_span)
+        self._constants_cache = (source_space, device, DataTransformation._config_epoch, constants)
+        return constants
+
+    def transform(self, source_space, data):
+        assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box spaces"
+        backend = source_space.backend
+        source_low, scaling_factor, target_low, source_span_zero_mask, any_zero_span = self._transform_constants(source_space, data)
+        target_data = (data - source_low) * scaling_factor + target_low
+        # Without zero-span coordinates the ``where`` is the identity, except that it
+        # turns the NumPy scalars produced by 0-d arithmetic back into arrays.
+        if any_zero_span or not backend.is_backendarray(target_data):
+            target_data = backend.where(source_span_zero_mask, target_low, target_data)
         
         if self.nan_to is not None:
             target_data = source_space.backend.where(
@@ -121,6 +159,11 @@ class RescaleTransformation(DataTransformation):
             new_dtype=source_space.dtype
         )
     
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("_constants_cache", None)
+        return state
+
     def __setstate__(self, state):
         self.__dict__.update(state)
         if not hasattr(self, "nan_to"):
