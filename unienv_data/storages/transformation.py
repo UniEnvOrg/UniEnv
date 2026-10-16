@@ -195,7 +195,7 @@ class TransformedStorage(SpaceStorage[
         if isinstance(index, int):
             return sfu.flatten_data(self.single_instance_space, dat)
         else:
-            return sfu.flatten_data(self.single_instance_space, dat, start_dim=1)
+            return sfu.flatten_data(self._batched_instance_space, dat, start_dim=1)
 
     def get(self, index):
         result = self.inner_storage.get(index)
@@ -209,7 +209,7 @@ class TransformedStorage(SpaceStorage[
         if isinstance(index, int):
             set_value = sfu.unflatten_data(self.single_instance_space, value)
         else:
-            set_value = sfu.unflatten_data(self._batched_instance_space, value)
+            set_value = sfu.unflatten_data(self._batched_instance_space, value, start_dim=1)
         self.set(index, set_value)
 
     def set(self, index, value):
