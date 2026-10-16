@@ -9,6 +9,9 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 
 DataT = TypeVar('DataT')
 
+# Backends whose arrays are immutable, so ``sbu.set_at`` already returns new buffers.
+_IMMUTABLE_BACKENDS = ("jax",)
+
 @dataclasses.dataclass(frozen=True)
 class SpaceDataQueueState(Generic[DataT]):
     data: DataT # (L, B, ...) or (L, ...)
@@ -78,10 +81,22 @@ class FuncSpaceDataQueue(
             initial_data,
             None
         )
+        # ``sbu.set_at`` writes in place for numpy / torch, and ``state.data`` is
+        # shared with observations already handed out by ``get_output_data`` (and
+        # with the caller's state in the functional API). Write into a fresh buffer.
+        if mask is None:
+            data = self.stacked_space.create_empty()
+        elif self.backend.simplified_name in _IMMUTABLE_BACKENDS:
+            data = state.data
+        else:
+            data = self.backend.map_fn_over_arrays(
+                state.data,
+                lambda x: self.backend.asarray(x, copy=True),
+            )
         return state.replace(
             data=sbu.set_at(
                 self.stacked_space,
-                state.data,
+                data,
                 index,
                 expanded_data
             )

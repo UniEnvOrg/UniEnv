@@ -8,6 +8,7 @@ from unienv_interface.space import BoxSpace
 from unienv_interface.utils.framestack_queue import FuncSpaceDataQueue, SpaceDataQueue
 from unienv_interface.wrapper import FrameStackWrapper
 from tests_common.envs import StubEnv
+from tests_common.backends import backend_params
 
 ZERO_ACTION = np.zeros(2, np.float32)
 
@@ -101,3 +102,66 @@ def test_space_data_queue_rejects_mask_when_unbatched():
         func_queue.reset(state, np.zeros(2, np.float32), mask=np.array([True]))
     with pytest.raises(AssertionError):
         SpaceDataQueue(space, None, 2).reset(np.zeros(2, np.float32), mask=np.array([True]))
+
+
+@pytest.mark.parametrize("mask", [np.array([True, False, True]), None], ids=["masked", "full"])
+def test_reset_does_not_mutate_previously_returned_obs(mask):
+    # A consumer (e.g. a replay buffer storing next_obs) may keep the stacked
+    # observation returned by step(); a later reset must not write into it.
+    env = StubEnv(batch_size=3)
+    wrapper = FrameStackWrapper(env, obs_stack_size=1, action_stack_size=2, action_default_value=ZERO_ACTION)
+    wrapper.reset(seed=0)
+    action = np.arange(6, dtype=np.float32).reshape(3, 2) / 10
+    obs, *_ = wrapper.step(action)
+    snapshot = {k: v.copy() for k, v in obs.items()}
+    wrapper.reset(mask=mask, seed=5)
+    for key, value in snapshot.items():
+        np.testing.assert_array_equal(obs[key], value, err_msg=key)
+
+
+def test_unbatched_reset_does_not_mutate_previously_returned_obs():
+    env = StubEnv()
+    wrapper = FrameStackWrapper(env, obs_stack_size=2, action_stack_size=1, action_default_value=ZERO_ACTION)
+    wrapper.reset(seed=0)
+    obs, *_ = wrapper.step(np.full(2, 0.5, np.float32))
+    snapshot = {k: v.copy() for k, v in obs.items()}
+    wrapper.reset(seed=1)
+    for key, value in snapshot.items():
+        np.testing.assert_array_equal(obs[key], value, err_msg=key)
+
+
+@pytest.mark.parametrize("mask", [np.array([False, True, False]), None], ids=["masked", "full"])
+def test_space_data_queue_reset_returns_fresh_buffers(mask):
+    space = BoxSpace(B, -10, 10, np.float32, shape=(3, 2))
+    queue = SpaceDataQueue(space, 3, maxlen=2)
+    queue.reset(np.zeros((3, 2), np.float32))
+    queue.add(np.ones((3, 2), np.float32))
+    held = queue.get_output_data()
+    held_copy = held.copy()
+    reset_value = np.full((1 if mask is not None else 3, 2), 5.0, np.float32)
+    queue.reset(reset_value, mask=mask)
+    np.testing.assert_array_equal(held, held_copy)
+    out = queue.get_output_data()
+    rows = np.flatnonzero(mask) if mask is not None else np.arange(3)
+    np.testing.assert_array_equal(out[rows], 5.0)
+
+
+@pytest.mark.parametrize("backend,device", backend_params())
+@pytest.mark.parametrize("masked", [True, False], ids=["masked", "full"])
+def test_func_queue_reset_leaves_input_state_untouched(backend, device, masked):
+    space = BoxSpace(backend, -10, 10, backend.default_floating_dtype, device=device, shape=(3, 2))
+    queue = FuncSpaceDataQueue(space, 3, maxlen=2)
+    ones = backend.ones((3, 2), dtype=backend.default_floating_dtype, device=device)
+    state = queue.add(queue.init(ones * 0), ones)
+    held = queue.get_output_data(state)
+    held_np = backend.to_numpy(held).copy()
+    data_np = backend.to_numpy(state.data).copy()
+    mask = backend.asarray(np.array([False, True, False]), device=device) if masked else None
+    new_state = queue.reset(state, (ones * 5)[1:2] if masked else ones * 5, mask=mask)
+    np.testing.assert_array_equal(backend.to_numpy(held), held_np)
+    np.testing.assert_array_equal(backend.to_numpy(state.data), data_np)
+    out = backend.to_numpy(queue.get_output_data(new_state))
+    rows = [1] if masked else [0, 1, 2]
+    np.testing.assert_array_equal(out[rows], 5.0)
+    if masked:
+        np.testing.assert_array_equal(out[[0, 2]], held_np[[0, 2]])

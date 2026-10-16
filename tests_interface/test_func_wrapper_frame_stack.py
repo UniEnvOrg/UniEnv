@@ -111,3 +111,27 @@ def test_close_before_initial_is_forwarded_without_state():
     env = FuncEnvBasedEnv(FuncFrameStackWrapper(func_env, obs_stack_size=1))
     env.close()  # never reset
     assert func_env.seen_states == [("close", None)]
+
+
+@pytest.mark.parametrize("mask", [np.array([False, True, True]), None], ids=["masked", "full"])
+def test_reset_keeps_previous_obs_and_state_intact(mask):
+    # FuncFrameStackWrapper must be pure: resetting a state may not write into
+    # the observation returned earlier nor into the state that was passed in.
+    func_env = StubFuncEnv(batch_size=3)
+    wrapper = FuncFrameStackWrapper(func_env, obs_stack_size=1, action_stack_size=1, action_default_value=ZERO_ACTION)
+    state, *_ = wrapper.initial(seed=0)
+    action = np.full((3, 2), 0.25, np.float32)
+    state, obs, *_ = wrapper.step(state, action)
+    obs_snapshot = {k: v.copy() for k, v in obs.items()}
+    queue_snapshot = state.obs_queue_state.data["position"].copy()
+    action_snapshot = state.action_queue_state.data.copy()
+
+    wrapper.reset(state, seed=3, mask=mask)
+
+    for key, value in obs_snapshot.items():
+        np.testing.assert_array_equal(obs[key], value, err_msg=key)
+    np.testing.assert_array_equal(state.obs_queue_state.data["position"], queue_snapshot)
+    np.testing.assert_array_equal(state.action_queue_state.data, action_snapshot)
+    # stepping the untouched old state again reproduces the original observation
+    _, obs_again, *_ = wrapper.step(state, action)
+    np.testing.assert_array_equal(obs_again["past_actions"][:, :-1], obs_snapshot["past_actions"][:, 1:])
