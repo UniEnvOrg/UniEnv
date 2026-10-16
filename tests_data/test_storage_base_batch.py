@@ -106,3 +106,119 @@ def test_with_metadata_defaults_do_not_recurse(flat_batch):
     assert metadata is None
     np.testing.assert_array_equal(structured.get_flattened_at(slice(None)),
                                   np.array([[1.0, -1.0, 10.0], [2.0, -2.0, 20.0]], np.float32))
+
+
+def test_unimplemented_mutators_raise(flat_batch):
+    structured = StructuredListBatch(_space(), [_row(1.0)])
+    with pytest.raises(NotImplementedError):
+        structured.set_at(0, _row(2.0))
+    with pytest.raises(NotImplementedError):
+        del flat_batch[0]
+
+
+def test_extend_from_copies_in_chunks(flat_batch):
+    target = FlatArrayBatch(_space())
+    target.extend_from(flat_batch, chunk_size=3)
+    np.testing.assert_array_equal(target.data, flat_batch.data)
+    target.extend_from(flat_batch, chunk_size=10, tqdm=True)
+    assert len(target) == 8
+
+
+def test_get_slice_and_get_column_views(flat_batch):
+    sliced = flat_batch.get_slice(slice(1, 3))
+    assert len(sliced) == 2
+    assert_tree_equal(sliced.get_at(slice(None)), _rows([1.0, 2.0]))
+    column = flat_batch.get_column(["y"])
+    np.testing.assert_array_equal(column.get_at(slice(None)), np.array([0.0, 10.0, 20.0, 30.0], np.float32))
+
+
+@pytest.mark.xfail(strict=True, reason="cross-scope: unienv_data/batches/subindex_batch.py:71 SubIndexedBatch.get_at "
+                                       "forwards sub_indexes[idx] (a numpy/torch scalar, not an int) so the parent "
+                                       "treats a single index as batched")
+def test_get_slice_single_index_is_unbatched(flat_batch):
+    sliced = flat_batch.get_slice(slice(1, 3))
+    assert_tree_equal(sliced.get_at(0), _row(1.0))
+
+
+def test_batched_space_properties(flat_batch):
+    assert flat_batch.backend is B and flat_batch.device is None
+    assert flat_batch._batched_metadata_space is None
+    meta_space = DictSpace(B, {"w": BoxSpace(B, 0.0, 1.0, np.float32, shape=())})
+    with_meta = FlatArrayBatch(_space())
+    with_meta.single_metadata_space = meta_space
+    assert with_meta._batched_metadata_space is not None
+
+
+@pytest.mark.parametrize("index,expected", [
+    (2, [2]), (slice(1, 5, 2), [1, 3]), (Ellipsis, [0, 1, 2, 3, 4]),
+])
+def test_convert_index_to_backendarray(index, expected):
+    result = convert_index_to_backendarray(B, index, 5)
+    np.testing.assert_array_equal(result, np.array(expected))
+    assert B.dtype_is_real_integer(result.dtype)
+
+
+def test_convert_index_to_backendarray_rejects_arrays():
+    with pytest.raises(ValueError):
+        convert_index_to_backendarray(B, np.array([1]), 5)
+
+
+class SimpleSampler(BatchSampler):
+    def __init__(self, data, batch_size, seed=0, data_rng=False):
+        super().__init__(data.single_space, None, batch_size=batch_size)
+        self.data = data
+        self.rng = B.random.random_number_generator(seed)
+        if data_rng:
+            self.data_rng = B.random.random_number_generator(seed + 1)
+
+    def get_flattened_at(self, idx):
+        return self.data.get_flattened_at(idx)
+
+
+@pytest.fixture
+def big_batch():
+    batch = FlatArrayBatch(_space())
+    batch.extend(_rows([float(i) for i in range(7)]))
+    return batch
+
+
+@pytest.mark.parametrize("data_rng", [False, True], ids=["shared-rng", "data-rng"])
+def test_sampler_sampling_and_epochs(big_batch, data_rng):
+    sampler = SimpleSampler(big_batch, batch_size=3, data_rng=data_rng)
+    assert len(sampler) == 7
+    assert sampler.sampled_space == sampler._batched_space
+    assert sampler.sampled_metadata_space is None
+
+    idx = sampler.sample_index()
+    assert idx.shape == (3,) and np.all((idx >= 0) & (idx < 7))
+    sample = sampler.sample()
+    assert sample["x"].shape == (3, 2)
+    flat = sampler.sample_flat()
+    assert flat.shape == (3, 3)
+    value, metadata = sampler.sample_with_metadata()
+    assert value["y"].shape == (3,) and metadata is None
+    flat, metadata = sampler.sample_flat_with_metadata()
+    assert flat.shape == (3, 3) and metadata is None
+
+    seen = np.concatenate([batch["y"] for batch in sampler])
+    assert sorted(seen.tolist()) == [float(i) * 10 for i in range(7)]
+    sizes = [b["y"].shape[0] for b in sampler.epoch_iter()]
+    assert sizes == [3, 3, 1]
+    flat_rows = np.concatenate(list(sampler.epoch_flat_iter()))
+    assert sorted(flat_rows[:, 2].tolist()) == [float(i) * 10 for i in range(7)]
+    with_meta = list(sampler.epoch_iter_with_metadata())
+    assert [m for _, m in with_meta] == [None, None, None]
+    flat_meta = list(sampler.epoch_flat_iter_with_metadata())
+    assert sum(f.shape[0] for f, _ in flat_meta) == 7
+
+
+def test_sampler_manual_seed_is_reproducible(big_batch):
+    for data_rng in (False, True):
+        sampler = SimpleSampler(big_batch, batch_size=4, data_rng=data_rng)
+        sampler.manual_seed(123)
+        first = [sampler.sample_index() for _ in range(3)]
+        sampler.manual_seed(123)
+        second = [sampler.sample_index() for _ in range(3)]
+        for a, b in zip(first, second):
+            np.testing.assert_array_equal(a, b)
+    sampler.close()
