@@ -120,8 +120,11 @@ class ImageStorage(ListStorageBase[
             return self.backend.from_numpy(np_image, dtype=self.single_instance_space.dtype, device=self.single_instance_space.device)
     
     def set_to_file(self, filename : str, value : BArrayType):
-        np_value = self.backend.to_numpy(value)
-        img = Image.fromarray(np_value, mode="RGB")
+        np_value = np.ascontiguousarray(self.backend.to_numpy(value), dtype=np.uint8)
+        assert np_value.ndim == 3 and np_value.shape[-1] == 3, \
+            f"ImageStorage expects (H, W, 3) RGB images, got shape {np_value.shape}"
+        # Pillow infers RGB from a uint8 (H, W, 3) array; its `mode` argument is deprecated.
+        img = Image.fromarray(np_value)
         try:
             img.save(filename, format=self.format, quality=self.quality)
         finally:
