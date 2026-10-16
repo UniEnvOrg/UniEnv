@@ -193,7 +193,7 @@ class DictStorage(SpaceStorage[
                 **sub_kwargs
             )
 
-        return DictStorage(
+        return cls(
             single_instance_space,
             storage_map,
             cache_filename=cache_path,
@@ -217,8 +217,8 @@ class DictStorage(SpaceStorage[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         nested_separator = metadata.get("nested_separator", '/')
         storage_map_metadata = metadata["storage_map"]
@@ -247,7 +247,7 @@ class DictStorage(SpaceStorage[
                 **sub_kwargs
             )
 
-        return DictStorage(
+        return cls(
             single_instance_space,
             storage_map,
             cache_filename=path,

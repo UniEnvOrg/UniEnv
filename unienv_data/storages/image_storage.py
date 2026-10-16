@@ -40,7 +40,7 @@ class ImageStorage(ListStorageBase[
             raise ValueError("cache_path must be provided for ImageStorage.create")
         assert not os.path.exists(cache_path), f"Cache path {cache_path} already exists"
         os.makedirs(cache_path, exist_ok=True)
-        return ImageStorage(
+        return cls(
             single_instance_space,
             format=format,
             quality=quality,
@@ -63,8 +63,8 @@ class ImageStorage(ListStorageBase[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         format = metadata["format"]
         quality = int(metadata["quality"])
@@ -72,7 +72,7 @@ class ImageStorage(ListStorageBase[
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
         length = metadata["length"]
 
-        return ImageStorage(
+        return cls(
             single_instance_space,
             format=format,
             quality=quality,

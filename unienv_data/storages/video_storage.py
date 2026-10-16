@@ -435,7 +435,7 @@ class VideoStorage(EpisodeStorageBase[
             raise ValueError("cache_path must be provided for ImageStorage.create")
         assert not os.path.exists(cache_path), f"Cache path {cache_path} already exists"
         os.makedirs(cache_path, exist_ok=True)
-        return VideoStorage(
+        return cls(
             single_instance_space,
             cache_filename=cache_path,
             seek_mode=seek_mode,
@@ -482,8 +482,8 @@ class VideoStorage(EpisodeStorageBase[
 
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         if codec == "auto":
             codec_base = metadata.get("codec_base", None)
@@ -501,7 +501,7 @@ class VideoStorage(EpisodeStorageBase[
             capacity = None if metadata['capacity'] is None else int(metadata["capacity"])
         length = metadata["length"]
 
-        return VideoStorage(
+        return cls(
             single_instance_space,
             cache_filename=path,
             seek_mode=seek_mode,

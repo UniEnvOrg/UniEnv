@@ -399,3 +399,26 @@ def test_close_is_idempotent(case, capacity, tmp_path):
     storage, _ = _filled(case, tmp_path, capacity)
     storage.close()
     storage.close()
+
+
+@pytest.mark.parametrize("case", storage_case_params(capacities=False))
+def test_create_and_load_from_honour_subclasses(case, tmp_path, monkeypatch):
+    base_cls = case.storage_cls()
+    subclass = type(f"Custom{base_cls.__name__}", (base_cls,), {})
+    monkeypatch.setattr(case, "storage_cls", lambda: subclass)
+    capacity = case.capacities[-1]
+    storage = case.create(tmp_path, capacity)
+    assert type(storage) is subclass
+    if capacity is None:
+        storage.extend_length(N)
+    data = random_batch(storage.single_instance_space, len(storage), seed=1)
+    storage.set(slice(None), data)
+    path = _dump_path(case, storage, tmp_path)
+    storage.dumps(path)
+    storage.close()
+    loaded = case.load(path, capacity)
+    try:
+        assert type(loaded) is subclass
+        _assert_rows(case, loaded.get(slice(None)), data)
+    finally:
+        loaded.close()

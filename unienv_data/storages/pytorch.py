@@ -58,7 +58,7 @@ class PytorchTensorStorage(SpaceStorage[
             if multiprocessing:
                 data = data.share_memory_()
 
-        return PytorchTensorStorage(single_instance_space, data, mutable=True)
+        return cls(single_instance_space, data, mutable=True)
 
     @classmethod
     def load_from(
@@ -104,7 +104,7 @@ class PytorchTensorStorage(SpaceStorage[
                 data = data.share_memory_()
             data = data.copy_(target_data)
 
-        return PytorchTensorStorage(
+        return cls(
             single_instance_space,
             data,
             mutable=not read_only

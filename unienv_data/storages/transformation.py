@@ -52,7 +52,7 @@ class TransformedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **_inner_storage_kwargs
         )
-        return TransformedStorage(
+        return cls(
             single_instance_space,
             data_transformation,
             inner_storage,
@@ -75,8 +75,8 @@ class TransformedStorage(SpaceStorage[
         assert os.path.exists(metadata_path), f"Metadata file {metadata_path} does not exist"
         with open(metadata_path, "r") as f:
             metadata = json.load(f)
-        assert metadata["storage_type"] == cls.__name__, \
-            f"Expected storage type {cls.__name__}, but found {metadata['storage_type']}"
+        assert metadata["storage_type"] == __class__.__name__, \
+            f"Expected storage type {__class__.__name__}, but found {metadata['storage_type']}"
         
         # Try to load transformation from JSON (new format), fall back to pickle (legacy format)
         if "data_transformation" in metadata:
@@ -106,7 +106,7 @@ class TransformedStorage(SpaceStorage[
             multiprocessing=multiprocessing,
             **kwargs
         )
-        return TransformedStorage(
+        return cls(
             single_instance_space,
             data_transform,
             inner_storage,
