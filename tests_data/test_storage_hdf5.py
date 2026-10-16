@@ -297,3 +297,146 @@ def test_load_replay_buffer_from_raw_hdf5_default_key(tmp_path):
     assert isinstance(rb.single_space, BoxSpace)
     np.testing.assert_array_equal(rb.get_at(slice(None)), np.arange(8, dtype=np.int32).reshape(4, 2))
     rb.storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Indexing helpers
+# ---------------------------------------------------------------------------
+
+from unienv_data.storages.hdf5 import (  # noqa: E402
+    fancy_indexing_to_supported_indexing,
+    fancy_indexing_to_supported_set_indexing,
+    io_reduced_indexing,
+    is_fancy_index,
+)
+
+
+def test_is_fancy_index():
+    assert is_fancy_index(np.array([1, 2]))
+    assert is_fancy_index(np.array([3], dtype=np.uint8)) is False
+    assert not is_fancy_index(np.array([True, False]))
+    assert not is_fancy_index(slice(0, 2))
+    assert not is_fancy_index(3)
+
+
+def test_fancy_indexing_helpers_reconstruct_original_order():
+    index = np.array([5, 1, 5, 3, 1])
+    unique, reverse = fancy_indexing_to_supported_indexing(index)
+    np.testing.assert_array_equal(unique, [1, 3, 5])
+    np.testing.assert_array_equal(unique[reverse], index)
+    unique, first = fancy_indexing_to_supported_set_indexing(index)
+    np.testing.assert_array_equal(unique, [1, 3, 5])
+    np.testing.assert_array_equal(index[first], unique)
+
+
+@pytest.mark.parametrize("index,expected", [
+    (np.array([], dtype=np.int64), []),
+    (np.array([4]), [4]),
+    (np.array([0, 1, 2, 3]), [slice(0, 4, 1)]),
+    (np.array([0, 2, 4, 30, 31]), [slice(0, 6, 2), slice(30, 32, 1)]),
+    (np.array([0, 20, 40]), [np.array([0, 20, 40])]),
+    (np.array([0, 1, 50]), [slice(0, 2, 1), 50]),
+])
+def test_io_reduced_indexing(index, expected):
+    result = io_reduced_indexing(index)
+    assert len(result) == len(expected)
+    for got, want in zip(result, expected):
+        if isinstance(want, np.ndarray):
+            np.testing.assert_array_equal(got, want)
+        else:
+            assert got == want
+    covered = np.concatenate([np.arange(1000)[r] if not isinstance(r, int) else np.array([r]) for r in result]) \
+        if result else np.array([], dtype=np.int64)
+    np.testing.assert_array_equal(covered, index)
+
+
+def test_io_reduced_indexing_rejects_bad_input():
+    with pytest.raises(ValueError):
+        io_reduced_indexing(np.array([[1, 2]]))
+    with pytest.raises(ValueError):
+        io_reduced_indexing(np.array([3, 1]))
+
+
+@pytest.mark.parametrize("reduce_io", [True, False])
+def test_fancy_reads_with_and_without_io_reduction(tmp_path, reduce_io):
+    storage = HDF5Storage.create(_nested_space(), capacity=40, cache_path=str(tmp_path / "f.hdf5"),
+                                 reduce_io=reduce_io)
+    storage.set(slice(None), _nested_batch(40))
+    index = np.array([39, 0, 1, 2, 20, 22, 24, 0])
+    assert_tree_equal(storage.get(index), _rows(_nested_batch(40), index))
+    storage.set(np.array([5, 3, 5]), _nested_batch(3, start=100.0))
+    # duplicated targets: the first occurrence wins
+    assert storage.get(5)["reward"] == 1000.0
+    assert storage.get(3)["reward"] == 1010.0
+    storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Loading, validation and multiprocessing
+# ---------------------------------------------------------------------------
+
+def test_load_validates_file_layout(tmp_path, nested_storage):
+    path = nested_storage.cache_filename
+    nested_storage.dumps(path)
+    with pytest.raises(AssertionError):
+        HDF5Storage.load_from(path, _nested_space(), capacity=5)
+    with pytest.raises(AssertionError):
+        HDF5Storage.load_from(path, DictSpace(B, {"missing": _box()}), capacity=4)
+    with pytest.raises(AssertionError):
+        HDF5Storage.load_from(path, DictSpace(B, {"reward": _box((3,))}), capacity=4)
+    with pytest.raises(AssertionError):
+        HDF5Storage.load_from(str(tmp_path / "missing.hdf5"), _nested_space(), capacity=4)
+    with pytest.raises(AssertionError):
+        HDF5Storage.load_from(path, _nested_space(), capacity=4, read_only=False, multiprocessing=True)
+
+
+def test_multiprocessing_load_opens_lazily_and_rejects_writes(tmp_path, nested_storage):
+    import pickle
+
+    path = nested_storage.cache_filename
+    nested_storage.dumps(path)
+    nested_storage.close()  # HDF5 refuses mixed locking flags for one file within a process
+    loaded = HDF5Storage.load_from(path, _nested_space(), capacity=4, multiprocessing=True)
+    assert loaded.root is None and loaded.is_multiprocessing_safe
+    assert loaded.cache_filename == path
+    assert_tree_equal(loaded.get(slice(None)), _nested_batch(4))
+    with pytest.raises(RuntimeError):
+        loaded.set(0, _rows(_nested_batch(1), 0))
+    view = loaded.get_column(["obs", "pos"])
+    np.testing.assert_array_equal(view.get(slice(None)), _nested_batch(4)["obs"]["pos"])
+    clone = pickle.loads(pickle.dumps(view))
+    np.testing.assert_array_equal(clone.get(1), _nested_batch(4)["obs"]["pos"][1])
+    for item in (clone, view, loaded):
+        item.close()
+
+
+def test_create_rejects_multiprocessing_and_missing_path(tmp_path):
+    with pytest.raises(AssertionError):
+        HDF5Storage.create(_box(), capacity=2, cache_path=None)
+    with pytest.raises(AssertionError):
+        HDF5Storage.create(_box(), capacity=2, cache_path=str(tmp_path / "x.hdf5"), multiprocessing=True)
+
+
+def test_mapping_options_for_nested_dicts(tmp_path):
+    storage = HDF5Storage.create(
+        _nested_space(), capacity=6, cache_path=str(tmp_path / "m.hdf5"),
+        compression={"obs": "gzip", "reward": "lzf"}, compression_level={"obs": 3},
+        chunks={"obs": (3,), "*": True},
+    )
+    assert storage.root["obs"]["pos"].compression == "gzip"
+    assert storage.root["obs"]["pos"].chunks == (3, 2)
+    assert storage.root["reward"].compression == "lzf"
+    storage.close()
+
+
+def test_mutable_storage_pickles_by_filename(tmp_path, nested_storage):
+    import pickle
+
+    path = nested_storage.cache_filename
+    nested_storage.dumps(path)
+    state = nested_storage.__getstate__()
+    assert "root" not in state and state["_filename"] == path and state["_mode"] == "r+"
+    nested_storage.close()
+    clone = pickle.loads(pickle.dumps(HDF5Storage.load_from(path, _nested_space(), capacity=4)))
+    assert_tree_equal(clone.get(slice(None)), _nested_batch(4))
+    clone.close()
