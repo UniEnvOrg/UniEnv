@@ -533,6 +533,8 @@ def _batch_differing_spaces_box(spaces: typing.Sequence[BoxSpace], device : Opti
         high=target_high,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
+        # The stored bounds may be abbreviated (size-1 axes), so the shape cannot be inferred from them
+        shape=(len(spaces),) + spaces[0].shape,
     )
 
 @batch_differing_spaces.register(DynamicBoxSpace)
@@ -941,14 +943,19 @@ def _concatenate_tuple(
     return tuple(items)
 
 @concatenate.register(BatchedSpace)
+@concatenate.register(TextSpace)
+@concatenate.register(UnionSpace)
 def _concatenate_batched(
-    space: BatchedSpace, items: Iterable, axis: int = 0
+    space: typing.Union[BatchedSpace, TextSpace, UnionSpace], items: Iterable, axis: int = 0
 ) -> Any:
+    """Stack single samples of a non-array space into an object array (see ``BatchedSpace``)."""
     items = list(items)
-    if len(items) == 0:
-        return np.array([], dtype=object)
-    if isinstance(items[0], np.ndarray) and items[0].dtype == object:
-        return np.concatenate(items, axis=axis)
-    else:
-        assert axis == 0, "Expected axis to be 0 when concatenating non-numpy arrays"
-        return np.asarray(items, dtype=object)
+    if len(items) > 0 and all(isinstance(item, np.ndarray) and item.dtype == object for item in items):
+        # Items are themselves batches (nested ``BatchedSpace``): stack them like array spaces do
+        return np.stack(items, axis=axis)
+    assert axis == 0, "Expected axis to be 0 when concatenating non-numpy arrays"
+    # Fill element-wise so that tuples (``UnionSpace`` samples) stay single objects
+    ret = np.empty((len(items),), dtype=object)
+    for i, item in enumerate(items):
+        ret[i] = item
+    return ret
