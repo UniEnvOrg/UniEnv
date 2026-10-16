@@ -702,12 +702,31 @@ class VideoStorage(EpisodeStorageBase[
             raise RuntimeError("Cannot read from VideoStorage while a segment is open; finalize or abort it first")
         return super().get(index)
 
+    # Auto-selected codec per requested `base` (None = any codec family).
+    _auto_codec_cache : Dict[Optional[str], str] = {}
+
+    @staticmethod
+    def _encoder_available(codec_name : str) -> bool:
+        """Whether `codec_name` resolves to an encoder in the linked FFmpeg build.
+
+        `codecs_available` also lists decoder-only entries (e.g. `vp8_qsv`), which
+        cannot be used to write video files.
+        """
+        if codec_name not in codecs_available:
+            return False
+        try:
+            av.codec.Codec(codec_name, "w")
+        except Exception:
+            return False
+        return True
+
     @staticmethod
     def get_auto_codec(
         base : Optional[str] = None
     ) -> str:
-        if hasattr(__class__, "_auto_codec"):
-            return __class__._auto_codec
+        cache = __class__._auto_codec_cache
+        if base in cache:
+            return cache[base]
         
         # --- PyAV Implementation ---
         preferred_codecs = ["av1", "hevc", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
@@ -717,24 +736,28 @@ class VideoStorage(EpisodeStorageBase[
         # preferred_codecs = ["hevc", "av1", "h264", "mpeg4", "vp9", "vp8"] if base is None else [base]
         # preferred_suffixes = ["_nvenc"]
         
-        target_codec = None
-        for codec in preferred_codecs:
-            for suffix in preferred_suffixes:
-                full_codec_name = codec + suffix
-                if full_codec_name in codecs_available:
-                    target_codec = full_codec_name
-                    break
+        # Codec preference comes first, hardware suffix preference second:
+        # the first available hardware encoder in that order wins.
+        target_codec = next(
+            (
+                codec + suffix
+                for codec in preferred_codecs
+                for suffix in preferred_suffixes
+                if __class__._encoder_available(codec + suffix)
+            ),
+            None,
+        )
 
         if target_codec is None:
-            for codec in preferred_codecs:
-                if codec in codecs_available:
-                    target_codec = codec
-                    break
+            target_codec = next(
+                (codec for codec in preferred_codecs if __class__._encoder_available(codec)),
+                None,
+            )
         
         if target_codec is None:
             raise RuntimeError("No suitable video codec found in available codecs.")
 
-        __class__._auto_codec = target_codec
+        cache[base] = target_codec
         return target_codec
 
     def __init__(
