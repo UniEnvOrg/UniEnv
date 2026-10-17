@@ -277,7 +277,8 @@ class CombinedWorldNode(WorldNode[
         - Root + at least one named child -> a merged ``DictSpace`` holding the
           children under their names plus the root's own keys at the top level.
           The root must be a ``DictSpace`` in this case, and its keys must not
-          collide with child node names.
+          collide with child node names. The merged ``DictSpace`` keeps the
+          root's metadata (the children's spaces keep theirs under their names).
         """
         children_space = {
             node.name: getattr(node, space_attr)
@@ -302,7 +303,11 @@ class CombinedWorldNode(WorldNode[
                     f"child node names."
                 )
         backend = next(iter(children_space.values())).backend
-        return None, DictSpace(backend, {**children_space, **root_space.spaces})
+        # The children keep their spaces (and metadata) under their names; the root's
+        # keys are the only ones merged flat, so the merged dict keeps the root's metadata.
+        return None, DictSpace(
+            backend, {**children_space, **root_space.spaces}, metadata=root_space.metadata
+        )
 
     def _aggregate_channel_data(
         self,

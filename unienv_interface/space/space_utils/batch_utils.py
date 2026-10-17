@@ -9,6 +9,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend
 import numpy as np
 
 from ..spaces import *
+from .metadata_utils import common_metadata as _common_metadata
 
 __all__ = [
     "batch_size",
@@ -519,10 +520,6 @@ def _batch_space_text(space: typing.Union[TextSpace, UnionSpace], n: int = 1):
         metadata=space._metadata,
     )
 
-def _common_metadata(spaces : typing.Sequence[Space]) -> Optional[typing.Mapping[str, Any]]:
-    """The metadata shared by all ``spaces`` (``None`` if they disagree: no single description fits the batch)."""
-    metadata = spaces[0].metadata
-    return metadata if all(space.metadata == metadata for space in spaces[1:]) else None
 
 @singledispatch
 def batch_differing_spaces(spaces: typing.Sequence[Space], device : Optional[Any] = None) -> Space:

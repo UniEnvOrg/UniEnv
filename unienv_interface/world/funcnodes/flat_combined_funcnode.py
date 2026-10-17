@@ -7,6 +7,7 @@ nodes to have DictSpace observations/actions/contexts with unique keys.
 from typing import Optional, Dict, Any, Union, Iterable, Mapping, Sequence, Set
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space, DictSpace
+from unienv_interface.space.space_utils.metadata_utils import common_metadata
 
 from ..funcnode import FuncWorldNode
 from .combined_funcnode import CombinedFuncWorldNode, CombinedDataT, CombinedNodeStateT, ROOT_NODE_KEY
@@ -104,7 +105,8 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
             spaces: List of spaces to flatten
             
         Returns:
-            Merged DictSpace or None if no spaces
+            Merged DictSpace (with the metadata of the merged DictSpaces if they all
+            have equal metadata, otherwise none), the only space itself, or None if no spaces
             
         Raises:
             ValueError: If spaces are not DictSpaces or have overlapping keys
@@ -137,7 +139,8 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
             
         # Get backend from first space
         backend = spaces[0].backend
-        return DictSpace(backend, merged_spaces)
+        # The merged dict is described by the metadata of the merged dicts if they all agree
+        return DictSpace(backend, merged_spaces, metadata=common_metadata(spaces))
 
     @staticmethod
     def _flatten_data(

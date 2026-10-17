@@ -734,3 +734,74 @@ def test_sole_renderable_root_uses_its_own_render():
     assert combined.can_render
     frame = combined.render()
     assert isinstance(frame, np.ndarray) and frame.shape == (2, 2, 3)
+
+
+# ---------------------------------------------------------------------------
+# Container metadata
+# ---------------------------------------------------------------------------
+
+def described_dict(metadata, *keys: str) -> DictSpace:
+    """A DictSpace with ``metadata`` whose leaves are described as well."""
+    return DictSpace(
+        NumpyComputeBackend,
+        {key: box_space().with_metadata(kind='proprio', label=key) for key in keys},
+        metadata=metadata,
+    )
+
+
+def test_container_metadata_survives_nesting_under_child_names():
+    """A child's container nested under its own name keeps its metadata unchanged."""
+    world = make_world()
+    arm = StubNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))
+    hand = StubNode(world, 'hand', obs_space=described_dict({'label': 'hand'}, 'g'))
+    combined = CombinedWorldNode('combined', [arm, hand])
+    assert combined.observation_space['arm'].metadata == {'label': 'arm'}
+    assert combined.observation_space['hand'].metadata == {'label': 'hand'}
+    assert combined.observation_space['arm']['q'].metadata == {'kind': 'proprio', 'label': 'q'}
+    assert combined.observation_space.metadata == {}
+
+    single = CombinedWorldNode('single', [StubNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))], direct_return=False)
+    assert single.observation_space['arm'].metadata == {'label': 'arm'}
+    passthrough = CombinedWorldNode('passthrough', [StubNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))])
+    assert passthrough.observation_space.metadata == {'label': 'arm'}
+
+
+def test_root_merge_keeps_root_container_metadata():
+    """The root's keys are the only ones merged flat: the merged dict keeps the root's metadata."""
+    world = make_world()
+    child = StubNode(world, 'child', obs_space=described_dict({'label': 'child'}, 'c'))
+    root = StubNode(world, 'root', obs_space=described_dict({'label': 'robot', 'kind': 'observation'}, 'r'))
+    combined = CombinedWorldNode('combined', [child], root_node=root)
+    assert combined.observation_space.metadata == {'label': 'robot', 'kind': 'observation'}
+    assert combined.observation_space['child'].metadata == {'label': 'child'}
+    assert combined.observation_space['child']['c'].metadata == {'kind': 'proprio', 'label': 'c'}
+    assert combined.observation_space['r'].metadata == {'kind': 'proprio', 'label': 'r'}
+
+    plain_root = StubNode(world, 'plain_root', obs_keys=('r',))
+    assert CombinedWorldNode('combined', [child], root_node=plain_root).observation_space.metadata == {}
+
+
+def test_flat_merge_keeps_container_metadata_only_if_all_agree():
+    world = make_world()
+    shared = {'kind': 'observation', 'label': 'robot'}
+    a = StubNode(world, 'a', obs_space=described_dict(shared, 'qa'), action_space=described_dict({'kind': 'action'}, 'ja'))
+    b = StubNode(world, 'b', obs_space=described_dict(dict(shared), 'qb'), action_space=described_dict({'kind': 'action', 'mode': 'delta'}, 'jb'))
+    flat = FlatCombinedWorldNode('flat', [a, b])
+    assert flat.observation_space.metadata == shared
+    assert flat.action_space.metadata == {}  # the contributors disagree
+    # leaf metadata survives either way
+    assert flat.observation_space['qa'].metadata == {'kind': 'proprio', 'label': 'qa'}
+    assert flat.action_space['jb'].metadata == {'kind': 'proprio', 'label': 'jb'}
+
+    # a contributor without metadata disagrees as well
+    c = StubNode(world, 'c', obs_keys=('qc',))
+    assert FlatCombinedWorldNode('flat', [a, c]).observation_space.metadata == {}
+
+    # the root node takes part in the agreement like a child
+    root = StubNode(world, 'root', obs_space=described_dict(dict(shared), 'r'))
+    assert FlatCombinedWorldNode('flat', [a, b], root_node=root).observation_space.metadata == shared
+    other_root = StubNode(world, 'other_root', obs_space=described_dict({'label': 'other'}, 'r'))
+    assert FlatCombinedWorldNode('flat', [a, b], root_node=other_root).observation_space.metadata == {}
+
+    # a single contributor is passed through unchanged
+    assert FlatCombinedWorldNode('flat', [a]).observation_space is a.observation_space

@@ -669,3 +669,74 @@ def test_func_root_reward_signals_info_and_render():
     rendered = combined.render(world_state, node_state)
     assert set(rendered.keys()) == {'child', 'root'}
     assert ROOT_NODE_KEY not in rendered
+
+
+# ---------------------------------------------------------------------------
+# Container metadata
+# ---------------------------------------------------------------------------
+
+def described_dict(metadata, *keys: str) -> DictSpace:
+    """A DictSpace with ``metadata`` whose leaves are described as well."""
+    return DictSpace(
+        NumpyComputeBackend,
+        {key: box_space().with_metadata(kind='proprio', label=key) for key in keys},
+        metadata=metadata,
+    )
+
+
+def test_container_metadata_survives_nesting_under_child_names():
+    """A child's container nested under its own name keeps its metadata unchanged."""
+    world = StubFuncWorld()
+    arm = StubFuncNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))
+    hand = StubFuncNode(world, 'hand', obs_space=described_dict({'label': 'hand'}, 'g'))
+    combined = CombinedFuncWorldNode('combined', [arm, hand])
+    assert combined.observation_space['arm'].metadata == {'label': 'arm'}
+    assert combined.observation_space['hand'].metadata == {'label': 'hand'}
+    assert combined.observation_space['arm']['q'].metadata == {'kind': 'proprio', 'label': 'q'}
+    assert combined.observation_space.metadata == {}
+
+    single = CombinedFuncWorldNode('single', [StubFuncNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))], direct_return=False)
+    assert single.observation_space['arm'].metadata == {'label': 'arm'}
+    passthrough = CombinedFuncWorldNode('passthrough', [StubFuncNode(world, 'arm', obs_space=described_dict({'label': 'arm'}, 'q'))])
+    assert passthrough.observation_space.metadata == {'label': 'arm'}
+
+
+def test_root_merge_keeps_root_container_metadata():
+    """The root's keys are the only ones merged flat: the merged dict keeps the root's metadata."""
+    world = StubFuncWorld()
+    child = StubFuncNode(world, 'child', obs_space=described_dict({'label': 'child'}, 'c'))
+    root = StubFuncNode(world, 'root', obs_space=described_dict({'label': 'robot', 'kind': 'observation'}, 'r'))
+    combined = CombinedFuncWorldNode('combined', [child], root_node=root)
+    assert combined.observation_space.metadata == {'label': 'robot', 'kind': 'observation'}
+    assert combined.observation_space['child'].metadata == {'label': 'child'}
+    assert combined.observation_space['child']['c'].metadata == {'kind': 'proprio', 'label': 'c'}
+    assert combined.observation_space['r'].metadata == {'kind': 'proprio', 'label': 'r'}
+
+    plain_root = StubFuncNode(world, 'plain_root', obs_keys=('r',))
+    assert CombinedFuncWorldNode('combined', [child], root_node=plain_root).observation_space.metadata == {}
+
+
+def test_flat_merge_keeps_container_metadata_only_if_all_agree():
+    world = StubFuncWorld()
+    shared = {'kind': 'observation', 'label': 'robot'}
+    a = StubFuncNode(world, 'a', obs_space=described_dict(shared, 'qa'), action_space=described_dict({'kind': 'action'}, 'ja'))
+    b = StubFuncNode(world, 'b', obs_space=described_dict(dict(shared), 'qb'), action_space=described_dict({'kind': 'action', 'mode': 'delta'}, 'jb'))
+    flat = FlatCombinedFuncWorldNode('flat', [a, b])
+    assert flat.observation_space.metadata == shared
+    assert flat.action_space.metadata == {}  # the contributors disagree
+    # leaf metadata survives either way
+    assert flat.observation_space['qa'].metadata == {'kind': 'proprio', 'label': 'qa'}
+    assert flat.action_space['jb'].metadata == {'kind': 'proprio', 'label': 'jb'}
+
+    # a contributor without metadata disagrees as well
+    c = StubFuncNode(world, 'c', obs_keys=('qc',))
+    assert FlatCombinedFuncWorldNode('flat', [a, c]).observation_space.metadata == {}
+
+    # the root node takes part in the agreement like a child
+    root = StubFuncNode(world, 'root', obs_space=described_dict(dict(shared), 'r'))
+    assert FlatCombinedFuncWorldNode('flat', [a, b], root_node=root).observation_space.metadata == shared
+    other_root = StubFuncNode(world, 'other_root', obs_space=described_dict({'label': 'other'}, 'r'))
+    assert FlatCombinedFuncWorldNode('flat', [a, b], root_node=other_root).observation_space.metadata == {}
+
+    # a single contributor is passed through unchanged
+    assert FlatCombinedFuncWorldNode('flat', [a]).observation_space is a.observation_space

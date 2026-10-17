@@ -370,3 +370,18 @@ def test_annotate_then_validate_does_not_touch_untouched_leaves():
     # validation does not change metadata
     assert annotated["cameras"]["wrist"].metadata == {"source": "wrist_cam"}
     assert annotated["cameras"]["wrist"] is space["cameras"]["wrist"]
+
+
+# ---------------------------------------------------------------------------
+# common_metadata
+# ---------------------------------------------------------------------------
+
+def test_common_metadata():
+    a = box(metadata={"kind": "proprio", "units": ["m", "m"]})
+    b = box(metadata={"kind": "proprio", "units": ("m", "m")})
+    assert smu.common_metadata([a, b]) == {"kind": "proprio", "units": ["m", "m"]}
+    assert smu.common_metadata(iter([a, b, a])) == a.metadata
+    assert smu.common_metadata([a, box(metadata={"kind": "proprio"})]) == {}
+    assert smu.common_metadata([a, box()]) == {}
+    assert smu.common_metadata([a]) == a.metadata
+    assert smu.common_metadata([]) == {}

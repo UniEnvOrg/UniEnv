@@ -17,6 +17,7 @@ __all__ = [
     "child_spaces",
     "spaces_equal_with_metadata",
     "find_spaces_by_metadata",
+    "common_metadata",
     "metadata",
     "image_metadata",
     "depth_metadata",
@@ -68,6 +69,20 @@ def spaces_equal_with_metadata(a : Space, b : Space) -> bool:
     of the data matters as well.
     """
     return a == b and _metadata_tree_equal(a, b)
+
+def common_metadata(spaces : typing.Iterable[Space]) -> SpaceMetadata:
+    """The metadata shared by all ``spaces``: theirs if all are equal, else (or without spaces) empty.
+
+    Used where several spaces become one, e.g. batching differing spaces or
+    merging the keys of several ``DictSpace`` s into one: a description that
+    not every contributor agrees on fits none of the result.
+    """
+    iterator = iter(spaces)
+    first = next(iterator, None)
+    if first is None:
+        return EMPTY_METADATA
+    metadata = first.metadata
+    return metadata if all(space.metadata == metadata for space in iterator) else EMPTY_METADATA
 
 def find_spaces_by_metadata(
     space : Space,
