@@ -154,6 +154,16 @@ def test_backend_and_device_conversion(server, transport):
         assert isinstance(hosted.last_action, np.ndarray)  # converted to the hosted backend
         np.testing.assert_array_equal(hosted.last_action, [1, 1])
         assert isinstance(obs["velocity"], torch.Tensor) and isinstance(reward, float)
+    received = []
+    torch_env = ProbeEnv()
+    torch_env.backend, torch_env.step = T, lambda action: received.append(action)
+    server.register("torch_probe", torch_env)
+    with connect(server, transport) as client:
+        client.env("torch_probe").step(np.ones(1, np.float32))
+        assert isinstance(received[0], torch.Tensor)  # arguments use the hosted backend
+        with pytest.raises(RemoteError, match="cannot represent dtype uint16"):
+            client.env("torch_probe").step(np.ones(1, np.uint16))
+        client.env("torch_probe").step(np.ones(1, np.float32))  # still connected
 
 
 # ---------------------------------------------------------------------------- components

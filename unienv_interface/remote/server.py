@@ -350,7 +350,13 @@ class RemoteServer:
             wire.restore(message[3:], buffers)  # still validate the frame
             connection.send(_error(request_id, exc))
             return
-        args, kwargs = wire.restore(message[3:], buffers, resource.backend, resource.device)
+        try:
+            args, kwargs = wire.restore(message[3:], buffers, resource.backend, resource.device)
+        except wire.WireError:
+            raise
+        except Exception as exc:  # e.g. the hosted backend cannot represent a dtype
+            connection.send(_error(request_id, exc))
+            return
         if type(args) is not list or type(kwargs) is not dict:
             raise wire.WireError("Request args must be a list and kwargs a dict")
         resource.group.queue.put((self._execute, (connection, resource, request_id, method, args, kwargs)))
