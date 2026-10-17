@@ -9,7 +9,7 @@ calibration
     imports OpenCV.
 """
 
-__version__ = "0.0.1b14"
+__version__ = "0.0.1b15"
 
 __all__ = [
     "__version__",

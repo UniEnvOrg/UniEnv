@@ -32,7 +32,7 @@ def _run_python(code: str) -> None:
 
 
 def test_version_constant_is_exposed() -> None:
-    assert unienv_utils.__version__ == "0.0.1b14"
+    assert unienv_utils.__version__ == "0.0.1b15"
 
 
 def test_top_level_package_does_not_import_cv2() -> None:

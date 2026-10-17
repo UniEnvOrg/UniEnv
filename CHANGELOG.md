@@ -2,7 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.0.1b15 (2026-10-16)
+
+Requires `xbarray>=0.0.1a20` (faster NumPy random draws and `clip`, int shapes for PyTorch/JAX random draws).
 
 **Remote execution was rewritten as a lightweight RPC layer** (protocol version 2; not compatible with the previous protocol):
 
