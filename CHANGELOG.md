@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## 0.0.1b16 (2026-10-17)
 
+- **Changed:** `RemoteServer.register(name, obj)` now hosts only `obj`; it no longer exposes the world and nodes an env is built from. Use the new `RemoteServer.register_recursive(name, obj)` for that (components mode). Descriptor links (a node proxy's `world`, `nodes`, `get_node`) name only hosted objects, and objects sharing a world still share one worker.
 - Extended the space metadata vocabulary with `frame`, `rotation`, `control`, `mode`, `normalized`, `range` and `names`, recommended `kind` values, the `"HW"` layout and the `"bgra"` format, plus a convention for vectors that pack several quantities.
 - Added metadata builders (`metadata`, `image_metadata`, `depth_metadata`, `proprio_metadata`, `action_metadata`) and `annotate` to attach metadata to nested spaces by path.
 - Added `metadata_issues` / `validate_metadata` to check space metadata against the vocabulary, and `common_metadata`.

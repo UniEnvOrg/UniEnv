@@ -75,14 +75,19 @@ next response for every client. Proxies update their `observation_space`,
 
 ## Components mode
 
-Registering an env built on a `WorldEnv` also exposes its world as `<name>/world`,
-its root node as `<name>/node` and every child node as `<node name>/<child name>`
-(for example `robot/node/camera`). Compose them with a plain local `WorldEnv` (or
-a local combination of remote child nodes); each lifecycle hook is then one remote
-call:
+`server.register(name, obj)` hosts only `obj` itself. To also host what an env is
+built from, use `server.register_recursive(name, env)`: for an env built on a
+`WorldEnv` it exposes its world as `<name>/world`, its root node as `<name>/node`
+and every child node as `<node name>/<child name>` (for example
+`robot/node/camera`). You can also register individual worlds and nodes yourself
+with `register`; objects that share a world always run on the same worker.
+Compose them with a plain local `WorldEnv` (or a local combination of remote child
+nodes); each lifecycle hook is then one remote call:
 
 ```python
 from unienv_interface.world import WorldEnv
+
+server.register_recursive("robot", make_env())   # on the server
 
 world = client.world("robot/world")
 env = WorldEnv(world, client.node("robot/node"))   # the whole node tree
@@ -90,8 +95,8 @@ env = WorldEnv(world, [client.node("robot/node/arm"), client.node("robot/node/ca
 ```
 
 `client.resources` lists every hosted resource with its descriptor (kind, callable
-methods, links to its world, root node and children). A `WorldNode` or `World`
-can also be registered directly. A node whose `world` is `None` runs on its own
+methods, and links to its world, root node and children when those are hosted too;
+a node proxy's `world`, `nodes` and `get_node` only see hosted objects). A node whose `world` is `None` runs on its own
 worker; it must declare `backend` / `device` for argument conversion.
 
 ## Observers

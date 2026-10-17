@@ -261,7 +261,7 @@ class RemoteClient:
         return self._typed(name, "env")
 
     def world(self, name: str) -> RemoteWorld:
-        """Proxy of a hosted ``World`` (e.g. ``"sim/world"`` for a ``WorldEnv`` named ``"sim"``)."""
+        """Proxy of a hosted ``World`` (e.g. ``"sim/world"`` for a ``WorldEnv`` registered recursively as ``"sim"``)."""
         return self._typed(name, "world")
 
     def node(self, name: str) -> RemoteWorldNode:

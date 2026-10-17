@@ -57,7 +57,7 @@ class _Resource:
             self.backend, self.device = obj.backend, obj.device
         except AttributeError:  # a node without a world
             self.backend, self.device = None, None
-        self.links: Dict[str, Any] = {}
+        self.related: Dict[str, Any] = _related(obj, kind)  # objects whose names are linked if hosted
         self.spaces: Tuple[Any, ...] = ()
         self.documents: Tuple[Any, ...] = ()
         self.version = 0
@@ -69,7 +69,7 @@ class _Resource:
             self.documents = tuple(_document(space) for space in self.spaces)
 
     def descriptor(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {"kind": self.kind, "methods": sorted(self.methods), **self.links}
+        result: Dict[str, Any] = {"kind": self.kind, "methods": sorted(self.methods)}
         attributes = {}
         for attr in ATTRIBUTES:
             try:
@@ -88,6 +88,16 @@ class _Resource:
     def space_update(self) -> List[Any]:
         return [self.version, {attr: None if doc is None else wire.SpaceJSON(doc)
                                for attr, doc in zip(SPACES, self.documents)}]
+
+
+def _related(obj: Hosted, kind: str) -> Dict[str, Any]:
+    """The world / root node / child nodes ``obj`` links to (resolved to names at ``hello``)."""
+    base = obj.unwrapped if isinstance(obj, Env) else obj
+    if isinstance(base, WorldEnv):
+        return {"world": base.world, "node": base.node}
+    if kind == "node":
+        return {"world": obj.world, "children": {child.name: child for child in getattr(obj, "nodes", ())}}
+    return {}
 
 
 def _portable(value: Any) -> bool:
@@ -177,12 +187,13 @@ class RemoteServer:
     Example::
 
         with RemoteServer() as server:
-            server.register("sim", env)
+            server.register("sim", env)  # or register_recursive() to also host its world and nodes
             server.serve("tcp://0.0.0.0:7000")  # blocks; or listen() in the background
 
-    Each registered root runs on its own worker thread; calls on it, its world
-    and its nodes are executed there one at a time, in arrival order, whichever
-    client sent them. Only the methods in ``protocol.METHODS`` can be called.
+    Each registered root runs on its own worker thread, shared by every hosted object
+    with the same world; calls on them are executed there one at a time, in arrival
+    order, whichever client sent them. Only the methods in ``protocol.METHODS`` can be
+    called.
     """
 
     def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> None:
@@ -201,12 +212,25 @@ class RemoteServer:
     def register(self, name: str, obj: Hosted, *, close: bool = True) -> str:
         """Host ``obj`` (an ``Env``, ``World`` or ``WorldNode``) under ``name``.
 
-        An env built on a ``WorldEnv`` also exposes ``name/world`` and ``name/node``
-        (the root node), and every node its children as ``<node name>/<child>``,
-        so clients can compose them in components mode. Objects already exposed
-        keep their first name and share their worker. With ``close=True`` the
-        server closes ``obj`` (on its worker) when it shuts down.
+        Only ``obj`` itself is exposed; use :meth:`register_recursive` to also expose
+        the world and nodes it is built from. Objects sharing a world (e.g. an env and
+        its world registered separately) run on the same worker. Registering an object
+        that is already hosted returns its existing name. With ``close=True`` the server
+        closes ``obj`` (on its worker) when it shuts down.
         """
+        return self._register(name, obj, close=close, recursive=False)
+
+    def register_recursive(self, name: str, obj: Hosted, *, close: bool = True) -> str:
+        """Like :meth:`register`, but also expose everything ``obj`` is built from.
+
+        An env built on a ``WorldEnv`` also exposes ``name/world`` and ``name/node``
+        (the root node), and every node exposes its world (``<node name>/world``, unless
+        already hosted) and its children as ``<node name>/<child>``, so clients can
+        compose them in components mode. Objects already hosted keep their first name.
+        """
+        return self._register(name, obj, close=close, recursive=True)
+
+    def _register(self, name: str, obj: Hosted, *, close: bool, recursive: bool) -> str:
         if not isinstance(name, str) or not name:
             raise ValueError("Resource names must be non-empty strings")
         if not isinstance(obj, (Env, World, WorldNode)):
@@ -224,7 +248,7 @@ class RemoteServer:
             added: Dict[str, _Resource] = {}
             names: Dict[int, str] = {}
             try:
-                self._expose(name, obj, group, added, names)
+                self._expose(name, obj, group, added, names, recursive)
             except Exception:
                 if created:
                     group.queue.put(None)
@@ -241,7 +265,7 @@ class RemoteServer:
         return self._names[id(obj)]
 
     def _expose(self, name: str, obj: Hosted, group: _Group, added: Dict[str, _Resource],
-                names: Dict[int, str]) -> str:
+                names: Dict[int, str], recursive: bool) -> str:
         existing = self._names.get(id(obj)) or names.get(id(obj))
         if existing is not None:
             return existing
@@ -250,18 +274,29 @@ class RemoteServer:
         kind = "env" if isinstance(obj, Env) else "world" if isinstance(obj, World) else "node"
         resource = _Resource(name, obj, kind, group)
         added[name], names[id(obj)] = resource, name
-        base = obj.unwrapped if isinstance(obj, Env) else obj
-        if isinstance(base, WorldEnv):
-            resource.links["world"] = self._expose(name + "/world", base.world, group, added, names)
-            resource.links["node"] = self._expose(name + "/node", base.node, group, added, names)
-        elif kind == "node":
-            world = obj.world
-            resource.links["world"] = None if world is None else self._expose(name + "/world", world, group, added, names)
-            resource.links["children"] = {
-                child.name: self._expose(f"{name}/{quote(child.name, safe='')}", child, group, added, names)
-                for child in getattr(obj, "nodes", ())
-            }
+        if recursive:
+            related = resource.related
+            for key in ("world", "node"):
+                if related.get(key) is not None:
+                    self._expose(f"{name}/{key}", related[key], group, added, names, recursive)
+            for child_name, child in related.get("children", {}).items():
+                self._expose(f"{name}/{quote(child_name, safe='')}", child, group, added, names, recursive)
         return name
+
+    def _links(self, resource: _Resource) -> Dict[str, Any]:
+        """Names of the hosted objects ``resource`` links to (unhosted ones are left out)."""
+        def hosted(obj: Any) -> Optional[str]:
+            return None if obj is None else self._names.get(id(obj))
+        links: Dict[str, Any] = {}
+        related = resource.related
+        if "world" in related:
+            links["world"] = hosted(related["world"])
+        if "node" in related:
+            links["node"] = hosted(related["node"])
+        if "children" in related:
+            links["children"] = {key: hosted(child) for key, child in related["children"].items()
+                                 if hosted(child) is not None}
+        return links
 
     @property
     def resources(self) -> List[str]:
@@ -374,7 +409,7 @@ class RemoteServer:
             for name, resource in list(self._resources.items()):
                 group = resource.group
                 connection.seen.setdefault(group, group.version)  # read before the spaces
-                resources[name] = dict(resource.static, spaces=resource.space_update())
+                resources[name] = dict(resource.static, **self._links(resource), spaces=resource.space_update())
             return {"version": PROTOCOL_VERSION, "resources": resources}
         if method in ("subscribe", "unsubscribe"):
             name = args[0]

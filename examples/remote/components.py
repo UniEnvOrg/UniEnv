@@ -12,7 +12,7 @@ from demo import make_env
 
 def main() -> None:
     with RemoteServer() as server:
-        server.register("counter", make_env())  # also exposes counter/world and counter/node
+        server.register_recursive("counter", make_env())  # also exposes counter/world and counter/node
         with RemoteClient.connect(server.listen("tcp://127.0.0.1:0")) as client:
             print("Resources:", sorted(client.resources))
             env = WorldEnv(client.world("counter/world"), client.node("counter/node"))

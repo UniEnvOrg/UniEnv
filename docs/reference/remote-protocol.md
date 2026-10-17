@@ -59,8 +59,9 @@ an object. Only the methods in `protocol.METHODS` can be called:
 | `world` | `step`, `reset`, `reload`, `after_reset`, `after_reload` |
 | `node` | `reset`, `reload`, `after_reset`, `after_reload`, `pre_environment_step`, `post_environment_step`, `set_next_action`, `get_context`, `get_observation`, `get_reward`, `get_termination`, `get_truncation`, `get_info`, `render` |
 
-Calls on one registered root (and the world and nodes it exposes) execute one at a
-time, in arrival order.
+Calls on one registered root (and on every hosted object that shares its world)
+execute one at a time, in arrival order. A descriptor's `world`, `node` and
+`children` links name only objects that are hosted.
 
 ## Protocol methods
 

@@ -198,7 +198,7 @@ def test_components_mode_node_observations_and_backends():
     world = SimWorld()
     node = CameraNode(world)
     with RemoteServer() as server:
-        server.register("sim", WorldEnv(world, node))
+        server.register_recursive("sim", WorldEnv(world, node))
         with server.connect(compress={"image": "jpeg"}, backend=T) as client:
             env = WorldEnv(client.world("sim/world"), client.node("sim/node"))
             _, observation, _ = env.reset()

@@ -122,7 +122,7 @@ def test_remote_errors_carry_type_and_traceback(server, transport):
 
 def test_descriptor_attributes_methods_and_lookup(server, transport):
     server.register("probe", ProbeEnv())
-    server.register("world_env", make_world_env())
+    server.register_recursive("world_env", make_world_env())
     with connect(server, transport) as client:
         assert set(client.resources) == {"probe", "world_env", "world_env/world", "world_env/node"}
         probe = client.resources["probe"]
@@ -170,7 +170,7 @@ def test_backend_and_device_conversion(server, transport):
 
 def test_components_mode_matches_server_side_world_env(server, transport):
     local, hosted = make_world_env(), make_world_env()
-    server.register("sim", hosted)
+    server.register_recursive("sim", hosted)
     with connect(server, transport) as client:
         world, node = client.world("sim/world"), client.node("sim/node")
         assert isinstance(world, RemoteWorld) and isinstance(node, RemoteWorldNode)
@@ -191,7 +191,7 @@ def test_components_mode_matches_server_side_world_env(server, transport):
 
 def test_node_trees_and_local_combination(server, transport):
     hosted = make_world_env(("arm", "camera"))
-    server.register("sim", hosted)
+    server.register_recursive("sim", hosted)
     with connect(server, transport) as client:
         assert {"sim/node/arm", "sim/node/camera"} <= set(client.resources)
         root = client.node("sim/node")
@@ -208,13 +208,34 @@ def test_node_trees_and_local_combination(server, transport):
         same_tree(local.step(action), env.step(action))
 
 
+def test_register_links_only_hosted_objects(server, transport):
+    hosted = make_world_env(("arm", "camera"))
+    server.register("sim", hosted)
+    server.register("root", hosted.node)
+    server.register("arm", hosted.node.get_node("arm"))
+    with connect(server, transport) as client:
+        assert set(client.resources) == {"sim", "root", "arm"}
+        root = client.node("root")
+        assert root.world is None  # the world is not hosted
+        assert [n.remote_name for n in root.nodes] == ["arm"]  # only hosted children are linked
+        assert root.get_node("arm") is client.node("arm") and root.get_node("camera") is None
+        assert client.env("sim").get_node("arm") is client.node("arm")  # via the hosted root node
+    server.register("world", hosted.world)  # registered after that client connected
+    with connect(server, transport) as client:
+        assert client.node("root").world is client.world("world")
+
+
 def test_registration_names_groups_and_validation():
     world_env = make_world_env()
     other = make_world_env()
     with RemoteServer() as server:
         assert server.register("a", world_env) == "a"
-        assert server.register("w", world_env.world) == "a/world"  # already exposed: keeps its name
-        assert server.register("n", other.node) == "n" and "n/world" in server.resources
+        assert server.resources == ["a"]  # only the object itself, not its world / nodes
+        assert server.register("again", world_env) == "a"  # already hosted: keeps its name
+        assert server.register("w", world_env.world) == "w"
+        assert server._resources["w"].group is server._resources["a"].group  # shares its world's worker
+        assert server.register_recursive("n", other.node) == "n" and "n/world" in server.resources
+        assert server.register_recursive("w2", other.world) == "n/world"  # already hosted: keeps its name
         assert server.register("e", other) == "e"  # joins the worker of its world
         assert server._resources["e"].group is server._resources["n"].group
         assert server._resources["a"].group is not server._resources["e"].group
@@ -268,7 +289,7 @@ def test_components_mode_sees_spaces_built_on_reload(server, transport):
         original(priority=priority, mask=mask)
 
     hosted.node.after_reload = after_reload
-    server.register("sim", hosted)
+    server.register_recursive("sim", hosted)
     with connect(server, transport) as client:
         env = WorldEnv(client.world("sim/world"), client.node("sim/node"))
         assert env.observation_space is None

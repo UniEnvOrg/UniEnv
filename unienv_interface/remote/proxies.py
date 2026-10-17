@@ -4,7 +4,8 @@ Every method is one remote call. Spaces, timings and metadata come from the
 server's descriptor; spaces are refreshed whenever a reset changed them.
 ``close()`` on a proxy does nothing: hosted objects belong to the server.
 
-Components mode is a plain local ``WorldEnv`` over remote proxies::
+Components mode is a plain local ``WorldEnv`` over remote proxies (host them with
+``server.register_recursive("sim", env)``)::
 
     env = WorldEnv(client.world("sim/world"), client.node("sim/node"))
 """
