@@ -68,15 +68,50 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
 
     The keys below form a shared vocabulary understood by UniEnv utilities
     (e.g. the video wrappers and ``unienv_data.storages.dict_storage_kwargs_from_space``).
-    None of them is required or enforced, and any other keys are allowed:
+    None of them is required or enforced at construction, and any other keys
+    (and kinds) are allowed. "Per element" lists have one entry per element of
+    the space's last axis:
 
-    * ``kind``: what the data is, e.g. ``"image"``, ``"depth"``, ``"proprio"``, ``"action"``.
-    * ``format``: pixel format of images, ``"rgb"``, ``"bgr"``, ``"gray"`` or ``"rgba"``.
-    * ``layout``: axis order of images, ``"HWC"`` or ``"CHW"`` (trailing dims of the space).
-    * ``units``: physical units, e.g. ``"m"``, ``"rad"``.
-    * ``source``: name of the camera / sensor producing the data.
-    * ``fps``: capture rate of the source.
-    * ``label``: human readable name.
+    * ``kind`` (str): what the data is. Recommended: ``"image"``, ``"depth"``,
+      ``"segmentation"``, ``"normal"``, ``"pointcloud"``, ``"proprio"``,
+      ``"action"``, ``"pose"``, ``"force"``, ``"tactile"``, ``"teleop"``,
+      ``"keypoints"``, ``"mask"``, ``"intrinsics"``, ``"extrinsics"``,
+      ``"privileged"``, ``"task"`` (goals / targets), ``"state"``.
+    * ``format`` (str): pixel format of images, ``"rgb"``, ``"bgr"``,
+      ``"rgba"``, ``"bgra"`` or ``"gray"``.
+    * ``layout`` (str): axis order of the trailing image dims, ``"HWC"``,
+      ``"CHW"`` or ``"HW"`` (single channel without a channel axis); leading
+      dims are batch dims.
+    * ``units`` (str, or per element list of str): physical units, e.g.
+      ``"m"``, ``"mm"``, ``"rad"``, ``"rad/s"``, ``"m/s"``, ``"m/s^2"``,
+      ``"N"``, ``"N*m"``, ``"A"``, ``"V"``, ``"degC"``, ``"px"``, ``"s"``;
+      ``"normalized"`` for unitless normalized data.
+    * ``frame`` (str): reference frame, e.g. ``"world"``, ``"base"``,
+      ``"camera_cv"`` (OpenCV: x right, y down, z forward), ``"camera_gl"``,
+      ``"link_local"``, ``"wrist"``.
+    * ``rotation`` (str): rotation representation inside a pose / action
+      vector, ``"quat_wxyz"``, ``"quat_xyzw"``, ``"euler_<axes>"`` with
+      transforms3d axes (``s`` static / extrinsic, ``r`` rotating / intrinsic,
+      e.g. ``"euler_sxyz"``, ``"euler_rxyz"``), ``"rot6d"``, ``"matrix"`` or
+      ``"axis_angle"``.
+    * ``control`` (str, actions): what is commanded, e.g. ``"joint_position"``,
+      ``"joint_velocity"``, ``"joint_torque"``, ``"eef_pose"``,
+      ``"eef_velocity"``, ``"gripper"``.
+    * ``mode`` (str, actions): ``"absolute"``, ``"delta"`` or ``"velocity"``.
+    * ``normalized`` (bool): the values are normalized.
+    * ``range`` (``[low, high]``, scalars or per element lists): the physical
+      range normalized values map to, when known.
+    * ``names`` (per element list of str): e.g. joint names.
+    * ``source`` (str): name of the camera / sensor producing the data.
+    * ``fps`` (positive number): capture rate of the source.
+    * ``label`` (str): human readable name.
+
+    A vector packing several quantities (e.g. position 3 + quaternion 4 +
+    gripper 1) is described per element with ``names`` and / or a ``units``
+    list, while ``rotation`` names the representation of its rotation part.
+    ``space_utils.metadata_utils`` has builders for these keys
+    (``image_metadata``, ``action_metadata``, ...), ``annotate`` to attach
+    metadata to nested spaces and ``validate_metadata`` to check it.
     """
     _mutation_epoch : int = 0
     # Attributes that are lazily filled caches rather than part of the space definition
