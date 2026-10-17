@@ -50,7 +50,9 @@ def _bounds(draw, shape, dtype, allow_inf=True, finite_low=False):
         width = np.array(draw(st.lists(st.integers(0, 20), min_size=size, max_size=size)), dtype=np.int64)
         high = low + width
     else:
-        values = st.floats(-50, 50, allow_nan=False, width=32)
+        # No subnormal bounds: JAX on CPU flushes subnormals to zero in arithmetic, so a box bounded
+        # at e.g. 1.4e-45 could not contain its own rescaled or clipped data
+        values = st.floats(-50, 50, allow_nan=False, allow_subnormal=False, width=32)
         low = np.array(draw(st.lists(values, min_size=size, max_size=size)), dtype=np.float64)
         # Widths are 0 or not tiny: rescaling a ~1e-38 wide box overflows float32 by design
         widths = st.one_of(st.just(0.0), st.floats(0.0009765625, 50, width=32))
@@ -274,6 +276,9 @@ def widened_specs(draw, spec: dict, extra_keys: bool = False):
 # Narrowing (subspaces)
 # ---------------------------------------------------------------------------
 
+_FLOAT32_TINY = float(np.finfo(np.float32).tiny)
+
+
 @st.composite
 def _narrowed_float(draw, low, high):
     """A float sub-interval ``[a, b]`` of ``[low, high]`` (either end may stay infinite)."""
@@ -290,7 +295,10 @@ def _narrowed_float(draw, low, high):
     else:
         b = (a if np.isfinite(a) else 0.0) + draw(st.floats(0, 10))
     # Lands in [low, high] up to float64 rounding, which float32 storage then absorbs
-    return float(min(max(a, low), high)), float(min(max(b, a, low), high))
+    a, b = float(min(max(a, low), high)), float(min(max(b, a, low), high))
+    # Flush float32-subnormal ends to zero (see the base bounds above); monotone, so a <= b holds
+    # and both stay inside [low, high], whose finite ends are never subnormal
+    return tuple(0.0 if 0.0 < abs(v) < _FLOAT32_TINY else v for v in (a, b))
 
 
 @st.composite
