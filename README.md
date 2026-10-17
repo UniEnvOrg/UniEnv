@@ -118,7 +118,7 @@ If you use UniEnv in research, cite:
   year = {2025},
   month = oct,
   url = {https://github.com/UniEnvOrg/UniEnv},
-  license = {MIT}
+  license = {Apache-2.0}
 }
 ```
 
