@@ -65,11 +65,38 @@ def _np_dtype_to_backend_dtype(backend: ComputeBackend, np_dtype: np.dtype):
     return backend.from_numpy(np.zeros(1, dtype=np_dtype)).dtype
 
 
+# Feature names whose meaning is fixed by the LeRobot conventions -> ``Space.metadata["kind"]``
+_LEROBOT_FEATURE_KINDS = {
+    "observation.state": "proprio",
+    "action": "action",
+}
+
+
+def _feature_metadata(
+    feature: LeRobotFeature,
+    fps: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """``Space.metadata`` for a feature: the image vocabulary for image / video features, ``kind`` for known names."""
+    if feature.is_video or feature.is_image:
+        # Frames are always produced as (H, W, C) RGB, see `_normalize_image_shape`
+        metadata: Dict[str, Any] = {"kind": "image", "format": "rgb", "layout": "HWC"}
+        if fps is not None:
+            metadata["fps"] = fps
+        metadata["source"] = feature.name
+        return metadata
+    if feature.name in _LEROBOT_FEATURE_KINDS:
+        return {"kind": _LEROBOT_FEATURE_KINDS[feature.name]}
+    return None
+
+
 def _feature_to_space(
     feature: LeRobotFeature,
     backend: ComputeBackend,
     device: Optional[Any] = None,
+    fps: Optional[float] = None,
 ) -> Space:
+    """The space of one feature; its name and ``fps`` (the dataset's) fill in its metadata."""
+    metadata = _feature_metadata(feature, fps)
     if feature.is_video or feature.is_image:
         shape = _normalize_image_shape(feature.shape)
         return BoxSpace(
@@ -78,6 +105,7 @@ def _feature_to_space(
             shape=shape,
             dtype=_np_dtype_to_backend_dtype(backend, np.dtype(np.uint8)),
             device=device,
+            metadata=metadata,
         )
     elif feature.dtype == "bool":
         return BinarySpace(
@@ -85,6 +113,7 @@ def _feature_to_space(
             shape=feature.shape,
             dtype=None,
             device=device,
+            metadata=metadata,
         )
     elif feature.dtype in _LEROBOT_DTYPE_MAP:
         np_dtype = np.dtype(_LEROBOT_DTYPE_MAP[feature.dtype])
@@ -102,6 +131,7 @@ def _feature_to_space(
             shape=feature.shape,
             dtype=_np_dtype_to_backend_dtype(backend, np_dtype),
             device=device,
+            metadata=metadata,
         )
     else:
         return BoxSpace(
@@ -110,6 +140,7 @@ def _feature_to_space(
             shape=feature.shape,
             dtype=_np_dtype_to_backend_dtype(backend, np.dtype(np.float32)),
             device=device,
+            metadata=metadata,
         )
 
 
@@ -125,6 +156,10 @@ def _schema_to_flat_dictspace(
 
     Feature names are kept as dot-separated strings (e.g. "observation.state")
     matching the Parquet column names. This is consistent with HFAsUniEnvDataset.
+
+    Image and video features get ``Space.metadata`` ``{"kind": "image", "format": "rgb",
+    "layout": "HWC", "fps": <dataset fps>, "source": <feature name>}``;
+    ``observation.state`` and ``action`` get ``kind`` ``"proprio"`` / ``"action"``.
     """
     spaces: Dict[str, Space] = {}
     for feat_name, feature in schema.features.items():
@@ -132,7 +167,7 @@ def _schema_to_flat_dictspace(
             continue
         if exclude_features is not None and feat_name in exclude_features:
             continue
-        spaces[feat_name] = _feature_to_space(feature, backend, device)
+        spaces[feat_name] = _feature_to_space(feature, backend, device, fps=schema.fps)
     return DictSpace(backend, spaces, device=device)
 
 

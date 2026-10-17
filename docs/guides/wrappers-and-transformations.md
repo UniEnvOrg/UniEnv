@@ -81,6 +81,15 @@ The render stack wrapper can accumulate:
 
 The video wrapper can then write those captured frames to disk, including one file per flattened render key for mapping-based outputs.
 
+The recorded frames come from `env.render()` by default, or from the observations with `frame_source="observation"`. When the space describing the frames (`frame_space`, which defaults to the observation space for observation frames) carries [space metadata](../concepts/spaces-and-backends.md#space-metadata), only the leaves with `kind == "image"` are recorded, and each is converted to `(H, W, 3)` RGB according to its declared `layout` (`"CHW"` is moved channel-last) and `format` (`"bgr"`, `"rgba"`, `"gray"`, ...):
+
+```python
+wrapper = EpisodeVideoWrapper(env, store_dir="videos", frame_source="observation")
+# one video per camera leaf, e.g. episode_0_step_0_key_cameras.wrist.webm
+```
+
+Without any `kind` metadata the wrappers keep their previous behaviour: every render frame is recorded as an RGB image, and for observation frames every `(H, W, 3)` leaf is.
+
 ## Choosing Between A Wrapper And A Transformation
 
 Choose a transformation if:

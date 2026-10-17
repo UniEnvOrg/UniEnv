@@ -64,7 +64,9 @@ class RescaleTransformation(DataTransformation):
             high=target_high,
             dtype=target_dtype,
             shape=source_space.shape,
-            device=source_space.device
+            device=source_space.device,
+            # Same quantity with new bounds: the description still applies
+            metadata=source_space.metadata,
         )
         return target_space
 

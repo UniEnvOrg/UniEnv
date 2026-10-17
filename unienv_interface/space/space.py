@@ -2,6 +2,7 @@ from typing import Any, Generic, Iterable, Union, Mapping, Sequence, TypeVar, Op
 import sys
 import numpy as np
 from unienv_interface.backends import ComputeBackend, ArrayAPIArray
+from .metadata import SpaceMetadata, EMPTY_METADATA, coerce_metadata
 import abc
 
 def _is_jax_tracer(value : Any) -> bool:
@@ -46,10 +47,42 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
     Caches keyed on a space's identity (e.g. in ``ChainedTransformation``)
     include this counter, so mutating a space can never make them stale.
     ``BoxSpace`` is immutable after construction and is not tracked.
+
+    Metadata
+    --------
+    Every space carries an optional, read-only ``metadata`` mapping
+    (constructor keyword ``metadata=``) describing what its data *means*, e.g.
+    ``BoxSpace(..., shape=(480, 640, 3), metadata={"kind": "image", "format": "rgb"})``.
+    Values must be JSON-serializable; they are validated and deep-copied at
+    construction and exposed as a :class:`SpaceMetadata` (empty when absent).
+    Nested spaces carry their own metadata, so every camera of a ``DictSpace``
+    observation can be described separately. Use :meth:`with_metadata` to get
+    a copy of a space with other metadata.
+
+    Metadata is a description, not part of the data domain: ``__eq__``,
+    ``is_subspace`` and ``is_subspaceeq`` ignore it (use
+    ``space_utils.metadata_utils.spaces_equal_with_metadata`` to compare it
+    too). It is kept by ``to()``, the batching utilities, serialization and the
+    transformations that keep the meaning of the data, and dropped where the
+    meaning is lost (e.g. ``flatten_space``).
+
+    The keys below form a shared vocabulary understood by UniEnv utilities
+    (e.g. the video wrappers and ``unienv_data.storages.dict_storage_kwargs_from_space``).
+    None of them is required or enforced, and any other keys are allowed:
+
+    * ``kind``: what the data is, e.g. ``"image"``, ``"depth"``, ``"proprio"``, ``"action"``.
+    * ``format``: pixel format of images, ``"rgb"``, ``"bgr"``, ``"gray"`` or ``"rgba"``.
+    * ``layout``: axis order of images, ``"HWC"`` or ``"CHW"`` (trailing dims of the space).
+    * ``units``: physical units, e.g. ``"m"``, ``"rad"``.
+    * ``source``: name of the camera / sensor producing the data.
+    * ``fps``: capture rate of the source.
+    * ``label``: human readable name.
     """
     _mutation_epoch : int = 0
     # Attributes that are lazily filled caches rather than part of the space definition
     _UNTRACKED_ATTRS : frozenset = frozenset()
+    # Spaces without metadata (and spaces unpickled from before metadata existed) use the class default
+    _metadata : SpaceMetadata = EMPTY_METADATA
 
     @staticmethod
     def _notify_mutation() -> None:
@@ -67,20 +100,56 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         shape: Optional[Sequence[int]] = None,
         device : Optional[_SpaceBDeviceT] = None,
         dtype: Optional[_SpaceBDTypeT] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
         # Written to ``__dict__`` directly: on a fresh space these are not mutations, and
         # this keeps the tracking ``__setattr__`` off the construction path.
         attrs = self.__dict__
         if "backend" in attrs:  # re-initialised in place
             Space._notify_mutation()
+            attrs.pop("_metadata", None)
         attrs["backend"] = backend
         attrs["_shape"] = None if shape is None else tuple(shape)
         attrs["dtype"] = dtype
         attrs["_device"] = device
+        if metadata is not None and metadata is not EMPTY_METADATA:
+            attrs["_metadata"] = metadata if type(metadata) is SpaceMetadata else coerce_metadata(metadata)
 
     @property
     def device(self) -> Optional[_SpaceBDeviceT]:
         return self._device
+
+    @property
+    def metadata(self) -> SpaceMetadata:
+        """Read-only description of the data (see "Metadata" in the class docstring); empty if none was given."""
+        return self._metadata
+
+    def with_metadata(
+        self,
+        metadata : Optional[Mapping[str, Any]] = None,
+        /,
+        *,
+        replace : bool = False,
+        **updates : Any,
+    ) -> "Space[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+        """Return a copy of this space with updated metadata (this space is left unchanged).
+
+        ``metadata`` and ``updates`` are merged into the current metadata, or
+        replace it entirely with ``replace=True`` (``space.with_metadata(replace=True)``
+        clears it). Nested spaces are shared with this space, not copied.
+        """
+        merged = {} if replace else dict(self._metadata)
+        if metadata is not None:
+            merged.update(metadata)
+        merged.update(updates)
+        return self._copy_with_metadata(coerce_metadata(merged))
+
+    def _copy_with_metadata(self, metadata : SpaceMetadata) -> "Space[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBDRNGT]":
+        """Shallow copy of this space with ``metadata`` (already a ``SpaceMetadata``)."""
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        new.__dict__["_metadata"] = metadata
+        return new
     
     @abc.abstractmethod
     def to(

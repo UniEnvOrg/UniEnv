@@ -47,7 +47,8 @@ def include_chained_key_in_dict(
         return d
 
     if target_d is None:
-        target_d = DictSpace(d.backend, {}, device=d.device) if isinstance(d, DictSpace) else dict()
+        # A filtered DictSpace keeps the source dict's metadata (the leaves keep their own)
+        target_d = DictSpace(d.backend, {}, device=d.device, metadata=d.metadata) if isinstance(d, DictSpace) else dict()
 
     first_key = chained_key[0]
 

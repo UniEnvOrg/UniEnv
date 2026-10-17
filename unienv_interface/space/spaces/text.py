@@ -21,6 +21,7 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
         min_length: int = 0,
         charset: Optional[FrozenSet[str] | str] = None,
         device : Optional[BDeviceType] = None,
+        metadata : Optional[Mapping[str, Any]] = None,
     ):
         assert min_length >= 0 and min_length <= max_length
         self.min_length: int = min_length
@@ -35,7 +36,8 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             backend,
             shape=None,
             device=device,
-            dtype=None
+            dtype=None,
+            metadata=metadata,
         )
 
     def to(self, backend = None, device = None):
@@ -47,7 +49,8 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             max_length=self.max_length,
             min_length=self.min_length,
             charset=self.charset,
-            device=new_device
+            device=new_device,
+            metadata=self._metadata,
         )
 
     @property

@@ -1,4 +1,5 @@
 from ..space import Space
+from ..metadata import SpaceMetadata
 from .binary import BinarySpace
 from .box import BoxSpace
 from .dynamic_box import DynamicBoxSpace
@@ -11,6 +12,7 @@ from .batched import BatchedSpace
 
 __all__ = [
     "Space",
+    "SpaceMetadata",
     "BinarySpace",
     "BoxSpace",
     "DynamicBoxSpace",

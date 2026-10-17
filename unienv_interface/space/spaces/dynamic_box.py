@@ -68,6 +68,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         dtype: BDtypeType,
         device : Optional[BDeviceType] = None,
         fill_value : Union[int, float] = 0,
+        metadata : Optional[Mapping[str, Any]] = None,
     ):
         assert (
             dtype is not None
@@ -104,6 +105,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             shape=None,
             device=device,
             dtype=dtype,
+            metadata=metadata,
         )
 
         # Cast low and high to backend arrays
@@ -261,6 +263,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             dtype=new_dtype,
             device=new_device,
             fill_value=self.fill_value,
+            metadata=self._metadata,
         )
 
     def is_bounded(self, manner = "both"):

@@ -135,6 +135,30 @@ print(rb.get_segments())          # logical half-open ranges, e.g. [(0, 3)]
 
 For depth or other single-channel videos, prefer `ffv1` with a 2D `(H, W)` space and a grayscale pixel format such as `gray16le`. For RGB video, use an RGB-capable codec such as `libx264rgb` (or `h264`/`libx264` with a matching YUV pixel format like `yuv420p`). Set pixel formats explicitly; there is no automatic RGB fallback.
 
+### Routing Leaves By Metadata
+
+When the observation space describes its leaves with [space metadata](../concepts/spaces-and-backends.md#space-metadata), `dict_storage_kwargs_from_space` builds the `DictStorage` layout for you: every `kind == "image"` `(H, W, 3)` uint8 leaf goes to an `ImageStorage` (JPEG files by default) and all other leaves to one `HDF5Storage`.
+
+```python
+from unienv_data.storages import DictStorage, dict_storage_kwargs_from_space
+
+rb = ReplayBuffer.create(
+    DictStorage,
+    obs_space,
+    cache_path="cache/rb",
+    capacity=None,
+    **dict_storage_kwargs_from_space(
+        obs_space,
+        kind_kwargs={"image": {"format": "PNG"}},     # lossless image files
+        key_storage_cls={"cameras/debug": None},      # keep this camera in the default storage
+    ),
+)
+```
+
+Storages per kind (`kind_storage_cls`, e.g. `{"image": VideoStorage}`, which then also receives the leaf's declared `fps`), per key (`key_storage_cls`) and the default storage (`default_storage_cls`) are all configurable, as are their keyword arguments. Channel-first or non-uint8 images stay in the default storage. `create_dict_storage_from_space` creates the `DictStorage` directly.
+
+Storages keep the metadata of the space they are given, and `ReplayBuffer.dumps` / `load_from` persist it with the rest of the space.
+
 ## Trajectories And Samplers
 
 Beyond single-transition replay:

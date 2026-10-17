@@ -65,6 +65,7 @@ def _reshape_batch_size_box(
         high=new_high,
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         shape=new_shape,
     )
 
@@ -102,6 +103,7 @@ def _reshape_batch_size_dynamic_box(
         shape_high=new_shape_high,
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         fill_value=space.fill_value,
     )
 
@@ -121,6 +123,7 @@ def _reshape_batch_size_binary(
         shape=new_shape,
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
     )
 
 @reshape_batch_size.register(GraphSpace)
@@ -145,6 +148,7 @@ def _reshape_batch_size_graph(
         max_edges=space.max_edges,
         batch_shape=new_shape,
         device=space.device,
+        metadata=space._metadata,
     )
 
 @reshape_batch_size.register(DictSpace)
@@ -161,6 +165,7 @@ def _reshape_batch_size_dict(
         backend=space.backend,
         spaces=new_spaces,
         device=space.device,
+        metadata=space._metadata,
     )
 
 @reshape_batch_size.register(TupleSpace)
@@ -177,6 +182,7 @@ def _reshape_batch_size_tuple(
         backend=space.backend,
         spaces=new_spaces,
         device=space.device,
+        metadata=space._metadata,
     )
 
 @reshape_batch_size.register(BatchedSpace)
@@ -189,7 +195,8 @@ def _reshape_batch_size_batched(
         f"Expected the old batch shape to be a prefix of the current batch shape, but got old {old_batch_shape} != current {space.batch_shape}"
     return BatchedSpace(
         single_space=space.single_space,
-        batch_shape=new_batch_shape + space.batch_shape[len(old_batch_shape):]
+        batch_shape=new_batch_shape + space.batch_shape[len(old_batch_shape):],
+        metadata=space._metadata,
     )
 
 def reshape_batch_size_in_data(
@@ -262,6 +269,7 @@ def _swap_batch_dims_box(space: BoxSpace, dim1: int, dim2: int):
         high=_tensor_transpose(space.backend, space.high, dim1, dim2),
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         shape=_shape_transpose(space.shape, dim1, dim2),
     )
 
@@ -275,6 +283,7 @@ def _swap_batch_dims_dynamic_box(space: DynamicBoxSpace, dim1: int, dim2: int):
         shape_high=_shape_transpose(space.shape_high, dim1, dim2),
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         fill_value=space.fill_value,
     )
 
@@ -285,6 +294,7 @@ def _swap_batch_dims_binary(space: BinarySpace, dim1: int, dim2: int):
         shape=_shape_transpose(space.shape, dim1, dim2),
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
     )
 
 @swap_batch_dims.register(GraphSpace)
@@ -300,6 +310,7 @@ def _swap_batch_dims_graph(space: GraphSpace, dim1: int, dim2: int):
         max_edges=space.max_edges,
         batch_shape=_shape_transpose(space.batch_shape, dim1, dim2),
         device=space.device,
+        metadata=space._metadata,
     )
 
 @swap_batch_dims.register(DictSpace)
@@ -308,6 +319,7 @@ def _swap_batch_dims_dict(space: DictSpace, dim1: int, dim2: int):
         backend=space.backend,
         spaces={key: swap_batch_dims(subspace, dim1, dim2) for key, subspace in space.spaces.items()},
         device=space.device,
+        metadata=space._metadata,
     )
 
 @swap_batch_dims.register(TupleSpace)
@@ -317,13 +329,15 @@ def _swap_batch_dims_tuple(space: TupleSpace, dim1: int, dim2: int):
         backend=space.backend,
         spaces=[swap_batch_dims(subspace, dim1, dim2) for subspace in space.spaces],
         device=space.device,
+        metadata=space._metadata,
     )
 
 @swap_batch_dims.register(BatchedSpace)
 def _swap_batch_dims_batched(space: BatchedSpace, dim1: int, dim2: int):
     return BatchedSpace(
         single_space=space.single_space,
-        batch_shape=_shape_transpose(space.batch_shape, dim1, dim2)
+        batch_shape=_shape_transpose(space.batch_shape, dim1, dim2),
+        metadata=space._metadata,
     )
 
 def swap_batch_dims_in_data(
@@ -426,6 +440,7 @@ def _batch_space_box(space: BoxSpace, n: int = 1):
         high=space._high[None],
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         shape=(n,) + space.shape,
     )
 
@@ -439,6 +454,7 @@ def _batch_space_dynamic_box(space: DynamicBoxSpace, n: int = 1):
         shape_high=(n,) + space.shape_high,
         dtype=space.dtype,
         device=space.device,
+        metadata=space._metadata,
         fill_value=space.fill_value,
     )
 
@@ -448,6 +464,7 @@ def _batch_space_binary(space: BinarySpace, n: int = 1):
         backend=space.backend,
         shape=(n,) + space.shape,
         device=space.device,
+        metadata=space._metadata,
         dtype=space.dtype,
     )
 
@@ -463,7 +480,8 @@ def _batch_space_graph(space: GraphSpace, n: int = 1):
         min_edges=space.min_edges,
         max_edges=space.max_edges,
         batch_shape=(n,) + space.batch_shape,
-        device=space.device
+        device=space.device,
+        metadata=space._metadata,
     )
 
 @batch_space.register(DictSpace)
@@ -472,6 +490,7 @@ def _batch_space_dict(space: DictSpace, n: int = 1):
         backend=space.backend,
         spaces={key: batch_space(subspace, n=n) for key, subspace in space.spaces.items()},
         device=space.device,
+        metadata=space._metadata,
     )
 
 @batch_space.register(TupleSpace)
@@ -480,6 +499,7 @@ def _batch_space_tuple(space: TupleSpace, n: int = 1):
         backend=space.backend,
         spaces=[batch_space(subspace, n=n) for subspace in space.spaces],
         device=space.device,
+        metadata=space._metadata,
     )
 
 @batch_space.register(BatchedSpace)
@@ -487,6 +507,7 @@ def _batch_space_batched(space: BatchedSpace, n: int = 1):
     return BatchedSpace(
         single_space=space.single_space,
         batch_shape=(n,) + space.batch_shape,
+        metadata=space._metadata,
     )
 
 @batch_space.register(TextSpace)
@@ -495,7 +516,13 @@ def _batch_space_text(space: typing.Union[TextSpace, UnionSpace], n: int = 1):
     return BatchedSpace(
         space,
         batch_shape=(n,),
+        metadata=space._metadata,
     )
+
+def _common_metadata(spaces : typing.Sequence[Space]) -> Optional[typing.Mapping[str, Any]]:
+    """The metadata shared by all ``spaces`` (``None`` if they disagree: no single description fits the batch)."""
+    metadata = spaces[0].metadata
+    return metadata if all(space.metadata == metadata for space in spaces[1:]) else None
 
 @singledispatch
 def batch_differing_spaces(spaces: typing.Sequence[Space], device : Optional[Any] = None) -> Space:
@@ -534,6 +561,7 @@ def _batch_differing_spaces_box(spaces: typing.Sequence[BoxSpace], device : Opti
         high=target_high,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
+        metadata=_common_metadata(spaces),
         # The stored bounds may be abbreviated (size-1 axes), so the shape cannot be inferred from them
         shape=(len(spaces),) + spaces[0].shape,
     )
@@ -565,6 +593,7 @@ def _batch_differing_spaces_dynamic_box(spaces: typing.Sequence[DynamicBoxSpace]
         shape_high=(len(spaces),) + spaces[0].shape_high,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
+        metadata=_common_metadata(spaces),
         fill_value=spaces[0].fill_value,
     )
 
@@ -578,6 +607,7 @@ def _batch_differing_spaces_binary(spaces: typing.Sequence[BinarySpace], device 
         shape=(len(spaces),) + spaces[0].shape,
         dtype=spaces[0].dtype,
         device=device if device is not None else spaces[0].device,
+        metadata=_common_metadata(spaces),
     )
 
 @batch_differing_spaces.register(DictSpace)
@@ -591,6 +621,7 @@ def _batch_differing_spaces_dict(spaces: typing.Sequence[DictSpace], device : Op
             for key in spaces[0].keys()
         },
         device=device if device is not None else spaces[0].device,
+        metadata=_common_metadata(spaces),
     )
 
 @batch_differing_spaces.register(TupleSpace)
@@ -602,6 +633,7 @@ def _batch_differing_spaces_tuple(spaces: typing.Sequence[TupleSpace], device : 
             for subspaces in zip(*[space.spaces for space in spaces])
         ],
         device=device if device is not None else spaces[0].device,
+        metadata=_common_metadata(spaces),
     )
 
 @singledispatch
@@ -612,6 +644,7 @@ def unbatch_spaces(space: Space) -> Iterable[Space]:
 
 @unbatch_spaces.register(BoxSpace)
 def _unbatch_spaces_box(space: BoxSpace):
+    metadata = space._metadata  # read once, not per row
     assert len(space.shape) > 0, "Expected BoxSpace to be batched, but it is not."
     low = space._low
     high = space._high
@@ -631,11 +664,13 @@ def _unbatch_spaces_box(space: BoxSpace):
             high=_row(high, i),
             dtype=space.dtype,
             device=space.device,
+            metadata=metadata,
             shape=space.shape[1:],
         )
 
 @unbatch_spaces.register(DynamicBoxSpace)
 def _unbatch_spaces_dynamic_box(space: DynamicBoxSpace):
+    metadata = space._metadata  # read once, not per row
     assert len(space.shape_low) > 0, "Expected DynamicBoxSpace to be batched, but it is not."
     low = space._low
     high = space._high
@@ -648,21 +683,25 @@ def _unbatch_spaces_dynamic_box(space: DynamicBoxSpace):
             shape_high=space.shape_high[1:],
             dtype=space.dtype,
             device=space.device,
+            metadata=metadata,
             fill_value=space.fill_value,
         )
 
 @unbatch_spaces.register(BinarySpace)
 def _unbatch_spaces_binary(space: BinarySpace):
+    metadata = space._metadata  # read once, not per row
     for i in range(space.shape[0]):
         yield BinarySpace(
             backend=space.backend,
             shape=space.shape[1:],
             device=space.device,
+            metadata=metadata,
             dtype=space.dtype,
         )
 
 @unbatch_spaces.register(GraphSpace)
 def _unbatch_spaces_graph(space: GraphSpace):
+    metadata = space._metadata  # read once, not per row
     assert len(space.batch_shape) > 0, "Expected GraphSpace to be batched, but it is not."
     for i in range(space.batch_shape[0]):
         yield GraphSpace(
@@ -676,10 +715,12 @@ def _unbatch_spaces_graph(space: GraphSpace):
             max_edges=space.max_edges,
             batch_shape=space.batch_shape[1:],
             device=space.device,
+            metadata=metadata,
         )
 
 @unbatch_spaces.register(DictSpace)
 def _unbatch_spaces_dict(space: DictSpace):
+    metadata = space._metadata  # read once, not per row
     subspace_iterators = {}
     for key, subspace in space.spaces.items():
         subspace_iterators[key] = unbatch_spaces(subspace)
@@ -688,23 +729,28 @@ def _unbatch_spaces_dict(space: DictSpace):
             backend=space.backend,
             spaces={key: value for key, value in zip(subspace_iterators.keys(), items)},
             device=space.device,
+            metadata=metadata,
         )
 
 @unbatch_spaces.register(TupleSpace)
 def _unbatch_spaces_tuple(space: TupleSpace):
+    metadata = space._metadata  # read once, not per row
     for unbatched_subspaces_i in zip(*[unbatch_spaces(subspace) for subspace in space.spaces]):
         yield TupleSpace(
             backend=space.backend,
             spaces=unbatched_subspaces_i,
             device=space.device,
+            metadata=metadata,
         )
 
 @unbatch_spaces.register(BatchedSpace)
 def _unbatch_spaces_batched(space: BatchedSpace):
+    metadata = space._metadata  # read once, not per row
     assert len(space.batch_shape) > 0, "Expected BatchedSpace to be batched, but it is not."
     unbatched_space = space.single_space if len(space.batch_shape) == 1 else BatchedSpace(
         single_space=space.single_space,
         batch_shape=space.batch_shape[1:],
+        metadata=metadata,
     )
     for i in range(space.batch_shape[0]):
         yield unbatched_space
