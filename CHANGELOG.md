@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added `Space.clip(x)` on every space (#4): projects a value of a superspace onto the subspace (`target.clip(x)` with `target.is_subspaceeq(source)`, so `target.contains(target.clip(x))`), dropping extra dict keys, clamping bounds, trimming over-long dynamic axes/text/graphs, or raising `ValueError` when a projection would require inventing data (missing keys, too-short text or dynamic axes, graphs below the minimum node/edge count).
+- `BoxSpace.clip` casts to the box dtype, returns an array for 0-d boxes on NumPy, and is faster for boxes whose coordinates share one bound; `DynamicBoxSpace.clip` also trims axes longer than `shape_high`.
+- Fixed `DynamicBoxSpace.is_subspaceeq` for per-element bounds on a fixed-size axis, `GraphSpace.is_subspaceeq` comparing edge counts of edge-less spaces, `GraphSpace.contains` raising on unexpected edge features, and `UnionSpace.contains` rejecting non-int64 NumPy integer indices.
+
 ## 0.0.1b15 (2026-10-16)
 
 Requires `xbarray>=0.0.1a20` (faster NumPy random draws and `clip`, int shapes for PyTorch/JAX random draws).
