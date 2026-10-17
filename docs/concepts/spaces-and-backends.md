@@ -67,6 +67,30 @@ When a downstream system needs dense arrays, use the helpers in:
 
 Those utilities are also used internally by wrappers, batches, and replay buffers.
 
+## Subspaces And Clipping
+
+`a.is_subspaceeq(b)` checks `a ⊆ b`: every valid value of `a` is also valid in `b` (equality allowed). `a.is_subspace(b)` is the strict `a ⊂ b`. The check is structural: same space type, backend and dtype, with tighter bounds, shape / length / count ranges or charsets, and for `DictSpace` a subset of the keys. A controller can therefore declare the observation space it requires and check it with `required.is_subspaceeq(env.observation_space)`, even when the environment exposes extra keys.
+
+`clip` goes the other way. Called on the subspace, it projects any value of the larger space onto it:
+
+```python
+if required.is_subspaceeq(env.observation_space):
+    obs = required.clip(env_obs)   # required.contains(obs) holds
+```
+
+`clip` leaves values that already belong to the space unchanged, never modifies its input, and returns data with the space's backend and dtype. When a value cannot be projected without inventing data, `clip` raises `ValueError`:
+
+| Space | `clip` | `ValueError` when |
+| --- | --- | --- |
+| `BoxSpace` | clamps to the bounds (`±inf` bounds keep values), casts to the box dtype | never |
+| `BinarySpace` | returns the value (only an identical space is a subspace) | never |
+| `DynamicBoxSpace` | trims axes longer than `shape_high`, clamps the values | an axis is shorter than `shape_low` |
+| `DictSpace` | drops extra keys, clips each value | a key of the space is missing |
+| `TupleSpace` / `BatchedSpace` | clips each element | an element cannot be clipped |
+| `UnionSpace` | clips the value with the alternative at the same index | the value cannot be clipped |
+| `TextSpace` | removes characters outside the charset, truncates to `max_length` | fewer than `min_length` characters remain |
+| `GraphSpace` | keeps the first `max_nodes` nodes (dropping their edges), then the first `max_edges` edges, clamps the features; per graph in a batch | fewer than `min_nodes` nodes or `min_edges` edges remain |
+
 ## Space Metadata
 
 Shape, dtype and bounds say what values are valid, not what they mean. Every space therefore takes an optional, read-only `metadata` mapping of JSON values:
