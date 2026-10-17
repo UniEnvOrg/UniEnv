@@ -2,8 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.0.1b16 (2026-10-17)
 
+- Extended the space metadata vocabulary with `frame`, `rotation`, `control`, `mode`, `normalized`, `range` and `names`, recommended `kind` values, the `"HW"` layout and the `"bgra"` format, plus a convention for vectors that pack several quantities.
+- Added metadata builders (`metadata`, `image_metadata`, `depth_metadata`, `proprio_metadata`, `action_metadata`) and `annotate` to attach metadata to nested spaces by path.
+- Added `metadata_issues` / `validate_metadata` to check space metadata against the vocabulary, and `common_metadata`.
+- Fixed `CombinedWorldNode`, `FlatCombinedWorldNode` and their functional counterparts dropping the metadata of merged dict spaces.
 - Added `Space.clip(x)` on every space (#4): projects a value of a superspace onto the subspace (`target.clip(x)` with `target.is_subspaceeq(source)`, so `target.contains(target.clip(x))`), dropping extra dict keys, clamping bounds, trimming over-long dynamic axes/text/graphs, or raising `ValueError` when a projection would require inventing data (missing keys, too-short text or dynamic axes, graphs below the minimum node/edge count).
 - `BoxSpace.clip` casts to the box dtype, returns an array for 0-d boxes on NumPy, and is faster for boxes whose coordinates share one bound; `DynamicBoxSpace.clip` also trims axes longer than `shape_high`.
 - Fixed `DynamicBoxSpace.is_subspaceeq` for per-element bounds on a fixed-size axis, `GraphSpace.is_subspaceeq` comparing edge counts of edge-less spaces, `GraphSpace.contains` raising on unexpected edge features, and `UnionSpace.contains` rejecting non-int64 NumPy integer indices.
