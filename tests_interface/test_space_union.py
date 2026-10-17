@@ -33,3 +33,13 @@ def test_contains_rejects_malformed():
     assert not space.contains((2, "a"))
     assert not space.contains((1, np.zeros(2)))
     assert not space.contains((0, np.zeros(2), 1))
+
+
+def test_contains_accepts_any_integer_index():
+    # Regression: only ``int`` / ``np.int64`` indices were accepted, e.g. ``np.int32`` was rejected
+    from unienv_interface.backends.numpy import NumpyComputeBackend as NB
+    space = _union(NB)
+    assert space.contains((np.int32(1), "ab"))
+    assert space.contains((np.uint8(0), np.zeros(2, dtype=NB.default_floating_dtype)))
+    assert not space.contains((np.int32(2), "ab"))
+    assert not space.contains((1.0, "ab"))

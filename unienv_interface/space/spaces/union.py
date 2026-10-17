@@ -4,6 +4,9 @@ import numpy as np
 from ..space import Space
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
+def _is_index(value : Any) -> bool:
+    """Whether ``value`` can be an alternative index: a Python or numpy integer of any width."""
+    return isinstance(value, (int, np.integer))
 
 class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
     def __init__(
@@ -76,7 +79,7 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
         return (
             isinstance(x, Tuple)
             and len(x) == 2
-            and isinstance(x[0], (np.int64, int))
+            and _is_index(x[0])
             and 0 <= x[0] < len(self.spaces)
             and self.spaces[x[0]].contains(x[1])
         )

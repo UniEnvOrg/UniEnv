@@ -945,3 +945,22 @@ def test_strict_consistency_dynamic_box(backend, seed):
     for _ in range(5):
         rng, sample = a.sample(rng)
         assert b.contains(sample)
+
+
+def test_dynamic_box_elementwise_bounds_on_a_static_axis_in_dynamic_range():
+    # Regression: comparing the bounds at the larger shape_high failed to broadcast the target's
+    # per-element bounds on its static axis, so the relation was wrongly reported as False.
+    target = DynamicBoxSpace(NumpyComputeBackend, np.array([[0.0, 1.0, 2.0]]), np.array([[1.0, 2.0, 3.0]]), (1, 3), (2, 3), np.float32)
+    source = DynamicBoxSpace(NumpyComputeBackend, -5.0, 5.0, (1, 0), (2, 5), np.float32)
+    assert target.is_subspaceeq(source)
+    assert target.is_subspace(source)
+    too_wide = DynamicBoxSpace(NumpyComputeBackend, np.array([[0.0, 1.0, -6.0]]), np.array([[1.0, 2.0, 3.0]]), (1, 3), (2, 3), np.float32)
+    assert not too_wide.is_subspaceeq(source)
+
+
+def test_graph_edge_counts_ignored_without_edges():
+    # Regression: edge-count limits of edge-less spaces made identical domains incomparable
+    node = BoxSpace(NumpyComputeBackend, 0.0, 1.0, np.float32, shape=())
+    a = GraphSpace(NumpyComputeBackend, node, min_edges=2)
+    b = GraphSpace(NumpyComputeBackend, node, min_edges=1, max_edges=1)
+    assert a.is_subspaceeq(b) and b.is_subspaceeq(a)

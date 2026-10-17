@@ -259,6 +259,8 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
                 return False
             
             if x.edges_features is not None:
+                if self.edge_feature_space is None:
+                    return False
                 batched_edge_space = self._make_batched_edge_feature_space(int(self.backend.max(x.n_edges)))
                 if not batched_edge_space.contains(x.edges_features):
                     return False
@@ -321,7 +323,8 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
           ``self.max_nodes <= other.max_nodes`` (treating ``None`` as +∞);
         * likewise for edges, with the additional requirement that
           ``self.is_edge`` and ``other.is_edge`` agree (an edge-less space
-          cannot be a subspace of an edge-bearing one and vice versa).
+          cannot be a subspace of an edge-bearing one and vice versa); the
+          edge counts are ignored for edge-less spaces.
 
         ``device`` is ignored.
         """
@@ -339,13 +342,14 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         other_max = other.max_nodes if other.max_nodes is not None else float("inf")
         if not (self_max <= other_max):
             return False
-        # Edge count range containment (None == +inf).
-        if other.min_edges > self.min_edges:
-            return False
-        self_max_e = self.max_edges if self.max_edges is not None else float("inf")
-        other_max_e = other.max_edges if other.max_edges is not None else float("inf")
-        if not (self_max_e <= other_max_e):
-            return False
+        # Edge count range containment (None == +inf); edge limits only constrain spaces with edges.
+        if self.is_edge:
+            if other.min_edges > self.min_edges:
+                return False
+            self_max_e = self.max_edges if self.max_edges is not None else float("inf")
+            other_max_e = other.max_edges if other.max_edges is not None else float("inf")
+            if not (self_max_e <= other_max_e):
+                return False
         # Feature-space recursion.
         if self.node_feature_space is None:
             if other.node_feature_space is not None:

@@ -186,3 +186,15 @@ def test_set_at_replacing_the_largest_graph_shrinks_padding():
     updated = sbu.set_at(batched, batch, 1, small)
     assert updated.nodes_features.shape == (2, 1, 2)
     assert batched.contains(updated)
+
+
+def test_contains_rejects_edge_features_without_an_edge_feature_space():
+    # Regression: ``contains`` raised AttributeError instead of returning False
+    space = GraphSpace(B, _node_space(), is_edge=True)
+    g = GraphInstance(
+        n_nodes=np.asarray(2), n_edges=np.asarray(1), nodes_features=np.full((2, 2), 0.5),
+        edges=np.array([[0, 1]]), edges_features=np.array([0.5]),
+    )
+    assert not space.contains(g)
+    g.edges_features = None
+    assert space.contains(g)

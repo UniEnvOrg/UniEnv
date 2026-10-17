@@ -485,18 +485,12 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         (``other.shape_low <= self.shape_low`` and
         ``self.shape_high <= other.shape_high`` per dimension, inf-aware via
         plain integer comparison), and the value bounds of ``self`` are
-        contained within ``other``'s. The value-bounds check is performed by
-        broadcasting both spaces' bounds to a common shape (the elementwise
-        maximum of the two ``shape_high`` vectors along each axis, restricted
-        to axes where the two ranges overlap) via ``get_low``/``get_high``.
-
-        .. note::
-            This class exposes ``get_low``/``get_high`` but no ``low``/``high``
-            properties, even though ``__eq__`` and ``contains`` reference
-            ``self.low``/``self.high``. This implementation deliberately avoids
-            ``self.low``/``self.high`` and uses ``get_low``/``get_high``
-            instead; the pre-existing bug in ``__eq__``/``contains`` is left
-            untouched per scope.
+        contained within ``other``'s. The value-bounds check broadcasts both
+        spaces' bounds to ``self``'s broadcast shape (``shape_low`` with size
+        ``1`` on its dynamic axes).
+        This covers every stored bound: ``other``'s bounds broadcast to it
+        because an axis that is static in ``other`` is static with the same
+        size in ``self``, and neither space's bounds vary along a dynamic axis.
         """
         try:
             if not (isinstance(other, DynamicBoxSpace) and self.backend == other.backend):
@@ -511,15 +505,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             ):
                 if not (dim_other_low <= dim_self_low and dim_self_high <= dim_other_high):
                     return False
-            # Value-bounds containment at a common broadcastable shape. Both
-            # spaces store bounds broadcastable to their respective
-            # ``_broadcast_shape``; pick a shape that is broadcast-compatible
-            # with both by using the per-axis max of the two ``shape_high``
-            # vectors (clamped to axes where bounds are stored as size 1, which
-            # is always the case for dynamic axes).
-            common_shape = tuple(
-                max(s_hi, o_hi) for s_hi, o_hi in zip(self.shape_high, other.shape_high)
-            )
+            # Value-bounds containment at ``self``'s broadcast shape (see docstring).
+            common_shape = self._broadcast_shape
             self_low = self.get_low(common_shape)
             self_high = self.get_high(common_shape)
             other_low = other.get_low(common_shape)
