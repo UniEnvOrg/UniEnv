@@ -30,6 +30,7 @@ JSON. Other values are objects with the reserved key `"__t"`:
 | `float` | `v`: `"nan"`, `"inf"`, `"-inf"` | non-finite float |
 | `bytes` | `b`: buffer index | bytes |
 | `nd` | `d`: dtype, `s`: shape, `b`: buffer index | array, C order |
+| `nd` | `d`, `s`, `c`: codec, `o`: codec options, `b`: list of buffer indices | compressed array (see below) |
 | `space` | `v`: `space_to_json` document | UniEnv space |
 | `graph` | `v`: `n_nodes`, `n_edges`, `nodes_features`, `edges_features`, `edges` | `GraphInstance` |
 
@@ -63,7 +64,7 @@ time, in arrival order.
 
 ## Protocol methods
 
-- `hello(version=2)` must be the first request. It returns
+- `hello(version=2, compress=null)` must be the first request. It returns
   `{"version": 2, "resources": {name: descriptor}}`. A descriptor has `kind`
   (`env`, `world`, `node`), `methods`, `attributes` (`name`, `batch_size`, timings,
   `render_mode`, `render_fps`, `supported_render_modes`, `has_*` signals,
@@ -78,3 +79,12 @@ time, in arrival order.
 `updates` (`{name: [version, spaces]}`) carries spaces that changed since the
 client last saw them; the server checks after `reset`, `reload`, `after_reset` and
 `after_reload` calls. Clients ignore updates with a version not newer than theirs.
+
+## Compression
+
+`hello(compress={"image": "jpeg:90"})` asks the server to JPEG-encode (quality 90)
+the uint8 array leaves of results whose space has `metadata["kind"] == "image"`, an
+`HWC` or `CHW` `metadata["layout"]` (default `HWC`) and 1 or 3 channels. Such a leaf
+is sent as `{"__t": "nd", "d": "|u1", "s": shape, "c": "jpeg", "o": {"quality": 90, "layout": ...,
+"format": ...}, "b": [one buffer per image]}` (leading dimensions are batch
+dimensions). Clients never compress what they send.

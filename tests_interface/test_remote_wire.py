@@ -74,10 +74,12 @@ def test_conversions_and_writable_arrays():
 
 def test_spaces_and_graphs_roundtrip():
     space = DictSpace(B, {"box": BoxSpace(B, -np.inf, 1.0, np.float32, shape=(2,)),
-                          "tuple": TupleSpace(B, [BoxSpace(B, 0, 255, np.uint8, shape=(4, 4, 3))])})
+                          "tuple": TupleSpace(B, [BoxSpace(B, 0, 255, np.uint8, shape=(4, 4, 3), metadata={"kind": "image"})])},
+                      metadata={"source": "camera"})
     decoded = roundtrip(space)
     assert type(decoded) is DictSpace and decoded["box"].shape == (2,)
     assert np.isneginf(decoded["box"].low).all() and decoded["tuple"][0].dtype == np.uint8
+    assert decoded.metadata == {"source": "camera"} and decoded["tuple"][0].metadata == {"kind": "image"}
     graph = GraphInstance(n_nodes=np.array([2]), n_edges=None, nodes_features=np.ones((1, 2, 3)),
                           edges_features=None, edges=np.zeros((1, 0, 2), np.int64))
     decoded = roundtrip(graph)

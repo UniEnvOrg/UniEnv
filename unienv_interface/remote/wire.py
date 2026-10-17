@@ -109,6 +109,7 @@ def register_codec(name: str, codec: ArrayCodec) -> None:
 
 
 def get_codec(name: Any) -> ArrayCodec:
+    from . import compression  # noqa: F401  registers the built-in codecs
     codec = _CODECS.get(name) if isinstance(name, str) else None
     if codec is None:
         raise WireError(f"Unknown array codec {name!r}")

@@ -108,6 +108,27 @@ Delivery is latest-wins: a slow subscriber skips results (visible as gaps in
 `sequence`) and never slows the server or other clients down. Closing the
 subscription unsubscribes; a lost connection ends it with `ConnectionError`.
 
+## Image compression
+
+Over a slow network, a client can ask for lossy compression of camera images:
+
+```python
+client = RemoteClient.connect(address, compress={"image": "jpeg:90"})  # quality 1-100
+```
+
+The server then JPEG-encodes every uint8 leaf of a `reset` / `step` result (and of
+node `get_observation` / `get_context`) whose space has `metadata["kind"] ==
+"image"`, laid out `HWC` or `CHW` (`metadata["layout"]`, default `HWC`) with 1 or 3
+channels (`metadata["format"]`: `rgb`, `bgr` or `gray`); leading dimensions are
+batch dimensions. Everything else (depth maps, float images, RGBA, arrays without
+image metadata) and everything the client sends stays raw. Each client chooses for
+itself; the default is raw. Encoding uses OpenCV when installed, otherwise Pillow.
+
+An 84x84 RGB image shrinks about 11x and costs ~20 µs to encode plus ~20 µs to
+decode, so it pays off once the link is slower than a few hundred Mbit/s; on
+loopback raw is faster. Other codecs can be added with
+`unienv_interface.remote.wire.register_codec` (on both sides).
+
 ## Performance
 
 Arrays travel as raw attachments next to a small JSON header, with no pickling and

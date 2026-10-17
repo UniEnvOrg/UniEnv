@@ -114,6 +114,9 @@ class RemoteClient:
     def __init__(self, transport: Transport, *, backend: ComputeBackend = NumpyComputeBackend,
                  device: Optional[Any] = None, timeout: Optional[float] = None,
                  compress: Optional[Dict[str, str]] = None) -> None:
+        if compress:
+            from .compression import parse_spec
+            parse_spec(compress)  # fail early on a bad spec
         self.transport, self.backend, self.device, self.timeout = transport, backend, device, timeout
         self.closed = False
         self._ids = count(1)
