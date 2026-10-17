@@ -529,8 +529,34 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         )
     
     def clip(self, x: BArrayType) -> BArrayType:
-        """Clip the values of x to be within the bounds of this space."""
-        return self.backend.clip(x, self._low, self._high)
+        """Clamp ``x`` elementwise to the bounds of this box (see ``Space.clip``).
+
+        ``x`` is cast to the box dtype first (members of a superset box are
+        losslessly castable), so the result always has the box dtype; ``±inf``
+        bounds leave the corresponding coordinates untouched. Never raises
+        for data of the box shape. Returns a new array.
+        """
+        backend = self.backend
+        dtype = self._low.dtype  # materialised dtype (jax without x64 stores int64 as int32)
+        if not backend.is_backendarray(x):
+            x = backend.asarray(x, dtype=dtype, device=self.device)
+        elif x.dtype != dtype:
+            x = backend.astype(x, dtype)
+
+        plan = self._contains_plan
+        if plan is None:
+            plan = self._build_contains_plan()
+            if plan is not None:
+                self._contains_plan = plan
+        if plan is not None and plan[0] == "minmax":
+            # Shared scalar bounds: the backends' scalar clip is much faster than array bounds
+            ret = backend.clip(x, plan[1], plan[2])
+        else:
+            ret = backend.clip(x, self._low, self._high)
+        if not backend.is_backendarray(ret):
+            # numpy turns 0-d results of elementwise ops into scalars
+            ret = backend.asarray(ret, dtype=dtype, device=self.device)
+        return ret
 
     def get_repr(
         self,

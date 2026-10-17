@@ -119,6 +119,25 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
             )
         )
 
+    def clip(self, x: str) -> str:
+        """Project the string ``x`` onto this text space (see ``Space.clip``).
+
+        Characters outside this space's charset (if it has one) are removed and
+        the result is truncated to ``max_length``. Raises ``ValueError`` if
+        ``x`` is not a string or the result is shorter than ``min_length``
+        (characters cannot be invented).
+        """
+        if not isinstance(x, str):
+            raise ValueError(f"TextSpace.clip: expected a str, got {type(x)}")
+        if self._char_set is not None:
+            x = "".join(c for c in x if c in self._char_set)
+        x = x[:self.max_length]
+        if len(x) < self.min_length:
+            raise ValueError(
+                f"TextSpace.clip: {len(x)} character(s) remain after clipping, fewer than min_length={self.min_length}"
+            )
+        return x
+
     def get_repr(
         self, 
         abbreviate = False,

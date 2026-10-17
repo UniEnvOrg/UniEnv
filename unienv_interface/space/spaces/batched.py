@@ -65,6 +65,20 @@ class BatchedSpace(Space[np.ndarray, BDeviceType, BDtypeType, BRNGType]):
             return False
         return all(self.single_space.contains(xi) for xi in x.flat)
 
+    def clip(self, x: np.ndarray) -> np.ndarray:
+        """Clip every element of the object array ``x`` with ``single_space`` (see ``Space.clip``).
+
+        Returns a new object array of ``batch_shape``. Raises ``ValueError`` if
+        ``x`` is not an object array of ``batch_shape``, or if any element
+        cannot be clipped.
+        """
+        if not isinstance(x, np.ndarray) or x.dtype != object or x.shape != self.batch_shape:
+            raise ValueError(
+                f"BatchedSpace.clip: expected an object array of shape {self.batch_shape}, got "
+                + (f"{x.dtype} array of shape {x.shape}" if isinstance(x, np.ndarray) else f"{type(x)}")
+            )
+        return self._make_object_array([self.single_space.clip(xi) for xi in x.flat])
+
     def get_repr(
         self, 
         abbreviate = False,

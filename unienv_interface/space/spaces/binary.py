@@ -77,6 +77,21 @@ class BinarySpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             and self.shape == x.shape
         )
 
+    def clip(self, x: BArrayType) -> BArrayType:
+        """Return ``x`` (cast to this space's boolean dtype if needed); see ``Space.clip``.
+
+        A binary space is only a subspace of an identical binary space, so any
+        member of a superset is already a member: there is nothing to project.
+        Raises ``ValueError`` if ``x`` does not have this space's shape.
+        """
+        if not self.backend.is_backendarray(x):
+            x = self.backend.asarray(x, dtype=self.dtype, device=self.device)
+        if tuple(x.shape) != self.shape:
+            raise ValueError(f"BinarySpace.clip: expected data of shape {self.shape}, got {tuple(x.shape)}")
+        if x.dtype != self.dtype:
+            x = self.backend.astype(x, self.dtype)
+        return x
+
     def get_repr(
         self, 
         abbreviate = False,

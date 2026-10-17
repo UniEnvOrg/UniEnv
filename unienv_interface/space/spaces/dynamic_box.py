@@ -438,8 +438,38 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         )
     
     def clip(self, x: BArrayType) -> BArrayType:
-        """Clip the values of x to be within the bounds of this space."""
-        return self.backend.clip(x, self._low, self._high)
+        """Project ``x`` onto this dynamic box (see ``Space.clip``).
+
+        Axes longer than ``shape_high`` are trimmed to their first
+        ``shape_high[i]`` entries, then the values are clamped to the bounds
+        and cast to the space dtype. Like ``contains``, ``fill_value`` gets no
+        special treatment (padding entries are clamped like any other value).
+
+        Raises ``ValueError`` if ``x`` has a different number of dimensions or
+        an axis shorter than ``shape_low`` (padding would invent data).
+        """
+        backend = self.backend
+        dtype = self._low.dtype  # materialised dtype (jax without x64 stores int64 as int32)
+        if not backend.is_backendarray(x):
+            x = backend.asarray(x, dtype=dtype, device=self.device)
+        shape = tuple(x.shape)
+        if len(shape) != len(self.shape_low):
+            raise ValueError(
+                f"DynamicBoxSpace.clip: expected data with {len(self.shape_low)} dimensions, got shape {shape}"
+            )
+        if any(dim < dim_low for dim, dim_low in zip(shape, self.shape_low)):
+            raise ValueError(
+                f"DynamicBoxSpace.clip: data of shape {shape} is shorter than the minimum shape "
+                f"{self.shape_low} on some axis and cannot be clipped without inventing values"
+            )
+        if any(dim > dim_high for dim, dim_high in zip(shape, self.shape_high)):
+            x = x[tuple(slice(0, min(dim, dim_high)) for dim, dim_high in zip(shape, self.shape_high))]
+        if x.dtype != dtype:
+            x = backend.astype(x, dtype)
+        ret = backend.clip(x, self._low, self._high)
+        if not backend.is_backendarray(ret):
+            ret = backend.asarray(ret, dtype=dtype, device=self.device)
+        return ret
 
     def get_repr(
         self,

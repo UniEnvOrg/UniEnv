@@ -207,8 +207,10 @@ def build_space(spec: dict, backend: Any, device: Optional[Any] = None) -> Space
         return TextSpace(backend, spec["max_length"], min_length=spec["min_length"], charset=spec["charset"], device=device)
     if kind == "graph":
         float32 = backend_dtype(backend, "float32")
-        node = BoxSpace(backend, -1.0, 1.0, float32, shape=spec["node_shape"], device=device)
-        edge = None if spec["edge_shape"] is None else BoxSpace(backend, 0.0, 2.0, float32, shape=spec["edge_shape"], device=device)
+        node_low, node_high = spec.get("node_bounds", (-1.0, 1.0))
+        edge_low, edge_high = spec.get("edge_bounds", (0.0, 2.0))
+        node = BoxSpace(backend, node_low, node_high, float32, shape=spec["node_shape"], device=device)
+        edge = None if spec["edge_shape"] is None else BoxSpace(backend, edge_low, edge_high, float32, shape=spec["edge_shape"], device=device)
         return GraphSpace(backend, node, edge, is_edge=spec["is_edge"], min_nodes=spec["min_nodes"],
                           max_nodes=spec["max_nodes"], min_edges=spec["min_edges"], max_edges=spec["max_edges"],
                           batch_shape=spec["batch_shape"], device=device)
@@ -265,4 +267,113 @@ def widened_specs(draw, spec: dict, extra_keys: bool = False):
         return {"kind": kind, "spaces": [draw(widened_specs(v, extra_keys)) for v in spec["spaces"]]}
     if kind == "batched":
         return {**spec, "single": draw(widened_specs(spec["single"], extra_keys))}
+    return spec
+
+
+# ---------------------------------------------------------------------------
+# Narrowing (subspaces)
+# ---------------------------------------------------------------------------
+
+@st.composite
+def _narrowed_float(draw, low, high):
+    """A float sub-interval ``[a, b]`` of ``[low, high]`` (either end may stay infinite)."""
+    if np.isfinite(low):
+        a = low + draw(st.floats(0, 1)) * ((high - low) if np.isfinite(high) else 10.0)
+    elif draw(st.booleans()):
+        a = -np.inf
+    else:
+        a = (high if np.isfinite(high) else 0.0) - draw(st.floats(0, 10))
+    if np.isfinite(high):
+        b = a + draw(st.floats(0, 1)) * (high - a) if np.isfinite(a) else high - draw(st.floats(0, 10))
+    elif draw(st.booleans()):
+        b = np.inf
+    else:
+        b = (a if np.isfinite(a) else 0.0) + draw(st.floats(0, 10))
+    # Lands in [low, high] up to float64 rounding, which float32 storage then absorbs
+    return float(min(max(a, low), high)), float(min(max(b, a, low), high))
+
+
+@st.composite
+def _narrowed_bounds(draw, low, high, dtype):
+    """Bounds inside ``low``/``high`` (python scalars or arrays), keeping their form."""
+    lows, highs = np.asarray(low, dtype=np.float64).reshape(-1), np.asarray(high, dtype=np.float64).reshape(-1)
+    new_low, new_high = np.empty_like(lows), np.empty_like(highs)
+    for i, (lo, hi) in enumerate(zip(lows, highs)):
+        if dtype == "int32":
+            new_low[i] = draw(st.integers(int(lo), int(hi)))
+            new_high[i] = draw(st.integers(int(new_low[i]), int(hi)))
+        else:
+            new_low[i], new_high[i] = draw(_narrowed_float(lo, hi))
+    if isinstance(low, np.ndarray):
+        return new_low.reshape(low.shape), new_high.reshape(low.shape)
+    cast = int if dtype == "int32" else float
+    return cast(new_low[0]), cast(new_high[0])
+
+
+@st.composite
+def narrowed_specs(draw, spec: dict):
+    """A spec whose space is a (non-strict) subspace of ``spec``'s space.
+
+    Shrinks value bounds, length / shape / count ranges and charsets, drops
+    dict keys and recurses into containers.
+    """
+    kind = spec["kind"]
+    if kind == "box":
+        low, high = draw(_narrowed_bounds(spec["low"], spec["high"], spec["dtype"]))
+        return {**spec, "low": low, "high": high}
+    if kind == "dynbox":
+        while True:
+            shape_low = tuple(draw(st.integers(lo, hi)) for lo, hi in zip(spec["shape_low"], spec["shape_high"]))
+            shape_high = tuple(draw(st.integers(lo, hi)) for lo, hi in zip(shape_low, spec["shape_high"]))
+            if shape_low != shape_high:  # a dynamic box needs a dynamic axis
+                break
+            shape_low, shape_high = spec["shape_low"], spec["shape_high"]
+            if draw(st.booleans()):
+                break
+        low, high = draw(_narrowed_bounds(spec["low"], spec["high"], spec["dtype"]))
+        return {**spec, "shape_low": shape_low, "shape_high": shape_high, "low": low, "high": high}
+    if kind == "text":
+        min_length = draw(st.integers(spec["min_length"], spec["max_length"]))
+        max_length = draw(st.integers(min_length, spec["max_length"]))
+        if spec["charset"] is None:
+            charset = draw(st.sampled_from((None,) + CHARSETS))
+        else:
+            chars = draw(st.lists(st.sampled_from(sorted(spec["charset"])), min_size=1, unique=True))
+            charset = "".join(sorted(chars))
+        return {**spec, "min_length": min_length, "max_length": max_length, "charset": charset}
+    if kind == "graph":
+        upper = spec["max_nodes"] if spec["max_nodes"] is not None else spec["min_nodes"] + 3
+        min_nodes = draw(st.integers(spec["min_nodes"], upper))
+        max_nodes = draw(st.integers(min_nodes, upper))
+        if spec["max_nodes"] is None and draw(st.booleans()):
+            max_nodes = None
+        new = {**spec, "min_nodes": min_nodes, "max_nodes": max_nodes,
+               "node_bounds": draw(_narrowed_float(*spec.get("node_bounds", (-1.0, 1.0))))}
+        if spec["is_edge"]:
+            if max_nodes is not None:
+                limit = max_nodes * (max_nodes - 1)
+                if limit < spec["min_edges"]:
+                    # Too few nodes for the required edges: keep the source node limits
+                    new["min_nodes"], new["max_nodes"] = spec["min_nodes"], spec["max_nodes"]
+                    max_nodes = spec["max_nodes"]
+                    limit = max_nodes * (max_nodes - 1) if max_nodes is not None else None
+            else:
+                limit = None
+            cap = min(c for c in (limit, spec["max_edges"], spec["min_edges"] + 3) if c is not None)
+            min_edges = draw(st.integers(spec["min_edges"], cap))
+            edge_cap = min(c for c in (limit, spec["max_edges"], min_edges + 3) if c is not None)
+            max_edges = draw(st.integers(min_edges, edge_cap))
+            if spec["max_edges"] is None and draw(st.booleans()):
+                max_edges = None
+            new.update(min_edges=min_edges, max_edges=max_edges)
+            if spec["edge_shape"] is not None:
+                new["edge_bounds"] = draw(_narrowed_float(*spec.get("edge_bounds", (0.0, 2.0))))
+        return new
+    if kind == "dict":
+        keys = draw(st.lists(st.sampled_from(sorted(spec["spaces"])), unique=True)) if spec["spaces"] else []
+        return {"kind": "dict", "spaces": {k: draw(narrowed_specs(spec["spaces"][k])) for k in sorted(keys)}}
+    if kind in ("tuple", "union"):
+        return {"kind": kind, "spaces": [draw(narrowed_specs(v)) for v in spec["spaces"]]}
+    if kind == "batched":
+        return {**spec, "single": draw(narrowed_specs(spec["single"]))}
     return spec

@@ -70,6 +70,18 @@ class TupleSpace(Space[Tuple[Any, ...], BDeviceType, BDtypeType, BRNGType]):
             and all(space.contains(part) for (space, part) in zip(self.spaces, x))
         )
 
+    def clip(self, x: Tuple[Any, ...]) -> Tuple[Any, ...]:
+        """Clip every element of ``x`` with the subspace at the same index (see ``Space.clip``).
+
+        Raises ``ValueError`` if ``x`` is not a tuple with one element per subspace.
+        """
+        if not isinstance(x, tuple) or len(x) != len(self.spaces):
+            raise ValueError(
+                f"TupleSpace.clip: expected a tuple of length {len(self.spaces)}, got {type(x)}"
+                + (f" of length {len(x)}" if isinstance(x, tuple) else "")
+            )
+        return tuple(space.clip(part) for space, part in zip(self.spaces, x))
+
     def get_repr(
         self,
         abbreviate = False, 

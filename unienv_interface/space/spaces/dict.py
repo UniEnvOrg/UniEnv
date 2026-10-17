@@ -151,6 +151,21 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
             return all(x[key] in self.spaces[key] for key in self.spaces.keys())
         return False
 
+    def clip(self, x: Mapping[str, Any]) -> Dict[str, Any]:
+        """Project ``x`` onto this dict space (see ``Space.clip``).
+
+        Keys of ``x`` that are not in this space are dropped and every value is
+        clipped recursively with its subspace; the result is a new ``dict``
+        with exactly this space's keys. Raises ``ValueError`` if ``x`` is not a
+        mapping or lacks one of this space's keys (it cannot be invented).
+        """
+        if not isinstance(x, Mapping):
+            raise ValueError(f"DictSpace.clip: expected a mapping, got {type(x)}")
+        missing = [key for key in self.spaces.keys() if key not in x]
+        if missing:
+            raise ValueError(f"DictSpace.clip: data is missing the required key(s) {missing}")
+        return {key: space.clip(x[key]) for key, space in self.spaces.items()}
+
     def is_subspaceeq(self, other: Any) -> bool:
         """Return whether this dict space is a non-strict subspace of ``other`` (⊆).
 

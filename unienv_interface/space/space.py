@@ -253,6 +253,37 @@ class Space(abc.ABC, Generic[SpaceDataT, _SpaceBDeviceT, _SpaceBDTypeT, _SpaceBD
         """
         return self.is_subspaceeq(other) and not other.is_subspaceeq(self)
 
+    def clip(self, x: Any) -> SpaceDataT:
+        """Project ``x`` onto this space and return the projected value.
+
+        ``clip`` is defined on the TARGET (subset) space. Contract: if
+        ``self.is_subspaceeq(source)`` holds, then for every ``x`` with
+        ``source.contains(x)``::
+
+            self.contains(self.clip(x))
+
+        unless no meaningful projection exists, in which case ``clip`` raises
+        ``ValueError`` instead of inventing data (e.g. a required ``DictSpace``
+        key is missing, or a string / dynamic axis / graph is shorter or
+        smaller than this space's minimum; each space documents its cases).
+
+        Additionally:
+
+        * ``clip`` is idempotent on members: ``self.clip(y)`` equals ``y``
+          whenever ``self.contains(y)``.
+        * The input is never mutated; the result is new data, or ``x`` (or
+          parts of it) itself where nothing needs to change.
+        * The result follows this space's backend and dtype conventions (e.g.
+          a ``BoxSpace`` casts to its dtype).
+
+        Inputs that are not members of any superspace (wrong structure, wrong
+        shape, ...) are not supported and may raise.
+
+        The base implementation raises ``NotImplementedError`` to mirror the
+        abstract-method style of this class; subclasses override it.
+        """
+        raise NotImplementedError
+
     def __eq__(self, other : "Space"):
         """Return boolean specifying if this space is equal to another space."""
         return self is other

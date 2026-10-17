@@ -271,6 +271,112 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
 
         return True
 
+    def clip(self, x: GraphInstance[BArrayType]) -> GraphInstance[BArrayType]:
+        """Project the (possibly batched) graph ``x`` onto this graph space (see ``Space.clip``).
+
+        * Graphs with more than ``max_nodes`` nodes keep their first
+          ``max_nodes`` nodes; edges touching a dropped node are dropped too.
+          Kept nodes keep their index, so the remaining edges stay valid.
+        * Graphs with more than ``max_edges`` (remaining) edges keep their
+          first ``max_edges`` edges, in order. The edge arrays are compacted
+          per graph (dropped edges move into the padding).
+        * Node / edge features are clamped with the feature spaces (padding
+          included, as ``contains`` checks it); edge features are dropped if
+          this space has no edge feature space.
+
+        Every graph of a batch (``batch_shape``) is handled separately; the
+        padded node / edge axes shrink to the largest remaining count. Returns
+        a new ``GraphInstance``; unchanged arrays are shared with ``x``.
+
+        Raises ``ValueError`` if ``x`` is not a ``GraphInstance`` of this
+        batch shape, lacks node features or (for spaces with edges) edges, or
+        if some graph has fewer than ``min_nodes`` nodes or, after dropping,
+        fewer than ``min_edges`` edges (nodes and edges cannot be invented).
+        """
+        if not isinstance(x, GraphInstance):
+            raise ValueError(f"GraphSpace.clip: expected a GraphInstance, got {type(x)}")
+        backend = self.backend
+        n_batch_dims = len(self.batch_shape)
+        if not backend.is_backendarray(x.n_nodes) or tuple(x.n_nodes.shape) != self.batch_shape:
+            raise ValueError(f"GraphSpace.clip: expected n_nodes of shape {self.batch_shape}")
+        if x.nodes_features is None:
+            raise ValueError("GraphSpace.clip: the graph has no node features")
+
+        old_nodes = np.asarray(backend.to_numpy(x.n_nodes)).reshape(-1)
+        if old_nodes.size == 0:
+            # An empty batch holds no graph: nothing to project
+            return x
+        if np.any(old_nodes < self.min_nodes):
+            raise ValueError(
+                f"GraphSpace.clip: a graph has {int(old_nodes.min())} node(s), fewer than min_nodes={self.min_nodes}"
+            )
+        nodes_dropped = self.max_nodes is not None and bool(np.any(old_nodes > self.max_nodes))
+        new_nodes = np.minimum(old_nodes, self.max_nodes) if nodes_dropped else old_nodes
+        n_nodes = x.n_nodes
+        if nodes_dropped:
+            n_nodes = backend.from_numpy(
+                new_nodes.reshape(self.batch_shape).astype(old_nodes.dtype), device=backend.device(x.n_nodes)
+            )
+
+        nodes_features = x.nodes_features
+        n_node_slots = int(new_nodes.max())
+        if nodes_features.shape[n_batch_dims] > n_node_slots:
+            nodes_features = nodes_features[(slice(None),) * n_batch_dims + (slice(0, n_node_slots),)]
+        nodes_features = self.node_feature_space.clip(nodes_features)
+
+        if not self.is_edge:
+            return GraphInstance(n_nodes=n_nodes, nodes_features=nodes_features)
+        if x.n_edges is None or x.edges is None:
+            raise ValueError("GraphSpace.clip: the graph has no edges, but this space requires edges")
+        if not backend.is_backendarray(x.n_edges) or tuple(x.n_edges.shape) != self.batch_shape:
+            raise ValueError(f"GraphSpace.clip: expected n_edges of shape {self.batch_shape}")
+
+        old_edges_count = np.asarray(backend.to_numpy(x.n_edges)).reshape(-1)
+        edges_np = np.asarray(backend.to_numpy(x.edges))
+        n_edge_slots = edges_np.shape[n_batch_dims]
+        edges_flat = edges_np.reshape((old_nodes.size, n_edge_slots, 2))
+        keep = np.arange(n_edge_slots)[None, :] < old_edges_count[:, None]  # (B, E): real edges
+        if nodes_dropped:
+            dropped_node = (edges_flat >= new_nodes[:, None, None]) & (edges_flat < old_nodes[:, None, None])
+            keep &= ~np.any(dropped_node, axis=-1)
+        kept_count = keep.sum(axis=1)
+        new_edges_count = kept_count if self.max_edges is None else np.minimum(kept_count, self.max_edges)
+        if np.any(new_edges_count < self.min_edges):
+            raise ValueError(
+                f"GraphSpace.clip: a graph has {int(new_edges_count.min())} edge(s) left, fewer than min_edges={self.min_edges}"
+            )
+
+        edges, n_edges, edges_features = x.edges, x.n_edges, x.edges_features
+        if np.any(new_edges_count != old_edges_count):
+            # Stable sort moves the kept edges to the front (in order); the rest becomes padding
+            order = np.argsort(~keep, axis=1, kind="stable")[:, :int(new_edges_count.max())]
+            new_edge_slots = order.shape[1]
+            order = order.reshape(self.batch_shape + (new_edge_slots,))
+            edges = backend.from_numpy(
+                np.take_along_axis(edges_np, order[..., None], axis=n_batch_dims), device=backend.device(x.edges)
+            )
+            n_edges = backend.from_numpy(
+                new_edges_count.reshape(self.batch_shape).astype(old_edges_count.dtype), device=backend.device(x.n_edges)
+            )
+            if edges_features is not None and self.edge_feature_space is not None:
+                feature_shape = tuple(edges_features.shape[n_batch_dims + 1:])
+                index = backend.from_numpy(order, device=backend.device(edges_features))
+                index = backend.broadcast_to(
+                    backend.reshape(index, order.shape + (1,) * len(feature_shape)),
+                    order.shape + feature_shape,
+                )
+                edges_features = backend.take_along_axis(edges_features, index, axis=n_batch_dims)
+        if edges_features is not None:
+            edges_features = None if self.edge_feature_space is None else self.edge_feature_space.clip(edges_features)
+
+        return GraphInstance(
+            n_nodes=n_nodes,
+            n_edges=n_edges,
+            nodes_features=nodes_features,
+            edges_features=edges_features,
+            edges=edges,
+        )
+
     def get_repr(
         self, 
         abbreviate = False,

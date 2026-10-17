@@ -84,6 +84,20 @@ class UnionSpace(Space[Tuple[int, Any], BDeviceType, BDtypeType, BRNGType]):
             and self.spaces[x[0]].contains(x[1])
         )
 
+    def clip(self, x: Tuple[int, Any]) -> Tuple[int, Any]:
+        """Clip a union value ``(index, value)`` with the alternative at ``index`` (see ``Space.clip``).
+
+        A superset union has the same number of alternatives, each a superset
+        of the alternative at the same index here, so the index is kept and
+        only the value is clipped. Raises ``ValueError`` if ``x`` is not an
+        ``(index, value)`` pair with a valid index.
+        """
+        if not (isinstance(x, tuple) and len(x) == 2 and _is_index(x[0]) and 0 <= x[0] < len(self.spaces)):
+            raise ValueError(
+                f"UnionSpace.clip: expected an (index, value) pair with 0 <= index < {len(self.spaces)}, got {x!r}"
+            )
+        return (x[0], self.spaces[x[0]].clip(x[1]))
+
     def get_repr(
         self, 
         abbreviate : bool = False,
