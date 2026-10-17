@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+**Remote execution was rewritten as a lightweight RPC layer** (protocol version 2; not compatible with the previous protocol):
+
+- Frames are strict JSON plus raw binary array attachments (no pickle; malformed input is rejected), sent over TCP, Unix domain sockets, WebSocket (optional `websockets`, `network` extra) or in-memory. `RemoteServer.register(name, obj)` hosts an `Env`, `World` or `WorldNode` (a `WorldEnv` also exposes its world and nodes); each registered root runs on one worker thread; `RemoteClient.connect("tcp://…" | "unix://…" | "ws://…")` returns proxies (`RemoteEnv`, `RemoteWorld`, `RemoteWorldNode`) implementing the normal interfaces. Remote exceptions are re-raised as `RemoteError` with the remote traceback; a lost connection raises `ConnectionError` (an interrupted call may or may not have run on the server).
+- Removed: sessions, ownership/acquire/release, begin/complete/abort operations, fault states, revisions, snapshot caches, idle eviction, factory and detached domains, `UncertainOutcomeError`, `Codec` and `RemoteWorldEnv`. Components mode is a plain local `WorldEnv` over remote world/node proxies (one call per hook).
+- Observers: `client.subscribe(env)` yields each reset/step result (`SubscriptionEvent`), latest-wins.
+- Opt-in JPEG compression of image observations, selected by space metadata: `RemoteClient.connect(addr, compress={"image": "jpeg:90"})` (worth it over real networks; raw is faster on loopback).
+- `env.step` round trips drop from 303 / 930 / ~3200 µs (previous layer over WebSocket) to roughly 50 / 55 / 160 µs over TCP (small observation / 84×84×3 image / 64×84×84×3 batch).
+
+**Space metadata:**
+
+- Every space takes an optional, read-only, JSON-serializable `metadata=` mapping (`space.metadata`, `with_metadata()`, `SpaceMetadata`) with a documented, unenforced vocabulary (`kind`, `format`, `layout`, `units`, `source`, `fps`, `label`). It is ignored by `==`, `is_subspace` and `is_subspaceeq`, persisted by `space_to_json`/`json_to_space` and replay buffers, kept by `to()`, the batch utilities and meaning-preserving transformations/wrappers, and dropped by `flatten_space`. Helpers: `metadata_utils.spaces_equal_with_metadata`, `find_spaces_by_metadata`.
+- `LeRobotAsUniEnvDataset` annotates image/video features (`kind`, `format`, `layout`, `fps`, `source`) and `observation.state`/`action` (`kind`).
+- Episode render/video/wandb wrappers can record observations (`frame_source="observation"`), pick image leaves by `kind == "image"` and convert CHW/BGR/RGBA/gray to RGB, falling back to the previous behaviour without metadata.
+- `unienv_data.storages.dict_storage_kwargs_from_space` / `create_dict_storage_from_space` build `DictStorage` layouts that send image leaves to `ImageStorage` (or a configured storage) and everything else to `HDF5Storage`.
+
 A performance audit of the core code (benchmarks now live in `benchmarks/`) produced the following. Behaviour changes worth noting first:
 
 - **`AsyncVecEnv` uses shared memory by default** (`shared_memory=True`) for observations, contexts and actions; groups that cannot be shared (spaces other than Box/Binary leaves in Dict/Tuple) fall back to the pipe with an INFO log, see `env.shared_groups`. Observations/contexts must match their declared spaces exactly (shape and dtype) in shared mode; pass `shared_memory=False` for the previous pipe-only behaviour.
@@ -31,7 +46,6 @@ New:
 Performance:
 - Spaces: faster `BoxSpace` construction/`sample`/`contains`, `flat_dim`, `unflatten_data`, `set_at`, `batch_space`/`unbatch_spaces`, `ChainedTransformation` and `RescaleTransformation` (cached, pickle-safe plans; ~5x geometric mean across benchmarked operations).
 - Wrappers: frame stacking 2–4x faster for NumPy/PyTorch Box/Binary observations; `ToBackendOrDeviceWrapper` skips no-op device moves.
-- Remote: 3 codec encodes/decodes per step instead of 12/10 (wire format unchanged), large arrays copied once, unchanged proxy spaces not re-serialized.
 - `AsyncVecEnv` with shared memory: ~3x (NumPy images) and ~20–35x (PyTorch CPU) more steps/s than the pipe with 8 workers; PyTorch CUDA ~1.3–1.5x.
 - `HDF5Storage`: ~50x faster appends and ~200x faster random reads with the default layout; slice-based sparse IO.
 - `ReplayBuffer`: interval-arithmetic segment bookkeeping, slice-based extends, faster `PytorchTensorStorage.append`; collection wrapper steps ~2.7x faster.
@@ -56,7 +70,6 @@ Spaces and transformations:
 - Fixed `construct_space_from_data_stream`, `batch_differing_spaces` shapes, and `concatenate`/`BatchifyTransformation` for Text and Union spaces.
 - gymnasium space conversion: inclusive Discrete/MultiDiscrete bounds, numpy scalar data, MultiBinary and OneOf round-trips.
 - `DictIncludeKeyTransformation` keeps sibling nested keys; `DictExcludeKeyTransformation` is order-independent; `CropTransformation` supports lower-rank bounds and keeps the dtype; `IterativeTransformation.direction_inverse` works for source-dependent inverses (new `LeafwiseTransformation`).
-- The remote codec rejects malformed dict entries and dtypes and applies its depth limit consistently.
 
 Environments and wrappers:
 - `AsyncVecEnv` can be constructed and reports worker errors as chained `RuntimeError`s; vec-env info dicts are stacked per key and may contain strings.
