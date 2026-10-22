@@ -11,14 +11,15 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
-from unienv_interface.remote import (PROTOCOL_VERSION, RemoteClient, RemoteEnv, RemoteError, RemoteServer,
-                                     RemoteWorld, RemoteWorldNode, wire)
+from unienv_interface.remote import (PROTOCOL_VERSION, RemoteClient, RemoteDataTransformation, RemoteEnv, RemoteError,
+                                     RemoteServer, RemoteWorld, RemoteWorldNode, wire)
 from unienv_interface.remote.transport import connect as transport_connect
-from unienv_interface.space import BoxSpace, Space
+from unienv_interface.backends.numpy import NumpyComputeBackend as B
+from unienv_interface.space import BoxSpace, DictSpace, Space
 from unienv_interface.world import WorldEnv
 
 from tests_common.envs import StubEnv
-from tests_common.remote_envs import TRANSPORTS, LiveImageEnv, ProbeEnv, connect, make_world_env
+from tests_common.remote_envs import TRANSPORTS, LiveImageEnv, ProbeEnv, ScaleTransformation, connect, make_world_env
 
 
 @pytest.fixture(params=TRANSPORTS)
@@ -164,6 +165,60 @@ def test_backend_and_device_conversion(server, transport):
         with pytest.raises(RemoteError, match="cannot represent dtype uint16"):
             client.env("torch_probe").step(np.ones(1, np.uint16))
         client.env("torch_probe").step(np.ones(1, np.float32))  # still connected
+
+
+# ---------------------------------------------------------------------------- transformations
+
+def test_transformation_matches_local_transformation(server, transport):
+    hosted = ScaleTransformation(3.0)
+    server.register("scale", hosted)
+    source = BoxSpace(B, -1.0, 1.0, dtype=np.float32, shape=(2,))
+    data = np.array([0.5, -0.25], dtype=np.float32)
+    with connect(server, transport) as client:
+        remote = client.transformation("scale")
+        assert isinstance(remote, RemoteDataTransformation) and client.resources["scale"]["kind"] == "transformation"
+        assert remote.has_inverse is False and remote.direction_inverse() is None
+        target = remote.get_target_space_from_source(source)
+        local = hosted.get_target_space_from_source(source)
+        assert isinstance(target, BoxSpace) and target.shape == local.shape
+        np.testing.assert_array_equal(target.high, local.high)
+        same_tree(hosted.transform(source, data), remote.transform(source, data))
+        with pytest.raises(RemoteError, match="needs a BoxSpace"):
+            remote.get_target_space_from_source(DictSpace(B, {"x": source}))
+        with pytest.raises(NotImplementedError):
+            remote.serialize()
+        with pytest.raises(TypeError, match="is a transformation, not a env"):
+            client.env("scale")
+
+
+def test_transformation_backend_and_device(server, transport):
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
+    hosted = ScaleTransformation(2.0)
+    server.register("scale", hosted, backend=T, device="cpu")
+    source = BoxSpace(B, -1.0, 1.0, dtype=np.float32, shape=(2,))
+    with connect(server, transport) as client:
+        result = client.transformation("scale").transform(source, np.ones(2, np.float32))
+        assert isinstance(result, np.ndarray)  # back on the client's backend
+        np.testing.assert_array_equal(result, [2, 2])
+    received_space, received_data = hosted.received[-1]
+    assert received_space.backend is T and isinstance(received_data, torch.Tensor)  # rebuilt on the server's
+    with connect(server, transport, backend=T, device="cpu") as client:
+        torch_source = BoxSpace(T, -1.0, 1.0, dtype=torch.float32, shape=(2,), device="cpu")
+        assert isinstance(client.transformation("scale").transform(torch_source, torch.ones(2)), torch.Tensor)
+
+
+def test_transformation_registration_validation(server):
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
+    with pytest.raises(ValueError, match="only given for a DataTransformation"):
+        server.register("stub", StubEnv(), backend=T)
+    hosted = ScaleTransformation()
+    name = server.register("scale", hosted)
+    assert server.register("again", hosted) == name  # already hosted
+    with server.connect() as client:
+        assert sorted(client.resources["scale"]["methods"]) == ["get_target_space_from_source", "transform"]
+        with pytest.raises(RemoteError, match="does not expose 'close'"):
+            client.call("scale", "close")
 
 
 # ---------------------------------------------------------------------------- components

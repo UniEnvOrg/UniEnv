@@ -13,6 +13,7 @@ from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.env_base.env import Env
 from unienv_interface.remote import RemoteClient, RemoteServer
 from unienv_interface.space import BoxSpace, DictSpace
+from unienv_interface.transformations.transformation import DataTransformation
 from unienv_interface.world import WorldEnv
 
 from tests_common.env_worlds import CounterNode, SimWorld
@@ -129,3 +130,28 @@ def make_world_env(names: Tuple[str, ...] = ("counter",), batch_size: Optional[i
     world = SimWorld(world_timestep=0.01, batch_size=batch_size)
     nodes = [CounterNode(world, name, control_timestep=0.02, with_signals=True) for name in names]
     return WorldEnv(world, nodes[0] if len(nodes) == 1 else nodes)
+
+
+class ScaleTransformation(DataTransformation):
+    """Scales a ``BoxSpace`` (and its data) by ``factor``; records what it received."""
+
+    def __init__(self, factor: float = 2.0) -> None:
+        self.factor = factor
+        self.received: List[Any] = []
+
+    def get_target_space_from_source(self, source_space):
+        if not isinstance(source_space, BoxSpace):
+            raise ValueError("ScaleTransformation needs a BoxSpace")
+        return BoxSpace(source_space.backend, source_space.low * self.factor, source_space.high * self.factor,
+                        dtype=source_space.dtype, device=source_space.device, shape=source_space.shape)
+
+    def transform(self, source_space, data):
+        self.received.append((source_space, data))
+        return data * self.factor
+
+    def serialize(self, source_space=None):
+        return {"factor": self.factor}
+
+    @classmethod
+    def deserialize_from(cls, json_data, source_space=None):
+        return cls(json_data["factor"])

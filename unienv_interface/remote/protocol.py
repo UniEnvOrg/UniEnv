@@ -20,6 +20,7 @@ METHODS: Dict[str, FrozenSet[str]] = {
         "set_next_action", "get_context", "get_observation", "get_reward", "get_termination",
         "get_truncation", "get_info", "render",
     }),
+    "transformation": frozenset({"transform", "get_target_space_from_source"}),
 }
 #: Exposed only when the hosted object actually defines them.
 OPTIONAL_METHODS: FrozenSet[str] = frozenset({"reload"})

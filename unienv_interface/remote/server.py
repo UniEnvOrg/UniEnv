@@ -1,4 +1,4 @@
-"""Host environments, worlds and nodes for remote clients."""
+"""Host environments, worlds, nodes and data transformations for remote clients."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from unienv_interface.env_base.env import Env
 from unienv_interface.space.space_utils.serialization_utils import space_to_json
+from unienv_interface.transformations.transformation import DataTransformation
 from unienv_interface.world.env_composer import WorldEnv
 from unienv_interface.world.node import WorldNode
 from unienv_interface.world.world import World
@@ -21,11 +22,12 @@ from .protocol import (ATTRIBUTES, ERROR, EVENT, METHODS, OK, OPTIONAL_METHODS, 
 from .transport import Listener, MemoryTransport, Transport, listen
 
 if TYPE_CHECKING:
+    from unienv_interface.backends import ComputeBackend
     from .client import RemoteClient
 
 __all__ = ["RemoteServer"]
 
-Hosted = Union[Env, World, WorldNode]
+Hosted = Union[Env, World, WorldNode, DataTransformation]
 _log = logging.getLogger(__name__)
 
 
@@ -55,7 +57,7 @@ class _Resource:
                                  if m not in OPTIONAL_METHODS or callable(getattr(obj, m, None)))
         try:
             self.backend, self.device = obj.backend, obj.device
-        except AttributeError:  # a node without a world
+        except AttributeError:  # a node without a world, a transformation
             self.backend, self.device = None, None
         self.related: Dict[str, Any] = _related(obj, kind)  # objects whose names are linked if hosted
         self.spaces: Tuple[Any, ...] = ()
@@ -209,16 +211,21 @@ class RemoteServer:
 
     # ------------------------------------------------------------------ registration
 
-    def register(self, name: str, obj: Hosted, *, close: bool = True) -> str:
-        """Host ``obj`` (an ``Env``, ``World`` or ``WorldNode``) under ``name``.
+    def register(self, name: str, obj: Hosted, *, close: bool = True,
+                 backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
+        """Host ``obj`` (an ``Env``, ``World``, ``WorldNode`` or ``DataTransformation``) under ``name``.
 
         Only ``obj`` itself is exposed; use :meth:`register_recursive` to also expose
         the world and nodes it is built from. Objects sharing a world (e.g. an env and
         its world registered separately) run on the same worker. Registering an object
         that is already hosted returns its existing name. With ``close=True`` the server
         closes ``obj`` (on its worker) when it shuts down.
+
+        A ``DataTransformation`` has no backend of its own: ``backend`` / ``device``
+        (default: numpy, no device) are where the source spaces and data of its
+        calls are rebuilt on the server. Other objects use their own.
         """
-        return self._register(name, obj, close=close, recursive=False)
+        return self._register(name, obj, close=close, recursive=False, backend=backend, device=device)
 
     def register_recursive(self, name: str, obj: Hosted, *, close: bool = True) -> str:
         """Like :meth:`register`, but also expose everything ``obj`` is built from.
@@ -230,11 +237,14 @@ class RemoteServer:
         """
         return self._register(name, obj, close=close, recursive=True)
 
-    def _register(self, name: str, obj: Hosted, *, close: bool, recursive: bool) -> str:
+    def _register(self, name: str, obj: Hosted, *, close: bool, recursive: bool,
+                  backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
         if not isinstance(name, str) or not name:
             raise ValueError("Resource names must be non-empty strings")
-        if not isinstance(obj, (Env, World, WorldNode)):
-            raise TypeError(f"Expected an Env, World or WorldNode, got {type(obj).__name__}")
+        if not isinstance(obj, (Env, World, WorldNode, DataTransformation)):
+            raise TypeError(f"Expected an Env, World, WorldNode or DataTransformation, got {type(obj).__name__}")
+        if (backend is not None or device is not None) and not isinstance(obj, DataTransformation):
+            raise ValueError("backend / device are only given for a DataTransformation (others have their own)")
         base = obj.unwrapped if isinstance(obj, Env) else obj
         world = base.world if isinstance(base, (WorldEnv, WorldNode)) else (base if isinstance(base, World) else None)
         with self._lock:
@@ -254,6 +264,9 @@ class RemoteServer:
                     group.queue.put(None)
                 raise
             for resource in added.values():
+                if resource.kind == "transformation":
+                    from unienv_interface.backends.numpy import NumpyComputeBackend
+                    resource.backend, resource.device = backend or NumpyComputeBackend, device
                 resource.static = resource.descriptor()
             self._resources.update(added)
             self._names.update(names)
@@ -271,7 +284,8 @@ class RemoteServer:
             return existing
         if name in self._resources or name in added:
             raise ValueError(f"Resource name {name!r} is already registered")
-        kind = "env" if isinstance(obj, Env) else "world" if isinstance(obj, World) else "node"
+        kind = ("env" if isinstance(obj, Env) else "world" if isinstance(obj, World)
+                else "transformation" if isinstance(obj, DataTransformation) else "node")
         resource = _Resource(name, obj, kind, group)
         added[name], names[id(obj)] = resource, name
         if recursive:

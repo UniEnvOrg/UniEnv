@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added remote data transformations: `RemoteServer.register` hosts a `DataTransformation` (kind `"transformation"`), with the `backend` / `device` its calls run on (default numpy), and `RemoteClient.transformation(name)` returns a `RemoteDataTransformation` whose `transform` / `get_target_space_from_source` run on the server: the source space and data are rebuilt on the hosted backend, the result on the client's. For transformations whose dependencies live in another environment (e.g. a grasp synthesizer pinned to an older CUDA toolchain). The proxy has no inverse and cannot be serialized.
+
 ## 0.0.1b16 (2026-10-17)
 
 - **Changed:** `RemoteServer.register(name, obj)` now hosts only `obj`; it no longer exposes the world and nodes an env is built from. Use the new `RemoteServer.register_recursive(name, obj)` for that (components mode). Descriptor links (a node proxy's `world`, `nodes`, `get_node`) name only hosted objects, and objects sharing a world still share one worker.

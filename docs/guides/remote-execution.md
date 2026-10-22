@@ -1,7 +1,7 @@
 # Remote execution
 
 `unienv_interface.remote` is a small RPC layer: a `RemoteServer` hosts existing
-`Env`, `World` and `WorldNode` objects, and a `RemoteClient` returns proxies that
+`Env`, `World`, `WorldNode` and `DataTransformation` objects, and a `RemoteClient` returns proxies that
 implement the same interfaces. Each proxy method is one remote call.
 
 Transports: TCP and Unix domain sockets (standard library), WebSocket
@@ -38,6 +38,29 @@ arguments are converted to the hosted object's backend and device on the server.
 
 The protocol has no authentication. Bind to loopback or a trusted network, or
 tunnel it (SSH, VPN).
+
+## Hosting a data transformation
+
+A `DataTransformation` can be served too, e.g. one whose dependencies live in
+another Python environment. It has no backend of its own: register it with the
+backend and device its calls should run on, and the source space and data of
+each call are rebuilt there.
+
+```python
+from unienv_interface.backends.pytorch import PyTorchComputeBackend
+
+server.register("grasps", make_transformation(), backend=PyTorchComputeBackend, device="cuda")
+```
+
+```python
+transformation = client.transformation("grasps")   # a RemoteDataTransformation
+target_space = transformation.get_target_space_from_source(source_space)
+result = transformation.transform(source_space, data)
+```
+
+Only `transform` and `get_target_space_from_source` are remote. The proxy has
+no inverse and cannot be serialized (it is bound to its connection): a storage
+that serializes its transformations needs the hosted one.
 
 ## Threads and concurrency
 

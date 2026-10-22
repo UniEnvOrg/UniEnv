@@ -1,4 +1,4 @@
-"""Local ``Env`` / ``World`` / ``WorldNode`` views of objects hosted by a server.
+"""Local ``Env`` / ``World`` / ``WorldNode`` / ``DataTransformation`` views of objects hosted by a server.
 
 Every method is one remote call. Spaces, timings and metadata come from the
 server's descriptor; spaces are refreshed whenever a reset changed them.
@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 
 from unienv_interface.env_base.env import Env
+from unienv_interface.transformations.transformation import DataTransformation
 from unienv_interface.world.node import WorldNode
 from unienv_interface.world.world import World
 
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
     from .client import RemoteClient
 
-__all__ = ["RemoteEnv", "RemoteWorld", "RemoteWorldNode"]
+__all__ = ["RemoteEnv", "RemoteWorld", "RemoteWorldNode", "RemoteDataTransformation"]
 
 
 class _Remote:
@@ -181,3 +182,41 @@ class RemoteWorldNode(_Remote, WorldNode):
         for child in self.nodes:
             result.extend(child.get_nodes_by_fn(fn))
         return result
+
+
+class RemoteDataTransformation(_Remote, DataTransformation):
+    """A ``DataTransformation`` hosted by a :class:`RemoteServer`.
+
+    ``transform`` and ``get_target_space_from_source`` run on the server: the
+    source space and the data are rebuilt there on the backend / device the
+    transformation was registered with, and the result comes back on the
+    client's. Use it to run a transformation whose dependencies live in another
+    environment (e.g. a grasp synthesizer pinned to an old CUDA toolchain).
+
+    The proxy has no inverse and cannot be serialized: it is bound to its
+    connection (serialize the hosted transformation on the server instead).
+    """
+
+    has_inverse = False
+
+    def __init__(self, client: RemoteClient, name: str) -> None:
+        self._bind(client, name)
+
+    def _set_spaces(self, spaces: Dict[str, Any]) -> None:
+        """A transformation has no spaces of its own (they derive from the source space)."""
+
+    def get_target_space_from_source(self, source_space: Any) -> Any:
+        return self._call("get_target_space_from_source", source_space)
+
+    def transform(self, source_space: Any, data: Any) -> Any:
+        return self._call("transform", source_space, data)
+
+    def serialize(self, source_space: Any = None) -> Dict[str, Any]:
+        raise NotImplementedError(
+            f"{self!r} is bound to a remote connection and cannot be serialized; "
+            "serialize the transformation hosted by the server instead"
+        )
+
+    @classmethod
+    def deserialize_from(cls, json_data: Dict[str, Any], source_space: Any = None) -> RemoteDataTransformation:
+        raise NotImplementedError("Remote transformations are created with RemoteClient.transformation()")
