@@ -123,3 +123,35 @@ def test_reads_spanning_many_files(tmp_path, monkeypatch):
     for nested in _io_pool.map_io(lambda _: storage.get(index), range(2 * _io_pool.IO_POOL_WORKERS)):
         np.testing.assert_array_equal(nested, expected)
     storage.close()
+
+
+@pytest.mark.parametrize("codec", ["libx265", "libx264"])
+@pytest.mark.parametrize("seek_mode", ["exact", "approximate"])
+def test_random_single_frame_reads_return_the_requested_frame(tmp_path, monkeypatch, codec, seek_mode):
+    """A seek whose target lies in the first frames after a keyframe must not land on the next keyframe.
+
+    With B-frames in MP4 the demuxer picks the keyframe by decode time, which precedes its presentation time by
+    the reorder delay; the reader used to return the first frame of the next GOP for those targets (x265 in MP4,
+    keyint 5: ~80% of random reads off by 1-3 frames).
+    """
+    if codec not in codecs_available:
+        pytest.skip(f"needs {codec}")
+    options = {"crf": "18", "x265-params": "keyint=5:min-keyint=5:scenecut=0:log-level=error"} if codec == "libx265" \
+        else {"g": "5", "crf": "18"}
+    storage = VideoStorage.create(
+        BoxSpace(B, 0, 255, np.uint8, shape=(H, W, 3)), capacity=None, cache_path=str(tmp_path / "v"),
+        codec=codec, file_ext="mp4", hardware_acceleration=None, decode_backend="pyav",
+        encoder_options=options, seek_mode=seek_mode,
+    )
+    n = 60
+    storage.extend_length(n)
+    storage.set(slice(0, n), _frames(n))
+    with monkeypatch.context() as patch:
+        # every read seeks (no decoding forward from a cached position)
+        patch.setattr(PyAvVideoReader, "_can_decode_forward", lambda self, frame_index: False)
+        sequential = np.asarray(storage.get(slice(0, n)))
+        for i in np.random.default_rng(0).permutation(n):
+            got = np.asarray(storage.get(int(i)))
+            # same decoder and conversion as the sequential read: the right frame is bit-identical
+            same = [j for j in range(n) if np.array_equal(got, sequential[j])]
+            assert same == [i] or (i in same), f"read of frame {i} returned frame(s) {same}"

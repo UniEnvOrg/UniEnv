@@ -196,6 +196,31 @@ class PyAvVideoReader:
         self.container.seek(seek_pts, backward=True, any_frame=False, stream=self.video_stream)
         self._frame_iterator = self.container.decode(self.video_stream)
 
+    def _reset_decoder_at_or_before(self, frame_index: int) -> None:
+        """Seek so that decoding starts at a frame at or before `frame_index`.
+
+        `container.seek(pts, backward=True)` picks the keyframe by decode
+        timestamp; with B-frames (e.g. x265 in MP4) a keyframe's presentation
+        time is up to the reorder delay after its decode time, so a target in
+        the first frames after a keyframe can land on the *next* keyframe and
+        the decode would start past the target. Then seek again further back
+        (4, 8, 16, ... frames earlier, down to the clip start).
+        """
+        back = 0
+        while True:
+            target = max(0, frame_index - back)
+            self._reset_decoder(self.frame_index_to_pts(target))
+            try:
+                first = self._next_raw_frame()
+            except (av.error.EOFError, StopIteration):
+                self._reset_decoder(self.frame_index_to_pts(target))
+                return
+            landed = self.pts_to_frame_index(first.pts) if first.pts is not None else None
+            if landed is None or landed <= frame_index or target == 0:
+                self._frame_buffer.appendleft(first)
+                return
+            back = 4 if back == 0 else back * 2
+
     def seek(self, frame_index: int):
         if frame_index < 0:
             raise IndexError(f"Frame index must be non-negative, got {frame_index}")
@@ -203,8 +228,7 @@ class PyAvVideoReader:
             return
 
         if not self._can_decode_forward(frame_index):
-            target_pts = self.frame_index_to_pts(frame_index)
-            self._reset_decoder(target_pts)
+            self._reset_decoder_at_or_before(frame_index)
 
         if self.seek_mode == 'exact':
             past_frame = None

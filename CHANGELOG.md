@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- **Fixed:** `PyAvVideoReader` random access into B-frame video (e.g. x265 in MP4) could return a later frame: the demuxer picks the seek keyframe by decode time, which precedes its presentation time by the reorder delay, so a target in the first frames after a keyframe landed on the next keyframe (x265 keyint 15: ~24% of random single-frame reads off by 1-3 frames; keyint 5: ~80%). A seek that lands past the target now seeks again further back.
 - Added remote data transformations: `RemoteServer.register` hosts a `DataTransformation` (kind `"transformation"`), with the `backend` / `device` its calls run on (default numpy), and `RemoteClient.transformation(name)` returns a `RemoteDataTransformation` whose `transform` / `get_target_space_from_source` run on the server: the source space and data are rebuilt on the hosted backend, the result on the client's. For transformations whose dependencies live in another environment (e.g. a grasp synthesizer pinned to an older CUDA toolchain). The proxy has no inverse and cannot be serialized.
 
 ## 0.0.1b16 (2026-10-17)
