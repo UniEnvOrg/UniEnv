@@ -361,7 +361,11 @@ class EpisodeVideoWrapper(
         nested_separator : str = ".",
         frame_source : Literal["render", "observation"] = "render",
         frame_space : Optional[Space] = None,
+        stream : bool = False,
     ):
+        """``stream=True`` encodes each frame as it is captured instead of holding the episode's frames in memory
+        until it ends (mp4 / webm only): long episodes of large frames, or many recorded envs, otherwise take
+        ``frames x height x width x 3`` bytes each. The files and their names are the same either way."""
         super().__init__(
             env,
             done_index=done_index,
@@ -370,13 +374,89 @@ class EpisodeVideoWrapper(
             frame_source=frame_source,
             frame_space=frame_space,
         )
+        assert not stream or format != "gif", "streamed recording writes mp4 or webm, not gif"
         store_dir = os.path.abspath(store_dir)
         if not os.path.exists(store_dir):
             os.makedirs(store_dir)
         self.store_dir = store_dir
         self.store_format = format
+        self.stream = bool(stream)
+        self._stream_writers : Dict[Optional[str], Tuple[Any, str]] = {}  # frame key -> (writer, path)
+        self._stream_frames : Dict[Optional[str], int] = {}
+
+    def _video_path(self, key : Optional[str] = None) -> str:
+        suffix = "" if key is None else f"_key_{key}"
+        return os.path.join(
+            self.store_dir,
+            f"episode_{self.video_episode_num}_step_{self.video_episode_start_step}{suffix}.{self.store_format}",
+        )
+
+    # -- streamed recording: frames go to the encoder instead of the episode stack ------------------------------
+
+    def _append_single_frame(self, frame: Any) -> None:
+        if not self.stream:
+            return super()._append_single_frame(frame)
+        if self._episode_stack_mode is None:
+            self._episode_stack_mode = "single"
+        elif self._episode_stack_mode != "single":
+            raise ValueError(
+                "Render frame type changed within an episode: expected mapping render frames, got non-mapping render frame."
+            )
+        self._stream_write(None, frame)
+
+    def _append_flattened_mapping_frame(self, flattened_frame: Mapping[str, Any]) -> None:
+        if not self.stream:
+            return super()._append_flattened_mapping_frame(flattened_frame)
+        if self._episode_stack_mode is None:
+            self._episode_stack_mode = "mapping"
+        elif self._episode_stack_mode != "mapping":
+            raise ValueError(
+                "Render frame type changed within an episode: expected non-mapping render frames, got mapping render frame."
+            )
+        elif set(flattened_frame.keys()) != set(self._stream_frames.keys()):
+            raise ValueError(
+                f"Flattened render keys changed within an episode: {sorted(self._stream_frames)} -> {sorted(flattened_frame)}."
+            )
+        for key, value in flattened_frame.items():
+            self._stream_write(key, value)
+
+    def _stream_write(self, key: Optional[str], frame: Any) -> None:
+        image = self._frame_to_numpy_rgb(frame, key)
+        if key not in self._stream_writers:
+            from moviepy.video.io.ffmpeg_writer import FFMPEG_VideoWriter
+
+            path = self._video_path(key if self._episode_stack_mode == "mapping" else None)
+            codec = "libvpx" if self.store_format == "webm" else "libx264"
+            writer = FFMPEG_VideoWriter(
+                path, (image.shape[1], image.shape[0]), self.env.render_fps or 30, codec=codec, logfile=None
+            )
+            self._stream_writers[key] = (writer, path)
+            self._stream_frames[key] = 0
+        self._stream_writers[key][0].write_frame(image)
+        self._stream_frames[key] += 1
+
+    def _episode_frame_count(self) -> int:
+        if not self.stream:
+            return super()._episode_frame_count()
+        return next(iter(self._stream_frames.values()), 0)
+
+    def _close_stream(self, keep: bool) -> None:
+        for writer, path in self._stream_writers.values():
+            writer.close()
+            if not keep and os.path.exists(path):
+                os.remove(path)
+        self._stream_writers = {}
+        self._stream_frames = {}
+
+    def _reset_episode_stack(self) -> None:
+        if self.stream:
+            self._close_stream(keep=False)  # an episode that ended unwritten (a single frame)
+        super()._reset_episode_stack()
 
     def _post_episode(self) -> None:
+        if self.stream:
+            self._close_stream(keep=self._episode_frame_count() > 1)
+            return
         if self._episode_frame_count() <= 1:
             return
         
