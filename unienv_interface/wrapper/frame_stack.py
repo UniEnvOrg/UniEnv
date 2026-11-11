@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Tuple, Union, SupportsFloat
+from typing import Dict, Any, Optional, Sequence, Tuple, Union, SupportsFloat
 import numpy as np
 import copy
 
@@ -15,12 +15,20 @@ class FrameStackWrapper(
         BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType
     ]
 ):
+    """Stack the last ``obs_stack_size + 1`` observations (and optionally past actions) along a new time axis.
+
+    ``latest_only_keys`` (dict observations): top-level keys kept at their latest frame only, with a time axis of
+    length 1, so ``obs[key][..., -1]``-style indexing still works while large entries (e.g. camera images whose
+    history the consumer never reads) are not copied ``obs_stack_size + 1`` times.
+    """
+
     def __init__(
         self, 
         env: Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
         obs_stack_size: int = 0,
         action_stack_size: int = 0,
         action_default_value: Optional[ActType] = None,
+        latest_only_keys: Optional[Sequence[str]] = None,
     ):
         assert obs_stack_size >= 0, "Observation stack size must be greater than 0"
         assert action_stack_size >= 0, "Action stack size must be greater than 0"
@@ -43,19 +51,53 @@ class FrameStackWrapper(
         else:
             self.action_deque = None
         
+        self.latest_only_keys = tuple(latest_only_keys or ())
+        assert not self.latest_only_keys or obs_is_dict, "latest_only_keys needs a DictSpace observation space"
+        missing = [key for key in self.latest_only_keys if key not in env.observation_space.spaces] if obs_is_dict else []
+        assert not missing, f"latest_only_keys not in the observation space: {missing}"
+
         self.obs_deque = None
+        self.latest_deque = None
         if obs_stack_size > 0:
+            stacked_space = env.observation_space
+            if self.latest_only_keys:
+                stacked_space = DictSpace(
+                    env.observation_space.backend,
+                    {k: v for k, v in env.observation_space.spaces.items() if k not in self.latest_only_keys},
+                    device=env.observation_space.device,
+                )
+                self.latest_deque = SpaceDataQueue(
+                    DictSpace(
+                        env.observation_space.backend,
+                        {k: env.observation_space.spaces[k] for k in self.latest_only_keys},
+                        device=env.observation_space.device,
+                    ),
+                    env.batch_size,
+                    1,
+                )
             self.obs_deque = SpaceDataQueue(
-                env.observation_space,
+                stacked_space,
                 env.batch_size,
                 obs_stack_size + 1
             )
+            if self.latest_deque is not None:
+                self._stacked_output_space = DictSpace(
+                    env.observation_space.backend,
+                    {
+                        k: (self.latest_deque.output_space.spaces[k] if k in self.latest_only_keys
+                            else self.obs_deque.output_space.spaces[k])
+                        for k in env.observation_space.spaces.keys()
+                    },
+                    device=env.observation_space.device,
+                )
+            else:
+                self._stacked_output_space = self.obs_deque.output_space
             if action_stack_size > 0:
-                new_obs_space = copy.copy(self.obs_deque.output_space)
+                new_obs_space = copy.copy(self._stacked_output_space)
                 new_obs_space['past_actions'] = self.action_deque.output_space
                 self.observation_space = new_obs_space
             else:
-                self.observation_space = self.obs_deque.output_space
+                self.observation_space = self._stacked_output_space
         else:
             if action_stack_size > 0:
                 new_obs_space = copy.copy(env.observation_space)
@@ -79,8 +121,10 @@ class FrameStackWrapper(
         (``observation`` is then the masked observation returned by the inner reset)."""
         if self.obs_deque is not None:
             observation = self.obs_deque.get_output_data()
+            if self.latest_deque is not None:
+                observation = {**observation, **self.latest_deque.get_output_data()}
             if mask is not None:
-                observation = sbu.get_at(self.obs_deque.output_space, observation, mask)
+                observation = sbu.get_at(self._stacked_output_space, observation, mask)
         
         if self.action_deque is not None:
             stacked_action = self.action_deque.get_output_data()
@@ -99,11 +143,11 @@ class FrameStackWrapper(
         
         if self.obs_deque is not None:
             obs_last = sbu.get_at(
-                self.obs_deque.output_space,
+                self._stacked_output_space,
                 stacked_obs,
                 -1
             ) if self.env.batch_size is None else sbu.get_at(
-                self.obs_deque.output_space,
+                self._stacked_output_space,
                 stacked_obs,
                 (slice(None), -1)
             )
@@ -135,10 +179,13 @@ class FrameStackWrapper(
                 mask=mask
             )
         if self.obs_deque is not None:
+            stacked, latest = self._split(obs)
             self.obs_deque.reset(
-                initial_data=obs,
+                initial_data=stacked,
                 mask=mask
             )
+            if self.latest_deque is not None:
+                self.latest_deque.reset(initial_data=latest, mask=mask)
         
         return context, self._stacked_observation(obs, mask), info
     
@@ -156,5 +203,16 @@ class FrameStackWrapper(
         if self.action_deque is not None:
             self.action_deque.add(action)
         if self.obs_deque is not None:
-            self.obs_deque.add(obs)
+            stacked, latest = self._split(obs)
+            self.obs_deque.add(stacked)
+            if self.latest_deque is not None:
+                self.latest_deque.add(latest)
         return self.map_observation(obs), rew, terminated, truncated, info
+
+    def _split(self, obs: ObsType) -> Tuple[Any, Optional[Dict[str, Any]]]:
+        """``(stacked part, latest-only part)`` of an observation."""
+        if self.latest_deque is None:
+            return obs, None
+        stacked = {k: v for k, v in obs.items() if k not in self.latest_only_keys}
+        latest = {k: obs[k] for k in self.latest_only_keys}
+        return stacked, latest
