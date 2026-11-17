@@ -119,4 +119,5 @@ with mkdocs_gen_files.open(SUMMARY_PATH, "w") as summary_file:
     summary_file.write("* [API Reference](api/index.md)\n")
     for package_dir in PACKAGE_DIRS:
         for line in api_nav_by_package[package_dir.name].build_literate_nav():
-            summary_file.write("  " + line.replace("](", "](api/", 1))
+            # 4 spaces: Python-Markdown nests a list item only at 4+ spaces of indent.
+            summary_file.write("    " + line.replace("](", "](api/", 1))
