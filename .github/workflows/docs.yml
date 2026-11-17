@@ -17,7 +17,6 @@ on:
       - "pyproject.toml"
       - "unienv_data/**"
       - "unienv_interface/**"
-      - "unienv_policy/**"
   release:
     types: [published]
   workflow_dispatch:

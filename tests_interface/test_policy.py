@@ -1,10 +1,10 @@
-"""``unienv_policy``: the stateful / functional policy interfaces and their wrappers."""
+"""``unienv_interface.policy``: the stateful / functional policy interfaces and their wrappers."""
 import numpy as np
 import pytest
 
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.space import BoxSpace
-from unienv_policy import FuncPolicy, FuncPolicyBasedPolicy, FuncPolicyWrapper, Policy, PolicyWrapper
+from unienv_interface.policy import FuncPolicy, FuncPolicyBasedPolicy, FuncPolicyWrapper, Policy, PolicyWrapper
 
 OBS = BoxSpace(B, -10.0, 10.0, np.float32, shape=(3,))
 ACT = BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))
@@ -15,9 +15,10 @@ BATCHED_ACT = BoxSpace(B, -1.0, 1.0, np.float32, shape=(N, 2))
 
 
 def test_top_level_exports():
-    import unienv_policy
+    import unienv_interface
+    import unienv_interface.policy as policy_module
     for name in ("Policy", "PolicyWrapper", "FuncPolicy", "FuncPolicyWrapper", "FuncPolicyBasedPolicy"):
-        assert getattr(unienv_policy, name) is getattr(unienv_policy.base, name)
+        assert getattr(unienv_interface, name) is getattr(policy_module, name)
 
 
 class ReactivePolicy(Policy):

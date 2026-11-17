@@ -68,7 +68,7 @@ The result is a package that can sit between your simulator, robot stack, datase
 | --- | --- | --- |
 | Interface layer | Spaces, environments, wrappers, transformations | `unienv_interface.space`, `unienv_interface.env_base`, `unienv_interface.wrapper`, `unienv_interface.transformations` |
 | Composition layer | Worlds, nodes, and environment composition | `unienv_interface.world` |
-| Policy layer | Stateful and functional policies, policy wrappers | `unienv_policy` |
+| Policy layer | Stateful and functional policies, policy wrappers | `unienv_interface.policy` |
 | Data layer | Batches, replay buffers, storage, samplers | `unienv_data.base`, `unienv_data.replay_buffer`, `unienv_data.storages`, `unienv_data.samplers` |
 | Integrations | External dataset and training ecosystem adapters | `unienv_data.integrations` |
 

@@ -1,6 +1,6 @@
 # Policies
 
-`unienv_policy` is the agent side of the loop. Like environments, policies come in two styles:
+`unienv_interface.policy` is the agent side of the loop. Like environments, policies come in two styles:
 
 - `Policy`: a stateful object that keeps its own memory (RNG, recurrent state, history)
 - `FuncPolicy`: a functional interface that takes its state in and returns it explicitly
@@ -28,7 +28,7 @@ import numpy as np
 
 from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.space import BoxSpace
-from unienv_policy import Policy
+from unienv_interface.policy import Policy
 
 
 class RandomPolicy(Policy):
@@ -94,7 +94,7 @@ A `FuncPolicy` keeps no state on the object. Each method takes the state and ret
 - `close(state)`
 
 ```python
-from unienv_policy import FuncPolicy
+from unienv_interface.policy import FuncPolicy
 
 
 class SmoothedPolicy(FuncPolicy):
@@ -134,7 +134,7 @@ state, action = func_policy.get_action(state)  # [0.75, -0.75]
 `FuncPolicyBasedPolicy` holds the state for you, so a functional policy plugs into the stateful loop above (with the functional policy's batch size and spaces):
 
 ```python
-from unienv_policy import FuncPolicyBasedPolicy
+from unienv_interface.policy import FuncPolicyBasedPolicy
 
 policy = FuncPolicyBasedPolicy(func_policy, seed=0)
 policy.reset(None, obs)          # calls func_policy.initial the first time
@@ -146,7 +146,7 @@ policy.get_action()              # [0.5, -0.5]
 `PolicyWrapper` and `FuncPolicyWrapper` forward every call and attribute to the wrapped policy, the same way environment wrappers do. Override only what you change:
 
 ```python
-from unienv_policy import PolicyWrapper
+from unienv_interface.policy import PolicyWrapper
 
 
 class ScaledActions(PolicyWrapper):

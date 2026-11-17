@@ -19,9 +19,8 @@ The project is designed around one idea: environment code and dataset code shoul
 
 ## What Is In The Package
 
-- `unienv_interface`: environments, worlds, nodes, spaces, wrappers, and transformations
+- `unienv_interface`: environments, worlds, nodes, policies, spaces, wrappers, and transformations
 - `unienv_data`: batches, replay buffers, storage backends, samplers, and dataset integrations
-- `unienv_policy`: policy interfaces (stateful `Policy`, functional `FuncPolicy`) and their wrappers
 - backend portability through [XBArray](https://github.com/UniEnvOrg/XBArray) and DLPack-based conversion paths
 
 ## Installation
