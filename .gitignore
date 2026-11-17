@@ -139,6 +139,8 @@ venv.bak/
 
 # mkdocs documentation
 /site
+# shared docs theme, fetched by scripts/fetch_docs_theme.sh
+/.org-site/
 
 # mypy
 .mypy_cache/

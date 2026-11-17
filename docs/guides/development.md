@@ -22,11 +22,27 @@ The docs site combines:
 
 The generation step walks the `unienv_interface` and `unienv_data` modules and emits reference pages consumed by `mkdocstrings`.
 
-To serve the docs locally:
+The look comes from the shared UniEnv docs theme, which lives in `docs-theme/` of
+[UniEnvOrg.github.io](https://github.com/UniEnvOrg/UniEnvOrg.github.io). Fetch it once, then serve:
 
 ```bash
+pip install -e ".[docs]"
+scripts/fetch_docs_theme.sh        # or: scripts/fetch_docs_theme.sh ../UniEnvOrg.github.io
 mkdocs serve
 ```
+
+### Published versions
+
+The site is versioned with [mike](https://github.com/jimporter/mike) on the `gh-pages` branch,
+by the `Deploy Docs` workflow:
+
+| Trigger | Published at |
+| --- | --- |
+| push to `main` | `/UniEnv/dev/` |
+| GitHub release `X` | `/UniEnv/X/`, also aliased as `/UniEnv/latest/` (the default) |
+| manual run with a version | that version, optionally made `latest` |
+
+Links from before versioning (`/UniEnv/concepts/...`) are redirected to the same page under `latest/`.
 
 ## What To Keep Stable
 

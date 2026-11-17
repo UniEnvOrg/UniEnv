@@ -1,10 +1,14 @@
 name: Deploy Docs
 
+# Versioned docs with mike on the gh-pages branch (Pages source: gh-pages, /):
+#   push to main      -> /UniEnv/dev/
+#   release published -> /UniEnv/<tag>/, and the `latest` alias + site root point at it
+#   manual run        -> any version name, optionally made `latest` (use it to backfill)
+
 on:
   push:
     branches:
       - main
-      - master
     paths:
       - ".github/workflows/docs.yml"
       - "docs/**"
@@ -13,24 +17,41 @@ on:
       - "pyproject.toml"
       - "unienv_data/**"
       - "unienv_interface/**"
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy from this ref, e.g. 0.0.1b16 (empty: dev)"
+        required: false
+        default: ""
+      latest:
+        description: "Point `latest` and the site root at this version"
+        type: boolean
+        default: true
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write  # mike commits to gh-pages
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: docs-gh-pages
+  cancel-in-progress: false  # every run commits to gh-pages; queue them
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # mike builds on the existing gh-pages history
+
+      - name: Check out the shared docs theme
+        uses: actions/checkout@v4
+        with:
+          repository: UniEnvOrg/UniEnvOrg.github.io
+          path: .org-site
+          sparse-checkout: docs-theme
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,36 +60,42 @@ jobs:
           cache: pip
 
       - name: Install documentation dependencies
+        run: python -m pip install ".[docs]"
+
+      - name: Configure git
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ".[dev]"
-          python -m pip install \
-            mkdocs-material \
-            "mkdocstrings[python]" \
-            mkdocs-gen-files \
-            mkdocs-literate-nav \
-            mkdocs-section-index
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Deploy with mike
+        env:
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LATEST: ${{ inputs.latest }}
+        run: |
+          if [ "$EVENT" = release ]; then
+            version="$RELEASE_TAG"; latest=true
+          elif [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"; latest="$INPUT_LATEST"
+          else
+            version=dev; latest=false
+          fi
+          version="${version#v}"
+          if [ "$latest" = true ]; then
+            mike deploy --push --alias-type=copy --update-aliases "$version" latest
+            mike set-default --push latest
+          else
+            mike deploy --push "$version"
+          fi
 
-      - name: Build documentation site
-        run: mkdocs build
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/
-
-  deploy:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Redirect pre-versioning links to latest
+        run: |
+          git fetch origin gh-pages
+          git worktree add --detach "$RUNNER_TEMP/gh-pages" origin/gh-pages
+          if ! cmp -s .org-site/docs-theme/unversioned-404.html "$RUNNER_TEMP/gh-pages/404.html"; then
+            cp .org-site/docs-theme/unversioned-404.html "$RUNNER_TEMP/gh-pages/404.html"
+            git -C "$RUNNER_TEMP/gh-pages" add 404.html
+            git -C "$RUNNER_TEMP/gh-pages" commit -m "Root 404: send unversioned links to latest"
+            git -C "$RUNNER_TEMP/gh-pages" push origin HEAD:gh-pages
+          fi

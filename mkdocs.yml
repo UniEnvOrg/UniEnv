@@ -4,9 +4,36 @@ site_url: https://unienvorg.github.io/UniEnv/
 repo_url: https://github.com/UniEnvOrg/UniEnv
 repo_name: UniEnvOrg/UniEnv
 
+exclude_docs: |
+  gen_ref_pages.py
+
 theme:
   name: material
+  # Shared UniEnv docs theme from github.com/UniEnvOrg/UniEnvOrg.github.io (docs-theme/).
+  # CI checks it out here; locally run scripts/fetch_docs_theme.sh first.
+  custom_dir: .org-site/docs-theme
+  logo: unienv/logo.svg
+  favicon: unienv/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
   features:
+    - navigation.tabs
+    - navigation.footer
+    - navigation.tracking
+    - toc.follow
+    - content.code.annotate
     - navigation.instant
     - navigation.indexes
     - navigation.sections
@@ -14,6 +41,19 @@ theme:
     - content.code.copy
     - search.highlight
     - search.suggest
+
+extra_css:
+  - unienv/unienv.css
+
+extra:
+  unienv:
+    current: UniEnv
+  version:
+    provider: mike
+    default: latest
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/UniEnvOrg
 
 plugins:
   - search
@@ -43,6 +83,10 @@ plugins:
             show_source: false
             show_symbol_type_heading: true
             show_symbol_type_toc: true
+            signature_crossrefs: true
+            line_length: 88
+            summary: true
+            docstring_section_style: table
 
 markdown_extensions:
   - admonition
@@ -53,7 +97,9 @@ markdown_extensions:
   - toc:
       permalink: true
   - pymdownx.details
-  - pymdownx.highlight
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
