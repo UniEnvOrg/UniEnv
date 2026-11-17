@@ -270,7 +270,7 @@ class ParquetStorage(SpaceStorage[
             column_dtypes=column_dtypes,
         )
 
-        return cls(
+        storage = cls(
             single_instance_space,
             storage_dir=storage_dir,
             capacity=capacity,
@@ -282,6 +282,9 @@ class ParquetStorage(SpaceStorage[
             read_only=False,
             compression=compression,
         )
+        # The pieces just written hold zeros: the first access allocates them instead of decoding the file
+        storage._zero_pieces = set(range(num_pieces))
+        return storage
 
     @classmethod
     def load_from(
@@ -417,6 +420,8 @@ class ParquetStorage(SpaceStorage[
         # Read-only Arrow cache: piece_idx -> pyarrow.Table
         self._cached_piece_tables: Dict[int, pa.Table] = {}
         self._dirty_pieces: set = set()
+        # Pieces whose file still holds the zeros `create()` wrote (see `_load_piece`)
+        self._zero_pieces: set = set()
         # Row count recorded in the on-disk `_metadata.json` (create() / load_from() leave it equal to the length)
         self._disk_len: int = total_len
 
@@ -450,6 +455,14 @@ class ParquetStorage(SpaceStorage[
         """Load a piece from disk into cache if not already cached."""
         if piece_idx in self._cached_pieces:
             return self._cached_pieces[piece_idx]
+
+        if piece_idx in self._zero_pieces:
+            # Reading back a freshly created piece costs ~0.4 s per 1024 128x128x3 images; it is all zeros
+            self._zero_pieces.discard(piece_idx)
+            start = piece_idx * self._piece_size
+            arrays = _allocate_piece_arrays(self._column_specs, min(start + self._piece_size, self._len) - start)
+            self._cached_pieces[piece_idx] = arrays
+            return arrays
 
         piece_path = self._piece_path(piece_idx)
         table = pq.read_table(piece_path, memory_map=self._read_only)
@@ -778,6 +791,7 @@ class ParquetStorage(SpaceStorage[
             # Remove from cache
             self._cached_pieces.pop(piece_idx, None)
             self._dirty_pieces.discard(piece_idx)
+            self._zero_pieces.discard(piece_idx)
             # Remove file
             piece_path = self._piece_path(piece_idx)
             if os.path.exists(piece_path):
@@ -838,6 +852,7 @@ class ParquetStorage(SpaceStorage[
         self._cached_pieces.clear()
         self._cached_piece_tables.clear()
         self._dirty_pieces.clear()
+        self._zero_pieces.clear()
 
     # ========== get_column ==========
 
@@ -872,6 +887,8 @@ class ParquetStorage(SpaceStorage[
         state.pop("_cached_pieces", None)
         state.pop("_cached_piece_tables", None)
         state.pop("_dirty_pieces", None)
+        # Another process cannot tell whether this one wrote the pieces since: it reads them
+        state.pop("_zero_pieces", None)
         return state
 
     def __setstate__(self, state):
@@ -879,6 +896,7 @@ class ParquetStorage(SpaceStorage[
         self._cached_pieces = {}
         self._cached_piece_tables = {}
         self._dirty_pieces = set()
+        self._zero_pieces = set()
 
     # ========== Utilities ==========
 

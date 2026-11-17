@@ -211,3 +211,46 @@ def test_pickling_flushes_dirty_pieces(tmp_path):
     reader.close()
     clone.close()
     storage.close()
+
+
+def test_fresh_pieces_are_allocated_not_read(tmp_path, monkeypatch):
+    # A just-created fixed-capacity storage knows its pieces hold zeros: no piece file is decoded
+    import pyarrow.parquet as pq
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=5, cache_path=path, piece_size=2)
+
+    def no_read(*args, **kwargs):
+        raise AssertionError("read a freshly created piece from disk")
+
+    monkeypatch.setattr(pq, "read_table", no_read)
+    storage.set(slice(3, 5), {"obs": np.ones((2, 2), np.float32), "step": np.array([7, 8])})
+    np.testing.assert_array_equal(storage.get(Ellipsis)["step"], np.array([0, 0, 0, 7, 8]))
+    assert_tree_equal(storage.get(1), {"obs": np.zeros(2, np.float32), "step": np.int64(0)})
+    monkeypatch.undo()
+    storage.dumps(path)
+    storage.close()
+    reader = ParquetStorage.load_from(path, _space(), capacity=5, read_only=True)
+    np.testing.assert_array_equal(reader.get(Ellipsis)["step"], np.array([0, 0, 0, 7, 8]))
+    np.testing.assert_array_equal(reader.get(Ellipsis)["obs"][3:], np.ones((2, 2), np.float32))
+    reader.close()
+
+
+def test_fresh_text_pieces_match_the_written_defaults(tmp_path):
+    path = str(tmp_path / "pq")
+    created = ParquetStorage.create(_text_space(), capacity=3, cache_path=path, piece_size=2)
+    fresh = created.get(Ellipsis)
+    created.close()
+    reread = ParquetStorage.load_from(path, _text_space(), capacity=3)  # decodes the files create() wrote
+    assert_tree_equal(fresh, reread.get(Ellipsis))
+    reread.close()
+
+
+def test_unpickled_storage_reads_pieces_written_since_create(tmp_path):
+    import pickle
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_space(), capacity=4, cache_path=path, piece_size=2)
+    storage.set(slice(0, 4), _batch(4))
+    clone = pickle.loads(pickle.dumps(storage))  # flushes the dirty pieces
+    assert_tree_equal(clone.get(Ellipsis), _batch(4))
+    storage.close()
+    clone.close()

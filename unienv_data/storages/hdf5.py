@@ -15,6 +15,7 @@ import numpy as np
 import os
 import json
 import copy
+import functools
 
 def is_fancy_index(
     index : Any
@@ -182,24 +183,32 @@ def write_rows(dataset : h5py.Dataset, start : int, value : Any, num_rows : Opti
     `num_rows` whole rows: skips h5py's selection / broadcasting machinery (~30us of Python per call, 3-4x the cost of
     the write itself). Returns False (writing nothing) when the fast path does not apply.
     """
-    row_shape = dataset.shape[1:]
-    if dataset.dtype.kind in ('O', 'S', 'U', 'V'):
+    dtype = dataset.dtype
+    if dtype.kind in ('O', 'S', 'U', 'V'):
         return False
+    # The file dataspace is needed for the write anyway, and its shape costs ~2us against ~8us per `dataset.shape`
+    file_space = dataset.id.get_space()
+    shape = file_space.shape
+    row_shape = shape[1:]
     arr = np.asarray(value)
     if arr.ndim != len(row_shape) + 1 or arr.shape[1:] != row_shape or arr.shape[0] == 0 \
             or (num_rows is not None and arr.shape[0] != num_rows) \
-            or start < 0 or start + arr.shape[0] > dataset.shape[0]:
+            or start < 0 or start + arr.shape[0] > shape[0]:
         return False
-    if arr.dtype != dataset.dtype:
+    if arr.dtype != dtype:
         # Only lossless casts: anything else goes through h5py so overflow / rounding follow HDF5 conversion rules
-        if not np.can_cast(arr.dtype, dataset.dtype, casting="safe"):
+        if not np.can_cast(arr.dtype, dtype, casting="safe"):
             return False
-        arr = arr.astype(dataset.dtype)
+        arr = arr.astype(dtype)
     arr = np.ascontiguousarray(arr)
-    file_space = dataset.id.get_space()
     file_space.select_hyperslab((int(start),) + (0,) * len(row_shape), arr.shape)
-    dataset.id.write(h5py.h5s.create_simple(arr.shape), file_space, arr)
+    dataset.id.write(_memory_space(arr.shape), file_space, arr)
     return True
+
+@functools.lru_cache(maxsize=256)
+def _memory_space(shape : Tuple[int, ...]) -> h5py.h5s.SpaceID:
+    """A simple dataspace of `shape` (never selected on, so it can be shared between writes)."""
+    return h5py.h5s.create_simple(shape)
 
 def write_sorted_unique_rows(dataset : h5py.Dataset, index : np.ndarray, value : np.ndarray) -> None:
     """`dataset[index] = value` for a sorted, duplicate-free integer array, as one slice write per consecutive run."""
@@ -792,10 +801,7 @@ class HDF5Storage(SpaceStorage[
             "Cannot extend length of a storage with fixed capacity"
         assert length > 0, "Length must be greater than 0"
         new_length = self._len + length
-        __class__.call_function_on_every_dataset(
-            self._ensure_root(),
-            lambda dataset: dataset.resize(new_length, axis=0)
-        )
+        self._resize_datasets(new_length)
         self._len = new_length
     
     def shrink_length(self, length):
@@ -804,11 +810,13 @@ class HDF5Storage(SpaceStorage[
         assert length > 0, "Length must be greater than 0"
         new_length = self._len - length
         assert new_length >= 0, "New length must be non-negative"
-        __class__.call_function_on_every_dataset(
-            self._ensure_root(),
-            lambda dataset: dataset.resize(new_length, axis=0)
-        )
+        self._resize_datasets(new_length)
         self._len = new_length
+
+    def _resize_datasets(self, new_length : int) -> None:
+        # Through the cached leaves: walking the group tree costs ~20-50us per h5py lookup, on every append
+        for _, _, dataset in self._get_leaves():
+            dataset.resize(new_length, axis=0)
     
     def __len__(self):
         return self._len
