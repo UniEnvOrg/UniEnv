@@ -31,6 +31,31 @@ ActType = TypeVar("ActType")
 RenderFrame = TypeVar("RenderFrame")
 
 class Policy(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]):
+    """A stateful policy acting in an :class:`~unienv_interface.env_base.env.Env`.
+
+    Protocol::
+
+        policy.reset(context, observation)              # from env.reset()
+        while running:
+            action = policy.get_action()
+            observation, reward, terminated, truncated, info = env.step(action)
+            policy.observe_transition(action, observation)
+            # batched env, some sub-environments done:
+            #   merge env.reset(mask=done) into the full batch (env.update_*_post_reset), then
+            #   policy.reset(full_context, full_observation, mask=done)
+
+    The policy's state (latest observation, recurrent state, action queue, ...) changes only in
+    :meth:`reset` and :meth:`observe_transition`. :meth:`get_action` reads it: calling it again
+    without a new transition returns an action for the same state (a stochastic policy may draw a
+    new sample).
+
+    Context: as for environments, the context is fixed for an episode and is only given to
+    :meth:`reset`; a policy that needs it keeps it from there.
+
+    Batching follows :class:`~unienv_interface.env_base.env.Env`: ``batch_size is None`` is an
+    unbatched policy; otherwise (including ``batch_size == 1``) the spaces include the leading batch
+    dimension and every observation, context and action is a full batch.
+    """
     metadata : Dict[str, Any] = {}
 
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
@@ -44,6 +69,7 @@ class Policy(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderF
 
     rng : BRNGType = None
 
+    @abc.abstractmethod
     def reset(
         self,
         context : Optional[ContextType],
@@ -53,33 +79,26 @@ class Policy(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderF
         mask : Optional[BArrayType] = None,
         **kwargs
     ) -> None:
+        """Start new episodes from ``context`` and ``observation``.
+
+        Batched policies always receive the full batch. With ``mask`` (batched only), only the
+        sub-environments it selects start a new episode: their rows of ``context`` / ``observation``
+        are new, the other rows are unchanged and the policy keeps its state for them.
         """
-        Resets the policy with the initial context and observation.
-        If mask is provided, the context and observation only contains the context / observation for the masked batch indices, and the actor should only reset the corresponding batch indices.
-        """
-        pass
-    
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def observe_transition(
         self,
         action_taken : ActType,
         new_observation : ObsType,
     ) -> None:
-        """
-        Informs the policy of the action taken and the new observation received after taking the action.
-        This can be used for policies that require knowledge of the transition, such as RNN-based policies.
-        By default, this method does nothing.
-        """
-        pass
+        """Update the policy's state with the action the environment executed and the observation it returned."""
+        raise NotImplementedError
 
     @abc.abstractmethod
-    def compute_action(
-        self,
-        observation : ObsType,
-        **kwargs
-    ) -> ActType:
-        """
-        Samples an action given the current observation.
-        """
+    def get_action(self, **kwargs) -> ActType:
+        """The action for the current state (see :meth:`reset` / :meth:`observe_transition`); does not change it."""
         raise NotImplementedError
     
     def visualize_action(
@@ -243,8 +262,8 @@ class PolicyWrapper(
     def observe_transition(self, action_taken, new_observation):
         return self.policy.observe_transition(action_taken, new_observation)
 
-    def compute_action(self, observation, **kwargs):
-        return self.policy.compute_action(observation, **kwargs)
+    def get_action(self, **kwargs):
+        return self.policy.get_action(**kwargs)
 
     def visualize_action(self, environment_render, observation, action, **kwargs):
         return self.policy.visualize_action(environment_render, observation, action, **kwargs)

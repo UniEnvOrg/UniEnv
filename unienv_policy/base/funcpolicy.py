@@ -36,10 +36,31 @@ class FuncPolicy(
     abc.ABC,
     Generic[StateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
 ):
+    """A policy with explicit state passing, the functional counterpart of :class:`Policy`.
+
+    Every lifecycle method takes the state and returns the updated one, mirroring
+    :class:`~unienv_interface.env_base.funcenv.FuncEnv`::
+
+        state = policy.initial(context, observation)
+        while running:
+            state, action = policy.get_action(state)
+            observation, ... = env.step(action)
+            state = policy.observe_transition(state, action, observation)
+            # some sub-environments done: state = policy.reset(state, full_context, full_observation, mask=done)
+
+    The policy state takes in observations only through :meth:`initial`, :meth:`reset` and
+    :meth:`observe_transition`. :meth:`get_action` returns the state too, but may only update
+    bookkeeping in it (e.g. advance an RNG key or cache the computed action). The context is only
+    given at the start of episodes, and batching follows ``FuncEnv``: when ``batch_size`` is not
+    ``None`` the spaces include the leading batch dimension and all data is a full batch.
+    """
     metadata : Dict[str, Any] = {}
 
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType]
     device : Optional[BDeviceType] = None
+
+    # ``None`` → unbatched; ``int`` → batched (spaces include the leading batch axis, even for 1)
+    batch_size : Optional[int] = None
 
     action_space : Space[ActType, BDeviceType, BDtypeType, BRNGType]
     observation_space : Space[ObsType, BDeviceType, BDtypeType, BRNGType]
@@ -51,12 +72,13 @@ class FuncPolicy(
         context : Optional[ContextType],
         observation : ObsType,
         *,
-        batch_size : Optional[int],
         seed : Optional[int] = None,
         **kwargs
     ) -> StateType:
+        """The state at the start of the first episodes (all sub-environments)."""
         raise NotImplementedError
-    
+
+    @abc.abstractmethod
     def reset(
         self,
         state : StateType,
@@ -67,23 +89,30 @@ class FuncPolicy(
         mask : Optional[BArrayType] = None,
         **kwargs
     ) -> StateType:
-        return state
-    
+        """Start new episodes from ``context`` and ``observation`` (full batch, as in :meth:`Policy.reset`).
+
+        With ``mask`` (batched only), only the selected sub-environments start over; the state of
+        the others must be kept.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
     def observe_transition(
         self,
         state : StateType,
         action_taken : ActType,
         new_observation : ObsType,
     ) -> StateType:
-        return state
+        """The state after the environment executed ``action_taken`` and returned ``new_observation``."""
+        raise NotImplementedError
 
     @abc.abstractmethod
-    def compute_action(
+    def get_action(
         self,
         state : StateType,
-        observation : ObsType,
         **kwargs
     ) -> Tuple[StateType, ActType]:
+        """The action for ``state``, and ``state`` with updated bookkeeping (e.g. RNG key) only."""
         raise NotImplementedError
     
     def visualize_action(
@@ -156,6 +185,10 @@ class FuncPolicyWrapper(
         return self.policy.device
 
     @property
+    def batch_size(self) -> Optional[int]:
+        return self.policy.batch_size
+
+    @property
     def action_space(self) -> Space[WrapperActT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT]:
         if hasattr(self, "_action_space") and self._action_space is not None:
             return self._action_space
@@ -191,8 +224,8 @@ class FuncPolicyWrapper(
      ):
         self.policy = policy
  
-    def initial(self, context, observation, *, batch_size, seed = None, **kwargs):
-        return self.policy.initial(context, observation, batch_size=batch_size, seed=seed, **kwargs)
+    def initial(self, context, observation, *, seed = None, **kwargs):
+        return self.policy.initial(context, observation, seed=seed, **kwargs)
     
     def reset(self, state, context, observation, *, seed = None, mask = None, **kwargs):
         return self.policy.reset(state, context, observation, seed=seed, mask=mask, **kwargs)
@@ -200,8 +233,8 @@ class FuncPolicyWrapper(
     def observe_transition(self, state, action_taken, new_observation):
         return self.policy.observe_transition(state, action_taken, new_observation)
 
-    def compute_action(self, state, observation, **kwargs):
-        return self.policy.compute_action(state, observation, **kwargs)
+    def get_action(self, state, **kwargs):
+        return self.policy.get_action(state, **kwargs)
     
     def visualize_action(
         self,
@@ -264,15 +297,18 @@ class FuncPolicyBasedPolicy(
     Generic[StateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
     Policy[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType]
 ):
+    """Runs a :class:`FuncPolicy` behind the stateful :class:`Policy` interface, holding its state.
+
+    The batch size and spaces are the functional policy's. ``seed`` is used for the first
+    :meth:`reset` (unless it passes its own) and for the RNG of the ``sample_*`` helpers.
+    """
     def __init__(
         self,
         func_policy : FuncPolicy[StateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
-        batch_size : Optional[int] = None,
         seed : Optional[int] = None,
     ) -> None:
         self.func_policy = func_policy
         
-        self._batch_size = batch_size
         self.state : Optional[StateType] = None
         self._init_seed = seed
         self._inited = False
@@ -299,7 +335,7 @@ class FuncPolicyBasedPolicy(
     
     @property
     def batch_size(self) -> Optional[int]:
-        return self._batch_size
+        return self.func_policy.batch_size
     
     @property
     def action_space(self) -> Space[ActType, BDeviceType, BDtypeType, BRNGType]:
@@ -319,7 +355,6 @@ class FuncPolicyBasedPolicy(
             self.state = self.func_policy.initial(
                 context,
                 observation,
-                batch_size=self.batch_size,
                 seed=self._init_seed if seed is None else seed,
                 **kwargs
             )
@@ -335,17 +370,17 @@ class FuncPolicyBasedPolicy(
             )
     
     def observe_transition(self, action_taken, new_observation):
+        assert self._inited, "Policy must be reset before observing transitions"
         self.state = self.func_policy.observe_transition(
             self.state,
             action_taken,
             new_observation
         )
 
-    def compute_action(self, observation, **kwargs):
-        assert self._inited, "Policy must be reset before computing action"
-        self.state, action = self.func_policy.compute_action(
+    def get_action(self, **kwargs):
+        assert self._inited, "Policy must be reset before getting an action"
+        self.state, action = self.func_policy.get_action(
             self.state,
-            observation,
             **kwargs
         )
         return action
