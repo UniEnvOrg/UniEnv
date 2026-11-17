@@ -109,18 +109,8 @@ If you want to exercise optional backends or integrations during development, in
 
 ## Cite
 
-If you use UniEnv in research, cite:
-
-```bibtex
-@software{cao_unienv,
-  author = {Yunhao Cao AND Cory Fan AND Meryl Zhang AND Sabrina Liu AND Kuan Fang},
-  title = {{UniEnv: Unifying Robot Environments and Data APIs}},
-  year = {2025},
-  month = oct,
-  url = {https://github.com/UniEnvOrg/UniEnv},
-  license = {Apache-2.0}
-}
-```
+If you use UniEnv in research, please cite it. The current author list and BibTeX are on
+[unienvorg.github.io](https://unienvorg.github.io/#cite).
 
 ## Acknowledgements
 
