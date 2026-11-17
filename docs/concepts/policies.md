@@ -5,7 +5,7 @@
 - `Policy`: a stateful object that keeps its own memory (RNG, recurrent state, history)
 - `FuncPolicy`: a functional interface that takes its state in and returns it explicitly
 
-A policy declares the same kind of spaces an environment does (`observation_space`, `action_space`, optional `context_space`, plus `backend`, `device` and `batch_size`), so it can be checked against, and written for, any environment with matching spaces: a simulator, a real robot, or a dataset replayed through the same schema.
+A policy declares its own spaces, the same kind an environment does (`observation_space`, `action_space`, optional `context_space`, plus `backend`, `device` and `batch_size`): what it reads and what it outputs. It is defined independently of any one environment and runs with every source whose data fits those spaces: a simulator, a real robot, or a dataset replayed through the same schema.
 
 ## `Policy`
 
@@ -28,29 +28,27 @@ from unienv_interface.backends.numpy import NumpyComputeBackend as B
 from unienv_interface.space import BoxSpace
 from unienv_policy import Policy
 
-obs_space = BoxSpace(B, -10.0, 10.0, np.float32, shape=(3,))
-act_space = BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))
-
 
 class RandomPolicy(Policy):
-    """Uniform random actions from the action space."""
+    """Uniform random actions from its own action space."""
 
-    def __init__(self, observation_space, action_space, seed=0):
-        self.backend = observation_space.backend
-        self.device = observation_space.device
-        self.observation_space = observation_space
-        self.action_space = action_space
-        self.rng = self.backend.random.random_number_generator(seed)
+    backend = B
+    device = None
+    observation_space = BoxSpace(B, -10.0, 10.0, np.float32, shape=(3,))
+    action_space = BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))
+
+    def __init__(self, seed=0):
+        self.rng = B.random.random_number_generator(seed)
 
     def compute_action(self, observation, **kwargs):
         return self.sample_action()
 
 
-policy = RandomPolicy(obs_space, act_space)
+policy = RandomPolicy()
 policy.compute_action(np.zeros(3, np.float32))  # array of shape (2,), within [-1, 1]
 ```
 
-In a real setup, pass `env.observation_space` and `env.action_space`, so the policy is built from the environment it runs in.
+The spaces belong to the policy: they describe its inputs and outputs, not a particular environment.
 
 ## The Control Loop
 
@@ -84,11 +82,12 @@ from unienv_policy import FuncPolicy
 class SmoothedPolicy(FuncPolicy):
     """Moves the action a fraction of the way toward a target each step; the state is the last action."""
 
-    def __init__(self, observation_space, action_space, alpha=0.5):
-        self.backend = observation_space.backend
-        self.device = observation_space.device
-        self.observation_space = observation_space
-        self.action_space = action_space
+    backend = B
+    device = None
+    observation_space = BoxSpace(B, -10.0, 10.0, np.float32, shape=(3,))
+    action_space = BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))
+
+    def __init__(self, alpha=0.5):
         self.alpha = alpha
 
     def initial(self, context, observation, *, batch_size, seed=None, **kwargs):
@@ -100,7 +99,7 @@ class SmoothedPolicy(FuncPolicy):
         return action, action
 
 
-func_policy = SmoothedPolicy(obs_space, act_space)
+func_policy = SmoothedPolicy()
 obs = np.array([1.0, -1.0, 0.0], np.float32)
 state = func_policy.initial(None, obs, batch_size=None)
 state, action = func_policy.compute_action(state, obs)  # [0.5, -0.5]
@@ -136,7 +135,7 @@ class ScaledActions(PolicyWrapper):
         return self.scale * self.policy.compute_action(observation, **kwargs)
 
 
-slow = ScaledActions(FuncPolicyBasedPolicy(SmoothedPolicy(obs_space, act_space)), 0.5)
+slow = ScaledActions(FuncPolicyBasedPolicy(SmoothedPolicy()), 0.5)
 slow.reset(None, obs)
 slow.compute_action(obs)         # [0.25, -0.25]
 slow.unwrapped                   # the FuncPolicyBasedPolicy underneath
