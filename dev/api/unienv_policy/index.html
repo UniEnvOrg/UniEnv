@@ -6168,10 +6168,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#unienv_policy.Policy.compute_action" class="md-nav__link">
+  <a href="#unienv_policy.Policy.get_action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;compute_action
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_action
       
     </span>
   </a>
@@ -6482,10 +6482,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#unienv_policy.PolicyWrapper.compute_action" class="md-nav__link">
+  <a href="#unienv_policy.PolicyWrapper.get_action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;compute_action
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_action
       
     </span>
   </a>
@@ -6598,6 +6598,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_policy.FuncPolicy.batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_policy.FuncPolicy.action_space" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6686,10 +6697,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#unienv_policy.FuncPolicy.compute_action" class="md-nav__link">
+  <a href="#unienv_policy.FuncPolicy.get_action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;compute_action
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_action
       
     </span>
   </a>
@@ -6802,6 +6813,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_policy.FuncPolicyWrapper.batch_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-attribute"></code>&nbsp;batch_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_policy.FuncPolicyWrapper.action_space" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6901,10 +6923,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#unienv_policy.FuncPolicyWrapper.compute_action" class="md-nav__link">
+  <a href="#unienv_policy.FuncPolicyWrapper.get_action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;compute_action
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_action
       
     </span>
   </a>
@@ -7182,10 +7204,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#unienv_policy.FuncPolicyBasedPolicy.compute_action" class="md-nav__link">
+  <a href="#unienv_policy.FuncPolicyBasedPolicy.get_action" class="md-nav__link">
     <span class="md-ellipsis">
       
-        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;compute_action
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_action
       
     </span>
   </a>
@@ -7332,7 +7354,7 @@
             <td><code><a class="autorefs autorefs-internal" title="            Policy (unienv_policy.Policy)" href="#unienv_policy.Policy">Policy</a></code></td>
             <td>
               <div class="doc-md-description">
-                
+                <p>A stateful policy acting in an :class:<code>~unienv_interface.env_base.env.Env</code>.</p>
               </div>
             </td>
           </tr>
@@ -7348,7 +7370,7 @@
             <td><code><a class="autorefs autorefs-internal" title="            FuncPolicy (unienv_policy.FuncPolicy)" href="#unienv_policy.FuncPolicy">FuncPolicy</a></code></td>
             <td>
               <div class="doc-md-description">
-                
+                <p>A policy with explicit state passing, the functional counterpart of :class:<code>Policy</code>.</p>
               </div>
             </td>
           </tr>
@@ -7364,7 +7386,7 @@
             <td><code><a class="autorefs autorefs-internal" title="            FuncPolicyBasedPolicy (unienv_policy.FuncPolicyBasedPolicy)" href="#unienv_policy.FuncPolicyBasedPolicy">FuncPolicyBasedPolicy</a></code></td>
             <td>
               <div class="doc-md-description">
-                
+                <p>Runs a :class:<code>FuncPolicy</code> behind the stateful :class:<code>Policy</code> interface, holding its state.</p>
               </div>
             </td>
           </tr>
@@ -7424,6 +7446,27 @@
 
 
 
+        <p>A stateful policy acting in an :class:<code>~unienv_interface.env_base.env.Env</code>.</p>
+<p>Protocol::</p>
+<div class="language-text highlight"><pre><span></span><code>policy.reset(context, observation)              # from env.reset()
+while running:
+    action = policy.get_action()
+    observation, reward, terminated, truncated, info = env.step(action)
+    policy.observe_transition(action, observation)
+    # batched env, some sub-environments done:
+    #   merge env.reset(mask=done) into the full batch (env.update_*_post_reset), then
+    #   policy.reset(full_context, full_observation, mask=done)
+</code></pre></div>
+<p>The policy's state (latest observation, recurrent state, action queue, ...) changes only in
+:meth:<code>reset</code> and :meth:<code>observe_transition</code>. :meth:<code>get_action</code> reads it: calling it again
+without a new transition returns an action for the same state (a stochastic policy may draw a
+new sample).</p>
+<p>Context: as for environments, the context is fixed for an episode and is only given to
+:meth:<code>reset</code>; a policy that needs it keeps it from there.</p>
+<p>Batching follows :class:<code>~unienv_interface.env_base.env.Env</code>: <code>batch_size is None</code> is an
+unbatched policy; otherwise (including <code>batch_size == 1</code>) the spaces include the leading batch
+dimension and every observation, context and action is a full batch.</p>
+
 
 
 
@@ -7445,31 +7488,41 @@
       </thead>
       <tbody>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            reset (unienv_policy.Policy.reset)" href="#unienv_policy.Policy.reset">reset</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Resets the policy with the initial context and observation.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            observe_transition (unienv_policy.Policy.observe_transition)" href="#unienv_policy.Policy.observe_transition">observe_transition</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>Informs the policy of the action taken and the new observation received after taking the action.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            compute_action
+              <td><code><a class="autorefs autorefs-internal" title="            reset
 
 
   
       abstractmethod
-   (unienv_policy.Policy.compute_action)" href="#unienv_policy.Policy.compute_action">compute_action</a></code></td>
+   (unienv_policy.Policy.reset)" href="#unienv_policy.Policy.reset">reset</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>Samples an action given the current observation.</p>
+                  <p>Start new episodes from <code>context</code> and <code>observation</code>.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            observe_transition
+
+
+  
+      abstractmethod
+   (unienv_policy.Policy.observe_transition)" href="#unienv_policy.Policy.observe_transition">observe_transition</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Update the policy's state with the action the environment executed and the observation it returned.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            get_action
+
+
+  
+      abstractmethod
+   (unienv_policy.Policy.get_action)" href="#unienv_policy.Policy.get_action">get_action</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>The action for the current state (see :meth:<code>reset</code> / :meth:<code>observe_transition</code>); does not change it.</p>
                 </div>
               </td>
             </tr>
@@ -8003,6 +8056,10 @@
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">reset</span>
 
 
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
 <a href="#unienv_policy.Policy.reset" class="headerlink" title="Permanent link">&para;</a></h3>
 <div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">reset</span><span class="p">(</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">context</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            ContextType
@@ -8026,8 +8083,10 @@
 
     <div class="doc doc-contents ">
 
-        <p>Resets the policy with the initial context and observation.
-If mask is provided, the context and observation only contains the context / observation for the masked batch indices, and the actor should only reset the corresponding batch indices.</p>
+        <p>Start new episodes from <code>context</code> and <code>observation</code>.</p>
+<p>Batched policies always receive the full batch. With <code>mask</code> (batched only), only the
+sub-environments it selects start a new episode: their rows of <code>context</code> / <code>observation</code>
+are new, the other rows are unchanged and the policy keeps its state for them.</p>
 
 
     </div>
@@ -8040,6 +8099,10 @@ If mask is provided, the context and observation only contains the context / obs
 <h3 id="unienv_policy.Policy.observe_transition" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">observe_transition</span>
 
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
 
 <a href="#unienv_policy.Policy.observe_transition" class="headerlink" title="Permanent link">&para;</a></h3>
 <div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">action_taken</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            ActType
@@ -8057,9 +8120,7 @@ If mask is provided, the context and observation only contains the context / obs
 
     <div class="doc doc-contents ">
 
-        <p>Informs the policy of the action taken and the new observation received after taking the action.
-This can be used for policies that require knowledge of the transition, such as RNN-based policies.
-By default, this method does nothing.</p>
+        <p>Update the policy's state with the action the environment executed and the observation it returned.</p>
 
 
     </div>
@@ -8069,21 +8130,16 @@ By default, this method does nothing.</p>
 <div class="doc doc-object doc-function">
 
 
-<h3 id="unienv_policy.Policy.compute_action" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">compute_action</span>
+<h3 id="unienv_policy.Policy.get_action" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_action</span>
 
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
   </span>
 
-<a href="#unienv_policy.Policy.compute_action" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compute_action</span><span class="p">(</span><span class="n">observation</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            ObsType
-
-
-  
-      module-attribute
-   (unienv_policy.base.policy.ObsType)" href="base/policy/#unienv_policy.base.policy.ObsType">ObsType</a></span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            ActType
+<a href="#unienv_policy.Policy.get_action" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_action</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            ActType
 
 
   
@@ -8093,7 +8149,7 @@ By default, this method does nothing.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Samples an action given the current observation.</p>
+        <p>The action for the current state (see :meth:<code>reset</code> / :meth:<code>observe_transition</code>); does not change it.</p>
 
 
     </div>
@@ -8534,7 +8590,7 @@ By default, it returns the environment render frame without any modification.</p
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            compute_action (unienv_policy.PolicyWrapper.compute_action)" href="#unienv_policy.PolicyWrapper.compute_action">compute_action</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            get_action (unienv_policy.PolicyWrapper.get_action)" href="#unienv_policy.PolicyWrapper.get_action">get_action</a></code></td>
               <td>
                 <div class="doc-md-description">
                   
@@ -9349,12 +9405,12 @@ By default, it returns the environment render frame without any modification.</p
 <div class="doc doc-object doc-function">
 
 
-<h3 id="unienv_policy.PolicyWrapper.compute_action" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">compute_action</span>
+<h3 id="unienv_policy.PolicyWrapper.get_action" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_action</span>
 
 
-<a href="#unienv_policy.PolicyWrapper.compute_action" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compute_action</span><span class="p">(</span><span class="n">observation</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<a href="#unienv_policy.PolicyWrapper.get_action" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_action</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -9510,6 +9566,22 @@ By default, it returns the environment render frame without any modification.</p
 
 
 
+        <p>A policy with explicit state passing, the functional counterpart of :class:<code>Policy</code>.</p>
+<p>Every lifecycle method takes the state and returns the updated one, mirroring
+:class:<code>~unienv_interface.env_base.funcenv.FuncEnv</code>::</p>
+<div class="language-text highlight"><pre><span></span><code>state = policy.initial(context, observation)
+while running:
+    state, action = policy.get_action(state)
+    observation, ... = env.step(action)
+    state = policy.observe_transition(state, action, observation)
+    # some sub-environments done: state = policy.reset(state, full_context, full_observation, mask=done)
+</code></pre></div>
+<p>The policy state takes in observations only through :meth:<code>initial</code>, :meth:<code>reset</code> and
+:meth:<code>observe_transition</code>. :meth:<code>get_action</code> returns the state too, but may only update
+bookkeeping in it (e.g. advance an RNG key or cache the computed action). The context is only
+given at the start of episodes, and batching follows <code>FuncEnv</code>: when <code>batch_size</code> is not
+<code>None</code> the spaces include the leading batch dimension and all data is a full batch.</p>
+
 
 
 
@@ -9539,36 +9611,46 @@ By default, it returns the environment render frame without any modification.</p
    (unienv_policy.FuncPolicy.initial)" href="#unienv_policy.FuncPolicy.initial">initial</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  
+                  <p>The state at the start of the first episodes (all sub-environments).</p>
                 </div>
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            reset (unienv_policy.FuncPolicy.reset)" href="#unienv_policy.FuncPolicy.reset">reset</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            observe_transition (unienv_policy.FuncPolicy.observe_transition)" href="#unienv_policy.FuncPolicy.observe_transition">observe_transition</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            compute_action
+              <td><code><a class="autorefs autorefs-internal" title="            reset
 
 
   
       abstractmethod
-   (unienv_policy.FuncPolicy.compute_action)" href="#unienv_policy.FuncPolicy.compute_action">compute_action</a></code></td>
+   (unienv_policy.FuncPolicy.reset)" href="#unienv_policy.FuncPolicy.reset">reset</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  
+                  <p>Start new episodes from <code>context</code> and <code>observation</code> (full batch, as in :meth:<code>Policy.reset</code>).</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            observe_transition
+
+
+  
+      abstractmethod
+   (unienv_policy.FuncPolicy.observe_transition)" href="#unienv_policy.FuncPolicy.observe_transition">observe_transition</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>The state after the environment executed <code>action_taken</code> and returned <code>new_observation</code>.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            get_action
+
+
+  
+      abstractmethod
+   (unienv_policy.FuncPolicy.get_action)" href="#unienv_policy.FuncPolicy.get_action">get_action</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>The action for <code>state</code>, and <code>state</code> with updated bookkeeping (e.g. RNG key) only.</p>
                 </div>
               </td>
             </tr>
@@ -9671,6 +9753,23 @@ By default, it returns the environment render frame without any modification.</p
    (unienv_policy.FuncPolicy.device)" href="#unienv_policy.FuncPolicy.device">device</a></code></td>
             <td>
                   <code><span title="typing.Optional">Optional</span>[<span title="unienv_interface.backends.BDeviceType">BDeviceType</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            batch_size
+
+
+  
+      class-attribute
+      instance-attribute
+   (unienv_policy.FuncPolicy.batch_size)" href="#unienv_policy.FuncPolicy.batch_size">batch_size</a></code></td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="int">int</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -9860,6 +9959,29 @@ By default, it returns the environment render frame without any modification.</p
 
 
 
+<h3 id="unienv_policy.FuncPolicy.batch_size" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">batch_size</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-class-attribute"><code>class-attribute</code></small>
+      <small class="doc doc-label doc-label-instance-attribute"><code>instance-attribute</code></small>
+  </span>
+
+<a href="#unienv_policy.FuncPolicy.batch_size" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">batch_size</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
 <h3 id="unienv_policy.FuncPolicy.action_space" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">action_space</span>
 
@@ -10011,10 +10133,9 @@ By default, it returns the environment render frame without any modification.</p
       module-attribute
    (unienv_policy.base.policy.ObsType)" href="base/policy/#unienv_policy.base.policy.ObsType">ObsType</a></span><span class="p">,</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">*</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">batch_size</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">],</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">seed</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            StateType
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">seed</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            StateType
 
 
   
@@ -10023,6 +10144,8 @@ By default, it returns the environment render frame without any modification.</p
 </code></pre></div>
 
     <div class="doc doc-contents ">
+
+        <p>The state at the start of the first episodes (all sub-environments).</p>
 
 
     </div>
@@ -10035,6 +10158,10 @@ By default, it returns the environment render frame without any modification.</p
 <h3 id="unienv_policy.FuncPolicy.reset" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">reset</span>
 
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
 
 <a href="#unienv_policy.FuncPolicy.reset" class="headerlink" title="Permanent link">&para;</a></h3>
 <div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">reset</span><span class="p">(</span>
@@ -10070,6 +10197,10 @@ By default, it returns the environment render frame without any modification.</p
 
     <div class="doc doc-contents ">
 
+        <p>Start new episodes from <code>context</code> and <code>observation</code> (full batch, as in :meth:<code>Policy.reset</code>).</p>
+<p>With <code>mask</code> (batched only), only the selected sub-environments start over; the state of
+the others must be kept.</p>
+
 
     </div>
 
@@ -10081,6 +10212,10 @@ By default, it returns the environment render frame without any modification.</p
 <h3 id="unienv_policy.FuncPolicy.observe_transition" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">observe_transition</span>
 
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
 
 <a href="#unienv_policy.FuncPolicy.observe_transition" class="headerlink" title="Permanent link">&para;</a></h3>
 <div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span>
@@ -10110,6 +10245,8 @@ By default, it returns the environment render frame without any modification.</p
 
     <div class="doc doc-contents ">
 
+        <p>The state after the environment executed <code>action_taken</code> and returned <code>new_observation</code>.</p>
+
 
     </div>
 
@@ -10118,28 +10255,21 @@ By default, it returns the environment render frame without any modification.</p
 <div class="doc doc-object doc-function">
 
 
-<h3 id="unienv_policy.FuncPolicy.compute_action" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">compute_action</span>
+<h3 id="unienv_policy.FuncPolicy.get_action" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_action</span>
 
 
   <span class="doc doc-labels">
       <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
   </span>
 
-<a href="#unienv_policy.FuncPolicy.compute_action" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compute_action</span><span class="p">(</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">state</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            StateType
+<a href="#unienv_policy.FuncPolicy.get_action" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_action</span><span class="p">(</span><span class="n">state</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            StateType
 
 
   
       module-attribute
-   (unienv_policy.base.funcpolicy.StateType)" href="base/funcpolicy/#unienv_policy.base.funcpolicy.StateType">StateType</a></span><span class="p">,</span> <span class="n">observation</span><span class="p">:</span> <span class="n"><a class="autorefs autorefs-internal" title="            ObsType
-
-
-  
-      module-attribute
-   (unienv_policy.base.policy.ObsType)" href="base/policy/#unienv_policy.base.policy.ObsType">ObsType</a></span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="typing.Tuple">Tuple</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            StateType
+   (unienv_policy.base.funcpolicy.StateType)" href="base/funcpolicy/#unienv_policy.base.funcpolicy.StateType">StateType</a></span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="typing.Tuple">Tuple</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            StateType
 
 
   
@@ -10153,6 +10283,8 @@ By default, it returns the environment render frame without any modification.</p
 </code></pre></div>
 
     <div class="doc doc-contents ">
+
+        <p>The action for <code>state</code>, and <code>state</code> with updated bookkeeping (e.g. RNG key) only.</p>
 
 
     </div>
@@ -10516,7 +10648,7 @@ By default, it returns the environment render frame without any modification.</p
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            compute_action (unienv_policy.FuncPolicyWrapper.compute_action)" href="#unienv_policy.FuncPolicyWrapper.compute_action">compute_action</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            get_action (unienv_policy.FuncPolicyWrapper.get_action)" href="#unienv_policy.FuncPolicyWrapper.get_action">get_action</a></code></td>
               <td>
                 <div class="doc-md-description">
                   
@@ -10646,6 +10778,22 @@ By default, it returns the environment render frame without any modification.</p
   
       module-attribute
    (unienv_policy.base.policy.WrapperBDeviceT)" href="base/policy/#unienv_policy.base.policy.WrapperBDeviceT">WrapperBDeviceT</a>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><a class="autorefs autorefs-internal" title="            batch_size
+
+
+  
+      property
+   (unienv_policy.FuncPolicyWrapper.batch_size)" href="#unienv_policy.FuncPolicyWrapper.batch_size">batch_size</a></code></td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="int">int</span>]</code>
             </td>
             <td>
               <div class="doc-md-description">
@@ -10921,6 +11069,28 @@ By default, it returns the environment render frame without any modification.</p
 
 
 
+<h3 id="unienv_policy.FuncPolicyWrapper.batch_size" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">batch_size</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#unienv_policy.FuncPolicyWrapper.batch_size" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">batch_size</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
 <h3 id="unienv_policy.FuncPolicyWrapper.action_space" class="doc doc-heading">
 <code class="doc-symbol doc-symbol-heading doc-symbol-attribute"></code>            <span class="doc doc-object-name doc-attribute-name">action_space</span>
 
@@ -11125,7 +11295,7 @@ By default, it returns the environment render frame without any modification.</p
 
 
 <a href="#unienv_policy.FuncPolicyWrapper.initial" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">initial</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">observation</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">initial</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">observation</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -11174,12 +11344,12 @@ By default, it returns the environment render frame without any modification.</p
 <div class="doc doc-object doc-function">
 
 
-<h3 id="unienv_policy.FuncPolicyWrapper.compute_action" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">compute_action</span>
+<h3 id="unienv_policy.FuncPolicyWrapper.get_action" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_action</span>
 
 
-<a href="#unienv_policy.FuncPolicyWrapper.compute_action" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compute_action</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">observation</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<a href="#unienv_policy.FuncPolicyWrapper.get_action" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_action</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -11375,9 +11545,8 @@ By default, it returns the environment render frame without any modification.</p
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="n"><span title="unienv_interface.backends.BDtypeType">BDtypeType</span></span><span class="p">,</span>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="n"><span title="unienv_interface.backends.BRNGType">BRNGType</span></span><span class="p">,</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="p">],</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">batch_size</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    <span class="n">seed</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    <span class="n">seed</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -11430,6 +11599,10 @@ By default, it returns the environment render frame without any modification.</p
    (unienv_policy.base.policy.RenderFrame)" href="base/policy/#unienv_policy.base.policy.RenderFrame">RenderFrame</a>, <span title="unienv_interface.backends.BDeviceType">BDeviceType</span>, <span title="unienv_interface.backends.BDtypeType">BDtypeType</span>, <span title="unienv_interface.backends.BRNGType">BRNGType</span>]</code></p>
 
 
+
+        <p>Runs a :class:<code>FuncPolicy</code> behind the stateful :class:<code>Policy</code> interface, holding its state.</p>
+<p>The batch size and spaces are the functional policy's. <code>seed</code> is used for the first
+:meth:<code>reset</code> (unless it passes its own) and for the RNG of the <code>sample_*</code> helpers.</p>
 
 
 
@@ -11500,7 +11673,7 @@ By default, it returns the environment render frame without any modification.</p
               </td>
             </tr>
             <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            compute_action (unienv_policy.FuncPolicyBasedPolicy.compute_action)" href="#unienv_policy.FuncPolicyBasedPolicy.compute_action">compute_action</a></code></td>
+              <td><code><a class="autorefs autorefs-internal" title="            get_action (unienv_policy.FuncPolicyBasedPolicy.get_action)" href="#unienv_policy.FuncPolicyBasedPolicy.get_action">get_action</a></code></td>
               <td>
                 <div class="doc-md-description">
                   
@@ -12204,12 +12377,12 @@ By default, it returns the environment render frame without any modification.</p
 <div class="doc doc-object doc-function">
 
 
-<h3 id="unienv_policy.FuncPolicyBasedPolicy.compute_action" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">compute_action</span>
+<h3 id="unienv_policy.FuncPolicyBasedPolicy.get_action" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_action</span>
 
 
-<a href="#unienv_policy.FuncPolicyBasedPolicy.compute_action" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compute_action</span><span class="p">(</span><span class="n">observation</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+<a href="#unienv_policy.FuncPolicyBasedPolicy.get_action" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_action</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
