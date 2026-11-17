@@ -18,6 +18,7 @@ UniEnv gives you one vocabulary for the parts that tend to fragment robotics cod
 
 - **Environment APIs** for `reset`, `step`, `render`, and typed spaces
 - **World composition** for building environments from reusable nodes
+- **Policy APIs** (`Policy`, `FuncPolicy`) that act against the same spaces as the environment
 - **Wrappers and transformations** for action scaling, flattening, frame stacking, backend conversion, and recording
 - **Data interfaces** for replay buffers, storage backends, and dataset adapters
 
@@ -67,6 +68,7 @@ The result is a package that can sit between your simulator, robot stack, datase
 | --- | --- | --- |
 | Interface layer | Spaces, environments, wrappers, transformations | `unienv_interface.space`, `unienv_interface.env_base`, `unienv_interface.wrapper`, `unienv_interface.transformations` |
 | Composition layer | Worlds, nodes, and environment composition | `unienv_interface.world` |
+| Policy layer | Stateful and functional policies, policy wrappers | `unienv_policy` |
 | Data layer | Batches, replay buffers, storage, samplers | `unienv_data.base`, `unienv_data.replay_buffer`, `unienv_data.storages`, `unienv_data.samplers` |
 | Integrations | External dataset and training ecosystem adapters | `unienv_data.integrations` |
 

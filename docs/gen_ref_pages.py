@@ -12,6 +12,7 @@ PREFERRED_DOC_ORDER = [
     Path("getting-started.md"),
     Path("concepts", "index.md"),
     Path("concepts", "environments.md"),
+    Path("concepts", "policies.md"),
     Path("concepts", "spaces-and-backends.md"),
     Path("concepts", "world-composition.md"),
     Path("guides", "index.md"),

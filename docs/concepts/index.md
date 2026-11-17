@@ -4,6 +4,7 @@ The package is easier to use once you separate the major abstractions:
 
 - **Spaces** define the structure, dtype, bounds, and backend placement of data.
 - **Environments** define runtime interaction through `reset`, `step`, and `render`.
+- **Policies** compute actions from observations, against the same spaces.
 - **Worlds and nodes** let you compose an environment out of reusable subsystems.
 - **Wrappers and transformations** adapt an environment or data stream without rewriting the source implementation.
 - **Batches and replay buffers** bring the same typed-space mindset to stored data.
@@ -17,6 +18,12 @@ The package is easier to use once you separate the major abstractions:
     Stateful `Env`, functional `FuncEnv`, and the adapter between them.
 
     [Open the page](environments.md)
+
+-   **Policies**
+
+    Stateful `Policy`, functional `FuncPolicy`, the adapter between them, and policy wrappers.
+
+    [Open the page](policies.md)
 
 -   **Spaces and Backends**
 
