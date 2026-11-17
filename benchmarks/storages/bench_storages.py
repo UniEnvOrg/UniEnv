@@ -30,7 +30,7 @@ import bench_common  # noqa: E402
 
 BACKENDS = [
     "torch-ram", "torch-memmap", "flattened-memmap", "hdf5", "hdf5-gzip", "hdf5-per-step-lzf", "parquet",
-    "dict-video+hdf5", "dict-png+hdf5", "dict-jpeg+hdf5", "dict-npz+hdf5",
+    "parquet-binary", "dict-video+hdf5", "dict-png+hdf5", "dict-jpeg+hdf5", "dict-npz+hdf5",
 ]
 #: Backends whose per-step append is so slow that they append fewer steps.
 SLOW_APPEND = {"hdf5-gzip": 0.2, "dict-png+hdf5": 0.3, "dict-npz+hdf5": 0.3, "hdf5": 0.3}
@@ -110,6 +110,8 @@ def build(args):
             HDF5Storage, space(NB), cache_path=path, capacity=cap, chunks={"image": (1,), "*": (1024,)},
             compression="lzf"), {}),
         "parquet": (NB, lambda path, cap: ReplayBuffer.create(ParquetStorage, space(NB), cache_path=path, capacity=cap), {}),
+        "parquet-binary": (NB, lambda path, cap: ReplayBuffer.create(
+            ParquetStorage, space(NB), cache_path=path, capacity=cap, array_encoding="binary"), {}),
         "dict-video+hdf5": (NB, video, dict(key_kwargs={"image": dict(hardware_acceleration=None, decode_backend="pyav",
                                                                         codec="libx264")})),
         "dict-png+hdf5": (NB, image_dict(ImageStorage, format="PNG"), {}),

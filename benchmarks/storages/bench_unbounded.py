@@ -15,7 +15,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_common  # noqa: E402
 
-BACKENDS = ["parquet", "hdf5", "dict-video+hdf5"]
+BACKENDS = ["parquet", "parquet-binary", "hdf5", "dict-video+hdf5"]
 
 
 def main():
@@ -48,6 +48,8 @@ def main():
     def create(name, path):
         if name == "parquet":
             return ReplayBuffer.create(ParquetStorage, space, cache_path=path, capacity=None)
+        if name == "parquet-binary":
+            return ReplayBuffer.create(ParquetStorage, space, cache_path=path, capacity=None, array_encoding="binary")
         if name == "hdf5":
             return ReplayBuffer.create(HDF5Storage, space, cache_path=path, capacity=None)
         from unienv_data.storages.video_storage import VideoStorage

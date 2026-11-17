@@ -254,3 +254,155 @@ def test_unpickled_storage_reads_pieces_written_since_create(tmp_path):
     assert_tree_equal(clone.get(Ellipsis), _batch(4))
     storage.close()
     clone.close()
+
+
+# --- array_encoding ----------------------------------------------------------------------
+
+def _mixed_space() -> DictSpace:
+    from unienv_interface.space import BinarySpace, TextSpace
+    return DictSpace(B, {
+        "image": BoxSpace(B, 0, 255, np.uint8, shape=(4, 5, 3)),
+        "vec": BoxSpace(B, -10.0, 10.0, np.float32, shape=(7,)),
+        "one": BoxSpace(B, -10.0, 10.0, np.float64, shape=(1,)),
+        "mask": BinarySpace(B, shape=(3,)),
+        "step": BoxSpace(B, 0, 100, np.int64, shape=()),
+        "task": TextSpace(B, max_length=16),
+    })
+
+
+def _mixed_batch(n: int, seed: int = 0) -> dict:
+    rng = np.random.default_rng(seed)
+    return {
+        "image": rng.integers(0, 256, (n, 4, 5, 3), dtype=np.uint8),
+        "vec": rng.standard_normal((n, 7)).astype(np.float32),
+        "one": rng.standard_normal((n, 1)),
+        "mask": rng.random((n, 3)) > 0.5,
+        "step": np.arange(n, dtype=np.int64),
+        "task": np.array([f"task {i}" for i in range(n)], dtype=object),
+    }
+
+
+def _arrow_types(path) -> dict:
+    import os
+    import pyarrow.parquet as pq
+    schema = pq.read_schema(os.path.join(path, "part-000000.parquet"))
+    return {field.name: field.type for field in schema}
+
+
+@pytest.mark.parametrize("capacity", [7, None], ids=["fixed", "unbounded"])
+@pytest.mark.parametrize("array_encoding", ["binary", {"image": "binary", "mask": "binary", "*": "list"}],
+                         ids=["all", "per-column"])
+def test_binary_array_encoding_round_trip(tmp_path, capacity, array_encoding):
+    import pyarrow as pa
+    path = str(tmp_path / "pq")
+    data = _mixed_batch(7)
+    storage = ParquetStorage.create(_mixed_space(), capacity=capacity, cache_path=path, piece_size=3,
+                                    array_encoding=array_encoding)
+    if capacity is None:
+        storage.extend_length(7)
+    storage.set(slice(None), data)
+    assert_tree_equal(storage.get(Ellipsis), data)
+    storage.dumps(path)
+    storage.close()
+
+    types = _arrow_types(path)
+    binary = {"image", "vec", "one", "mask"} if array_encoding == "binary" else {"image", "mask"}
+    for name in ("image", "vec", "one", "mask"):
+        assert pa.types.is_fixed_size_binary(types[name]) == (name in binary), (name, types[name])
+    assert types["step"] == pa.int64() and pa.types.is_string(types["task"])
+
+    for read_only in (True, False):
+        loaded = ParquetStorage.load_from(path, _mixed_space(), capacity=capacity, read_only=read_only)
+        assert_tree_equal(loaded.get(Ellipsis), data)
+        index = np.array([5, 0, 6, 0])  # fancy, unsorted, repeated: the read-only `take` path
+        assert_tree_equal(loaded.get(index), {k: v[index] for k, v in data.items()})
+        if not read_only:
+            loaded.set(2, {k: v[0] for k, v in data.items()})
+            np.testing.assert_array_equal(loaded.get(2)["image"], data["image"][0])
+        loaded.close()
+
+
+def test_default_array_encoding_writes_lists_and_no_metadata_key(tmp_path):
+    import json
+    import os
+    import pyarrow as pa
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_mixed_space(), capacity=3, cache_path=path, piece_size=3)
+    storage.set(slice(None), _mixed_batch(3))
+    storage.dumps(path)
+    storage.close()
+    assert pa.types.is_fixed_size_list(_arrow_types(path)["image"])
+    with open(os.path.join(path, "_metadata.json")) as f:
+        assert "array_encoding" not in json.load(f)
+
+
+def test_binary_array_encoding_is_recorded_and_kept_by_dumps_elsewhere(tmp_path):
+    import json
+    import os
+    import pyarrow as pa
+    src, dst = str(tmp_path / "a"), str(tmp_path / "b")
+    storage = ParquetStorage.create(_mixed_space(), capacity=None, cache_path=src, piece_size=2,
+                                    array_encoding={"image": "binary"})
+    storage.extend_length(5)
+    storage.set(slice(None), _mixed_batch(5))
+    storage.dumps(dst)
+    storage.close()
+    with open(os.path.join(dst, "_metadata.json")) as f:
+        assert json.load(f)["array_encoding"] == {"image": "binary", "vec": "list", "one": "list", "mask": "list"}
+    reopened = ParquetStorage.load_from(dst, _mixed_space(), capacity=None, read_only=False)
+    reopened.extend_length(1)
+    reopened.set(5, {k: v[0] for k, v in _mixed_batch(1, seed=1).items()})
+    reopened.close()  # writes the grown storage with the recorded encodings
+    assert pa.types.is_fixed_size_binary(_arrow_types(dst)["image"])
+    assert pa.types.is_fixed_size_list(_arrow_types(dst)["vec"])
+    final = ParquetStorage.load_from(dst, _mixed_space(), capacity=None)
+    assert len(final) == 6
+    np.testing.assert_array_equal(final.get(5)["image"], _mixed_batch(1, seed=1)["image"][0])
+    final.close()
+
+
+def test_binary_columns_infer_their_space_from_metadata(tmp_path):
+    from unienv_interface.space import BinarySpace
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_mixed_space(), capacity=3, cache_path=path, array_encoding="binary")
+    storage.set(slice(None), _mixed_batch(3))
+    storage.dumps(path)
+    storage.close()
+    _, _, space = ParquetStorage.build_space_from_parquet_file(path)
+    assert space["image"].shape == (4, 5, 3) and space["image"].dtype == np.uint8
+    assert space["vec"].shape == (7,) and space["vec"].dtype == np.float32
+    assert isinstance(space["mask"], BinarySpace) and space["mask"].shape == (3,)
+    rb = ParquetStorage.load_replay_buffer_from_raw_parquet(path)
+    assert_tree_equal(rb.get_at(slice(None)), _mixed_batch(3))
+
+
+def test_binary_array_encoding_with_per_column_compression(tmp_path):
+    path = str(tmp_path / "pq")
+    storage = ParquetStorage.create(_mixed_space(), capacity=4, cache_path=path, array_encoding={"image": "binary"},
+                                    compression={"image": "zstd", "vec": "gzip"})
+    storage.set(slice(None), _mixed_batch(4))
+    storage.dumps(path)
+    storage.close()
+    reader = ParquetStorage.load_from(path, _mixed_space(), capacity=4)
+    assert_tree_equal(reader.get(Ellipsis), _mixed_batch(4))
+    reader.close()
+
+
+@pytest.mark.parametrize("array_encoding", ["bytes", {"image": "binray"}, {"nope": "binary"}])
+def test_invalid_array_encoding_raises(tmp_path, array_encoding):
+    with pytest.raises(ValueError):
+        ParquetStorage.create(_mixed_space(), capacity=2, cache_path=str(tmp_path / "pq"), array_encoding=array_encoding)
+
+
+def test_replay_buffer_passes_array_encoding_through(tmp_path):
+    from unienv_data.replay_buffer import ReplayBuffer
+    import pyarrow as pa
+    path = str(tmp_path / "rb")
+    rb = ReplayBuffer.create(ParquetStorage, _mixed_space(), cache_path=path, capacity=None, array_encoding="binary")
+    data = _mixed_batch(4)
+    rb.extend(data)
+    rb.dumps(path)
+    rb.close()
+    loaded = ReplayBuffer.load_from(path, backend=B)
+    assert_tree_equal(loaded.get_at(slice(None)), data)
+    loaded.close()
