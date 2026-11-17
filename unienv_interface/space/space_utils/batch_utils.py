@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import typing
 import copy
 from functools import singledispatch
@@ -861,6 +862,9 @@ def _get_at_batched(space: BatchedSpace, items: np.ndarray, index: ArrayAPIGetIn
 # (``at`` rejects values from other array libraries and special-cases jax indices).
 _NUMPY_INPLACE_VALUE_TYPES = (np.ndarray, np.generic, int, float, bool, complex)
 _NUMPY_INPLACE_INDEX_TYPES = (int, np.integer, slice, tuple, list, np.ndarray)
+# ... and for torch tensors (``torch.Tensor`` is added at call time, torch is imported lazily)
+_TORCH_INPLACE_VALUE_TYPES = (int, float, bool)
+_TORCH_INPLACE_INDEX_TYPES = (int, slice, tuple, list)
 
 @singledispatch
 def set_at(
@@ -885,6 +889,18 @@ def _set_at_common(
     ):
         # What ``at(items)[index].set(value)`` does for a writeable numpy array and a
         # numpy/Python value (an in-place ``__setitem__``), minus the dispatch overhead.
+        items[index] = value
+        return items
+    torch = sys.modules.get("torch")  # no torch imported -> items cannot be a tensor
+    if (
+        torch is not None and type(items) is torch.Tensor
+        and isinstance(value, _TORCH_INPLACE_VALUE_TYPES + (torch.Tensor,))
+        and (isinstance(index, _TORCH_INPLACE_INDEX_TYPES + (torch.Tensor,)) or index is Ellipsis)
+    ):
+        # Same as above for torch (``at`` would cast a tensor value to the dtype of
+        # ``items`` and then assign in place): ~15 us less per leaf
+        if type(value) is torch.Tensor and value.dtype != items.dtype:
+            value = value.to(items.dtype)
         items[index] = value
         return items
     return space.backend.at(items)[index].set(value)

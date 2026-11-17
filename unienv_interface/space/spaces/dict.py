@@ -266,8 +266,9 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
 
     def _copy_with_metadata(self, metadata):
         new = super()._copy_with_metadata(metadata)
-        # The copy must not share (and mutate) this space's ``spaces`` dict
+        # The copy must not share (and mutate) this space's ``spaces`` dict, nor its caches
         new.__dict__["spaces"] = _SpaceDict(self.spaces)
+        new.__dict__.pop("_flat_layouts", None)
         return new
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -280,6 +281,8 @@ class DictSpace(Space[Dict[str, Any], BDeviceType, BDtypeType, BRNGType]):
     def __getstate__(self):
         state = self.__dict__.copy()
         state["spaces"] = dict(self.spaces)  # plain dict: loadable without ``_SpaceDict``
+        # Caches keyed on ``Space._mutation_epoch``, which is only meaningful in this process
+        state.pop("_flat_layouts", None)
         return state
 
     def __setstate__(self, state):

@@ -162,3 +162,100 @@ def test_set_at_dict_matches_per_leaf_at(backend, device):
     got = sbu.set_at(space, items, slice(1, 3), value)
     for g, e in zip(_leaves(got), expected):
         np.testing.assert_array_equal(_np(backend, g), _np(backend, e))
+
+
+TORCH_SET_AT_INDICES = [
+    0, -1, slice(1, 3), (1, 0), (slice(None), 1), [0, 2], "tensor_idx", "tensor_mask", Ellipsis,
+]
+
+
+@pytest.mark.parametrize("index", TORCH_SET_AT_INDICES, ids=repr)
+@pytest.mark.parametrize("value_kind", ["tensor", "tensor_float64", "scalar", "bool"])
+def test_set_at_torch_fast_path_matches_array_api_at(index, value_kind):
+    torch = pytest.importorskip("torch")
+    import array_api_extra as xpx
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
+    space = BoxSpace(T, -10.0, 10.0, T.float32, shape=(4, 3))
+    items = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+    index = {
+        "tensor_idx": torch.tensor([3, 1]),
+        "tensor_mask": torch.tensor([True, False, True, False]),
+    }.get(index, index) if isinstance(index, str) else index
+    target_shape = items[index].shape
+    value = {
+        "tensor": torch.full(target_shape, 7.5, dtype=torch.float32),
+        "tensor_float64": torch.full(target_shape, -1.25, dtype=torch.float64),
+        "scalar": 5,
+        "bool": True,
+    }[value_kind]
+    expected = xpx.at(items.clone())[index].set(value)
+    got = sbu.set_at(space, items, index, value)
+    assert got is items  # updated in place, as ``at`` does for (writeable) tensors
+    assert got.dtype == expected.dtype
+    assert torch.equal(got, expected)
+
+
+def test_set_at_torch_with_foreign_value_still_goes_through_array_api_at():
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
+    space = BoxSpace(T, -10.0, 10.0, T.float32, shape=(4,))
+    with pytest.raises(TypeError):
+        sbu.set_at(space, torch.zeros(4), 1, np.ones((), np.float32))
+
+
+# --- DictSpace flatten layout cache ----------------------------------------------------
+
+def _flat_box(B, n):
+    return BoxSpace(B, -1.0, 1.0, B.float32, shape=(n,))
+
+
+def test_dict_layout_cache_follows_in_place_changes():
+    B = NumpyComputeBackend
+    inner = DictSpace(B, {"a": _flat_box(B, 2)})
+    space = DictSpace(B, {"x": _flat_box(B, 3), "inner": inner})
+    assert sfu.flat_dim(space) == 5
+    space["y"] = _flat_box(B, 4)  # direct change
+    assert sfu.flat_dim(space) == 9
+    inner["b"] = _flat_box(B, 1)  # change of a nested space
+    assert sfu.flat_dim(space) == 10
+    del space["x"]
+    assert sfu.flat_dim(space) == 7
+    space.spaces = {"z": _flat_box(B, 6)}  # attribute reassignment
+    assert sfu.flat_dim(space) == 6
+    x = {"z": np.arange(6, dtype=np.float32)}
+    np.testing.assert_array_equal(sfu.unflatten_data(space, sfu.flatten_data(space, x))["z"], x["z"])
+
+
+def test_dict_layout_cache_is_per_start_dim_and_matches_offsets():
+    B = NumpyComputeBackend
+    space = sbu.batch_space(DictSpace(B, {"b": _flat_box(B, 2), "a": _flat_box(B, 3)}), 4)
+    assert sfu.flat_dim(space, 1) == 5
+    assert sfu.flat_dim(space, 0) == 20
+    data = {"a": np.arange(12, dtype=np.float32).reshape(4, 3), "b": -np.arange(8, dtype=np.float32).reshape(4, 2)}
+    flat = sfu.flatten_data(space, data, start_dim=1)
+    np.testing.assert_array_equal(flat[:, :3], data["a"])  # sorted keys: "a" first
+    np.testing.assert_array_equal(sfu.unflatten_data(space, flat, start_dim=1)["b"], data["b"])
+
+
+def test_dict_layout_cache_not_pickled_nor_shared_with_metadata_copies():
+    import pickle
+    B = NumpyComputeBackend
+    space = DictSpace(B, {"x": _flat_box(B, 3)})
+    assert sfu.flat_dim(space) == 3
+    assert "_flat_layouts" in space.__dict__
+    restored = pickle.loads(pickle.dumps(space))
+    assert "_flat_layouts" not in restored.__dict__
+    assert sfu.flat_dim(restored) == 3
+    copy = space.with_metadata(kind="proprio")
+    assert "_flat_layouts" not in copy.__dict__
+    copy["y"] = _flat_box(B, 2)
+    assert sfu.flat_dim(copy) == 5 and sfu.flat_dim(space) == 3
+
+
+def test_dict_unflatten_of_non_flattenable_space_raises():
+    from unienv_interface.space import TextSpace
+    B = NumpyComputeBackend
+    space = DictSpace(B, {"x": _flat_box(B, 3), "y": TextSpace(B, 4)})
+    assert sfu.flat_dim(space) is None
+    with pytest.raises(TypeError):
+        sfu.unflatten_data(space, np.zeros(3, np.float32))

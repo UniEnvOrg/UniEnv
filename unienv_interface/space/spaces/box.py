@@ -521,8 +521,10 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 return True
             # One reduction each instead of two elementwise compares + all(); the
             # extremes are compared as exact Python scalars, and NaN fails both.
+            # The array methods (numpy, torch and jax arrays all have them) skip the
+            # backend wrappers: about half the cost for small arrays.
             cast = float if self._dtype_is_float else int
-            return cast(self.backend.min(x)) >= low and cast(self.backend.max(x)) <= high
+            return cast(x.min()) >= low and cast(x.max()) <= high
         return bool(
             self.backend.all(x >= self._low)
             and self.backend.all(x <= self._high)

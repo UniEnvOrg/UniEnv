@@ -22,6 +22,43 @@ def _dict_items(space: DictSpace) -> typing.List[typing.Tuple[Any, Space]]:
     except TypeError:
         return list(space.spaces.items())
 
+_LAYOUT_CACHE_ATTR = "_flat_layouts"
+
+def _dict_flat_layout(
+    space: DictSpace, start_dim: int
+) -> typing.Tuple[typing.Tuple[typing.Tuple[Any, Space, Optional[int], Optional[int]], ...], Optional[int]]:
+    """``((key, subspace, start, end), ...), total`` of a ``DictSpace`` flattened at ``start_dim``.
+
+    Items are in flattening order (``_dict_items``); ``start``/``end`` delimit each
+    item along the flat axis and are ``None`` (as is ``total``) from the first item
+    that is not flattenable on. Cached on the space per ``start_dim``, keyed on
+    ``Space._mutation_epoch`` so that changing the space (or a nested one) in place
+    rebuilds it; ``DictSpace.__getstate__`` leaves the cache out of pickles.
+    """
+    cache = space.__dict__.get(_LAYOUT_CACHE_ATTR)
+    epoch = Space._mutation_epoch
+    if cache is not None:
+        hit = cache.get(start_dim)
+        if hit is not None and hit[0] == epoch:
+            return hit[1], hit[2]
+    else:
+        cache = {}
+        # Written to ``__dict__`` directly: a cache fill is not a change of the space
+        space.__dict__[_LAYOUT_CACHE_ATTR] = cache
+    layout = []
+    start = 0
+    for key, subspace in _dict_items(space):
+        dim = None if start is None else flat_dim(subspace, start_dim)
+        if dim is None:
+            start = None
+            layout.append((key, subspace, None, None))
+        else:
+            layout.append((key, subspace, start, start + dim))
+            start += dim
+    layout = tuple(layout)
+    cache[start_dim] = (epoch, layout, start)
+    return layout, start
+
 def _flat_part_index(start_dim : int, start : int, end : int) -> typing.Tuple[Any, ...]:
     """Basic index selecting ``[start, end)`` along axis ``start_dim`` (the flat axis).
 
@@ -55,13 +92,7 @@ def _flat_dim_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> Option
 
 @flat_dim.register(DictSpace)
 def _flat_dim_dict(space: DictSpace, start_dim : int = 0) -> Optional[int]:
-    dims = 0
-    for key, subspace in space.spaces.items():
-        dim = flat_dim(subspace, start_dim)
-        if dim is None:
-            return None
-        dims += dim
-    return dims
+    return _dict_flat_layout(space, start_dim)[1]
 
 @flat_dim.register(TupleSpace)
 def _flat_dim_tuple(space: TupleSpace, start_dim : int = 0) -> Optional[int]:
@@ -269,9 +300,10 @@ def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_
 @flatten_data.register(DictSpace)
 def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], start_dim : int = 0) -> BArrayType:
     to_concat = []
-    for key, subspace in _dict_items(space):
+    layout, _ = _dict_flat_layout(space, start_dim)
+    for key, subspace, start, end in layout:
         flat_sample = flatten_data(subspace, data[key], start_dim)
-        flat_dim_data = flat_dim(subspace, start_dim)
+        flat_dim_data = None if start is None else end - start
         assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}, original data {data[key].shape}, original space {subspace}"
         if flat_sample is not None:
             to_concat.append(flat_sample)
@@ -280,12 +312,12 @@ def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], sta
 @unflatten_data.register(DictSpace)
 def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> Any:
     result = {}
-    start = 0
-    for key, subspace in _dict_items(space):
-        end = start + flat_dim(subspace, start_dim)
+    layout, _ = _dict_flat_layout(space, start_dim)
+    for key, subspace, start, end in layout:
+        if start is None:
+            raise TypeError(f"Cannot unflatten: the space for key `{key}` is not flattenable at start_dim={start_dim}: {subspace}")
         part_data = data[_flat_part_index(start_dim, start, end)]
         result[key] = unflatten_data(subspace, part_data, start_dim)
-        start = end
     return result
 
 @flatten_data.register(TextSpace)
