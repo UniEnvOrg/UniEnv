@@ -1,4 +1,4 @@
-"""Host environments, worlds, nodes and data transformations for remote clients."""
+"""Host environments, worlds, nodes, data transformations and policies for remote clients."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 from urllib.parse import quote
 
 from unienv_interface.env_base.env import Env
+from unienv_interface.policy import FuncPolicy, Policy
 from unienv_interface.space.space_utils.serialization_utils import space_to_json
 from unienv_interface.transformations.transformation import DataTransformation
 from unienv_interface.world.env_composer import WorldEnv
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = ["RemoteServer"]
 
-Hosted = Union[Env, World, WorldNode, DataTransformation]
+Hosted = Union[Env, World, WorldNode, DataTransformation, Policy]
 _log = logging.getLogger(__name__)
 
 
@@ -213,13 +214,17 @@ class RemoteServer:
 
     def register(self, name: str, obj: Hosted, *, close: bool = True,
                  backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
-        """Host ``obj`` (an ``Env``, ``World``, ``WorldNode`` or ``DataTransformation``) under ``name``.
+        """Host ``obj`` (an ``Env``, ``World``, ``WorldNode``, ``DataTransformation`` or ``Policy``) under ``name``.
 
         Only ``obj`` itself is exposed; use :meth:`register_recursive` to also expose
         the world and nodes it is built from. Objects sharing a world (e.g. an env and
         its world registered separately) run on the same worker. Registering an object
         that is already hosted returns its existing name. With ``close=True`` the server
         closes ``obj`` (on its worker) when it shuts down.
+
+        A ``Policy`` runs on its own worker like an env; the observations and contexts a
+        client sends are rebuilt on the policy's backend / device. Host a ``FuncPolicy``
+        as ``FuncPolicyBasedPolicy(func_policy)``.
 
         A ``DataTransformation`` has no backend of its own: ``backend`` / ``device``
         (default: numpy, no device) are where the source spaces and data of its
@@ -241,11 +246,14 @@ class RemoteServer:
                   backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
         if not isinstance(name, str) or not name:
             raise ValueError("Resource names must be non-empty strings")
-        if not isinstance(obj, (Env, World, WorldNode, DataTransformation)):
-            raise TypeError(f"Expected an Env, World, WorldNode or DataTransformation, got {type(obj).__name__}")
+        if isinstance(obj, FuncPolicy):
+            raise TypeError("A FuncPolicy passes its state through every call; host it as a Policy with "
+                            "FuncPolicyBasedPolicy(func_policy)")
+        if not isinstance(obj, (Env, World, WorldNode, DataTransformation, Policy)):
+            raise TypeError(f"Expected an Env, World, WorldNode, DataTransformation or Policy, got {type(obj).__name__}")
         if (backend is not None or device is not None) and not isinstance(obj, DataTransformation):
             raise ValueError("backend / device are only given for a DataTransformation (others have their own)")
-        base = obj.unwrapped if isinstance(obj, Env) else obj
+        base = obj.unwrapped if isinstance(obj, (Env, Policy)) else obj
         world = base.world if isinstance(base, (WorldEnv, WorldNode)) else (base if isinstance(base, World) else None)
         with self._lock:
             if self._closed.is_set():
@@ -285,7 +293,8 @@ class RemoteServer:
         if name in self._resources or name in added:
             raise ValueError(f"Resource name {name!r} is already registered")
         kind = ("env" if isinstance(obj, Env) else "world" if isinstance(obj, World)
-                else "transformation" if isinstance(obj, DataTransformation) else "node")
+                else "transformation" if isinstance(obj, DataTransformation)
+                else "policy" if isinstance(obj, Policy) else "node")
         resource = _Resource(name, obj, kind, group)
         added[name], names[id(obj)] = resource, name
         if recursive:

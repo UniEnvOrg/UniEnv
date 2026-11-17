@@ -165,3 +165,7 @@ slow.unwrapped                   # the FuncPolicyBasedPolicy underneath
 ```
 
 `unwrapped`, `prev_wrapper_layer` and `get_wrapper_attr` / `set_wrapper_attr` walk the wrapper stack.
+
+## Serving A Policy Remotely
+
+`RemoteServer.register("pi", policy)` hosts a `Policy` on another machine or in another Python environment, and `client.policy("pi")` returns a proxy that is itself a `Policy`, so the control loop above does not change. See [Remote execution](../guides/remote-execution.md#hosting-a-policy).

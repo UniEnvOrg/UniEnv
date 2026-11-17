@@ -21,6 +21,7 @@ METHODS: Dict[str, FrozenSet[str]] = {
         "get_truncation", "get_info", "render",
     }),
     "transformation": frozenset({"transform", "get_target_space_from_source"}),
+    "policy": frozenset({"reset", "observe_transition", "get_action", "visualize_action"}),
 }
 #: Exposed only when the hosted object actually defines them.
 OPTIONAL_METHODS: FrozenSet[str] = frozenset({"reload"})

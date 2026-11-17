@@ -15,7 +15,7 @@ from .transport import Transport, connect
 
 if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
-    from .proxies import RemoteDataTransformation, RemoteEnv, RemoteWorld, RemoteWorldNode
+    from .proxies import RemoteDataTransformation, RemoteEnv, RemotePolicy, RemoteWorld, RemoteWorldNode
 
 __all__ = ["RemoteClient", "Subscription", "SubscriptionEvent"]
 
@@ -238,16 +238,17 @@ class RemoteClient:
 
     # ------------------------------------------------------------------ proxies
 
-    def resource(self, name: str) -> Union[RemoteEnv, RemoteWorld, RemoteWorldNode, RemoteDataTransformation]:
+    def resource(self, name: str) -> Union[RemoteEnv, RemoteWorld, RemoteWorldNode, RemoteDataTransformation,
+                                           RemotePolicy]:
         """The proxy of hosted resource ``name`` (one shared proxy per name)."""
         proxy = self._proxies.get(name)
         if proxy is None:
-            from .proxies import RemoteDataTransformation, RemoteEnv, RemoteWorld, RemoteWorldNode
+            from .proxies import RemoteDataTransformation, RemoteEnv, RemotePolicy, RemoteWorld, RemoteWorldNode
             if name not in self.resources:
                 raise KeyError(f"The server hosts no resource named {name!r}; it has {sorted(self.resources)}")
             kind = self.resources[name]["kind"]
             proxy = {"env": RemoteEnv, "world": RemoteWorld, "node": RemoteWorldNode,
-                     "transformation": RemoteDataTransformation}[kind](self, name)
+                     "transformation": RemoteDataTransformation, "policy": RemotePolicy}[kind](self, name)
             proxy = self._proxies.setdefault(name, proxy)
         return proxy
 
@@ -272,6 +273,10 @@ class RemoteClient:
     def transformation(self, name: str) -> RemoteDataTransformation:
         """Proxy of a hosted ``DataTransformation``."""
         return self._typed(name, "transformation")
+
+    def policy(self, name: str) -> RemotePolicy:
+        """Proxy of a hosted ``Policy``."""
+        return self._typed(name, "policy")
 
     # ------------------------------------------------------------------ observers
 

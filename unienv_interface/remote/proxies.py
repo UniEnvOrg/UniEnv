@@ -1,4 +1,4 @@
-"""Local ``Env`` / ``World`` / ``WorldNode`` / ``DataTransformation`` views of objects hosted by a server.
+"""Local ``Env`` / ``World`` / ``WorldNode`` / ``DataTransformation`` / ``Policy`` views of objects hosted by a server.
 
 Every method is one remote call. Spaces, timings and metadata come from the
 server's descriptor; spaces are refreshed whenever a reset changed them.
@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING, Union
 
 from unienv_interface.env_base.env import Env
+from unienv_interface.policy import Policy
 from unienv_interface.transformations.transformation import DataTransformation
 from unienv_interface.world.node import WorldNode
 from unienv_interface.world.world import World
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
     from .client import RemoteClient
 
-__all__ = ["RemoteEnv", "RemoteWorld", "RemoteWorldNode", "RemoteDataTransformation"]
+__all__ = ["RemoteEnv", "RemoteWorld", "RemoteWorldNode", "RemoteDataTransformation", "RemotePolicy"]
 
 
 class _Remote:
@@ -220,3 +221,33 @@ class RemoteDataTransformation(_Remote, DataTransformation):
     @classmethod
     def deserialize_from(cls, json_data: Dict[str, Any], source_space: Any = None) -> RemoteDataTransformation:
         raise NotImplementedError("Remote transformations are created with RemoteClient.transformation()")
+
+
+class RemotePolicy(_Remote, Policy):
+    """A ``Policy`` hosted by a :class:`RemoteServer`.
+
+    ``reset``, ``observe_transition``, ``get_action`` and ``visualize_action`` run
+    on the server, so the policy's state lives there: the context and observations
+    sent are rebuilt on the hosted policy's backend / device, and actions come back
+    on the client's. Use it to run a policy on another machine (a GPU server for
+    a robot) or in another environment (pinned dependencies). Spaces and
+    ``batch_size`` are the hosted policy's.
+    """
+
+    def __init__(self, client: RemoteClient, name: str) -> None:
+        self.backend, self.device = client.backend, client.device
+        self._bind(client, name)
+        self.rng = self.backend.random.random_number_generator(device=self.device)
+
+    def reset(self, context: Any, observation: Any, *, seed: Optional[int] = None, mask: Any = None,
+              **kwargs: Any) -> None:
+        return self._call("reset", context, observation, seed=seed, mask=mask, **kwargs)
+
+    def observe_transition(self, action_taken: Any, new_observation: Any) -> None:
+        return self._call("observe_transition", action_taken, new_observation)
+
+    def get_action(self, **kwargs: Any) -> Any:
+        return self._call("get_action", **kwargs)
+
+    def visualize_action(self, environment_render: Any, observation: Any, action: Any, **kwargs: Any) -> Any:
+        return self._call("visualize_action", environment_render, observation, action, **kwargs)

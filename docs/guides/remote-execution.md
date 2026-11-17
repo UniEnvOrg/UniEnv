@@ -1,7 +1,7 @@
 # Remote execution
 
 `unienv_interface.remote` is a small RPC layer: a `RemoteServer` hosts existing
-`Env`, `World`, `WorldNode` and `DataTransformation` objects, and a `RemoteClient` returns proxies that
+`Env`, `World`, `WorldNode`, `DataTransformation` and `Policy` objects, and a `RemoteClient` returns proxies that
 implement the same interfaces. Each proxy method is one remote call.
 
 Transports: TCP and Unix domain sockets (standard library), WebSocket
@@ -61,6 +61,41 @@ result = transformation.transform(source_space, data)
 Only `transform` and `get_target_space_from_source` are remote. The proxy has
 no inverse and cannot be serialized (it is bound to its connection): a storage
 that serializes its transformations needs the hosted one.
+
+## Hosting a policy
+
+A `Policy` is hosted like an env. Its state lives on the server, and the client
+drives it with the usual `reset` / `get_action` / `observe_transition` protocol,
+e.g. a GPU machine runs the policy while the robot computer runs the env:
+
+```python
+server.register("pi", make_policy())       # any Policy, e.g. PyTorch on cuda
+server.serve("tcp://0.0.0.0:7001")
+```
+
+```python
+with RemoteClient.connect("tcp://gpu-box:7001") as client:
+    policy = client.policy("pi")           # a RemotePolicy: a regular Policy
+    context, obs, info = env.reset(seed=0)
+    policy.reset(context, obs)
+    for _ in range(1000):
+        action = policy.get_action()
+        obs, reward, terminated, truncated, info = env.step(action)
+        policy.observe_transition(action, obs)
+```
+
+Only `reset`, `observe_transition`, `get_action` and `visualize_action` are
+remote. The contexts and observations the client sends are rebuilt on the
+hosted policy's backend and device (torch tensors on the GPU for a PyTorch
+policy), and actions come back on the client's. The proxy has the hosted
+policy's spaces, `batch_size` and `metadata`.
+
+A `FuncPolicy` passes its state through every call, so host it as
+`FuncPolicyBasedPolicy(func_policy)`; the server rejects a bare `FuncPolicy`.
+
+Each control step is two round trips (`observe_transition`, then `get_action`).
+Observations travel to the server uncompressed: the `compress` option below
+applies only to results the server sends back.
 
 ## Threads and concurrency
 
