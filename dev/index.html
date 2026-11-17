@@ -565,6 +565,8 @@
       
         
       
+        
+      
     
     
     
@@ -632,6 +634,34 @@
     
   
     Environments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="concepts/policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policies
   
 
     
@@ -6135,6 +6165,7 @@
 <ul>
 <li><strong>Environment APIs</strong> for <code>reset</code>, <code>step</code>, <code>render</code>, and typed spaces</li>
 <li><strong>World composition</strong> for building environments from reusable nodes</li>
+<li><strong>Policy APIs</strong> (<code>Policy</code>, <code>FuncPolicy</code>) that act against the same spaces as the environment</li>
 <li><strong>Wrappers and transformations</strong> for action scaling, flattening, frame stacking, backend conversion, and recording</li>
 <li><strong>Data interfaces</strong> for replay buffers, storage backends, and dataset adapters</li>
 </ul>
@@ -6187,6 +6218,11 @@
 <td>Composition layer</td>
 <td>Worlds, nodes, and environment composition</td>
 <td><code>unienv_interface.world</code></td>
+</tr>
+<tr>
+<td>Policy layer</td>
+<td>Stateful and functional policies, policy wrappers</td>
+<td><code>unienv_policy</code></td>
 </tr>
 <tr>
 <td>Data layer</td>
