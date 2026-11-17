@@ -71,7 +71,7 @@ include = ["*"]
 exclude = ["training*", "tests*", "examples*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests_interface", "tests_data", "tests_utils"]
+testpaths = ["tests_interface", "tests_data", "tests_utils", "tests_policy"]
 timeout = 300
 markers = [
     "slow: long-running tests (video encoding, multiprocessing); deselect with -m 'not slow'",

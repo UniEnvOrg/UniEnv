@@ -3,7 +3,7 @@ from pathlib import Path
 import mkdocs_gen_files
 
 
-PACKAGE_DIRS = (Path("unienv_interface"), Path("unienv_data"))
+PACKAGE_DIRS = (Path("unienv_interface"), Path("unienv_data"), Path("unienv_policy"))
 DOCS_DIR = Path("docs")
 INDEX_PATH = Path("api", "index.md")
 SUMMARY_PATH = Path("SUMMARY.md")

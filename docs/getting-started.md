@@ -22,6 +22,7 @@ The project also exposes optional integrations and storage backends that depend 
 
 - `unienv_interface`: online interaction APIs such as spaces, environments, worlds, wrappers, and transformations
 - `unienv_data`: offline data APIs such as batches, replay buffers, storage backends, samplers, and dataset adapters
+- `unienv_policy`: policy interfaces (stateful `Policy`, functional `FuncPolicy`) and their wrappers
 
 If you are only building environments, most of your work will start in `unienv_interface`.
 
