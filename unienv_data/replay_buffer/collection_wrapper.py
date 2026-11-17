@@ -196,19 +196,39 @@ class ReplayBufferCollectionWrapper(
 
         # Merge compact reset results for masked batched resets.
         if mask is not None and self._initialized:
-            if self._cached_context is not None:
-                context = self.env.update_context_post_reset(
-                    self._cached_context, context, mask
-                )
-            if self._cached_obs is not None:
-                obs = self.env.update_observation_post_reset(
-                    self._cached_obs, obs, mask
-                )
+            context, obs = self._merge_masked_reset(context, obs, mask)
 
         self._cached_context = context
         self._cached_obs = obs
         self._initialized = True
         return context, obs, info
+
+    def _merge_masked_reset(
+        self,
+        context: ContextType,
+        obs: ObsType,
+        mask: BArrayType,
+    ) -> Tuple[ContextType, ObsType]:
+        """Full batched context / observation after a masked reset: the cached ones with the reset rows replaced.
+
+        ``update_*_post_reset`` write into the arrays they are given (in place on numpy / torch). The cached
+        observation is the one the last ``step()`` / ``reset()`` returned, which the caller may still hold (e.g.
+        the terminal observation of the envs being reset), so merge into a copy instead.
+        """
+        if self._cached_context is not None:
+            context = self.env.update_context_post_reset(
+                self._copy_arrays(self._cached_context), context, mask
+            )
+        if self._cached_obs is not None:
+            obs = self.env.update_observation_post_reset(
+                self._copy_arrays(self._cached_obs), obs, mask
+            )
+        return context, obs
+
+    def _copy_arrays(self, data: Any) -> Any:
+        if self.backend.simplified_name == "jax":
+            return data  # immutable: updates already return new arrays
+        return self.backend.map_fn_over_arrays(data, lambda x: self.backend.asarray(x, copy=True))
 
     def step(
         self,
@@ -274,14 +294,7 @@ class ReplayBufferCollectionWrapper(
             self._dump_shared_on_reset_boundary()
 
         if mask is not None and self._initialized:
-            if self._cached_context is not None:
-                context = self.env.update_context_post_reset(
-                    self._cached_context, context, mask
-                )
-            if self._cached_obs is not None:
-                obs = self.env.update_observation_post_reset(
-                    self._cached_obs, obs, mask
-                )
+            context, obs = self._merge_masked_reset(context, obs, mask)
 
         self._cached_context = context
         self._cached_obs = obs

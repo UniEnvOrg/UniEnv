@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- **Fixed:** a masked reset through `ReplayBufferCollectionWrapper` (`reset(mask=...)` / `reset_wait()`) wrote the reset rows into the observation and context arrays the previous `step()` / `reset()` had returned (in place on NumPy / PyTorch), so a caller still holding e.g. the terminal observation of the reset envs saw it overwritten. The merge now goes into a copy.
 - `ParquetStorage` no longer decodes the zero-filled pieces `create()` just wrote when it first writes into them (~0.4 s per 1024 128x128x3 images): fixed-capacity appends ~6x, `extend` 15-20x faster.
 - `HDF5Storage`: row writes read the dataset shape once from the file dataspace and reuse memory dataspaces (appends ~1.4x faster); unbounded storages resize their cached leaf datasets instead of walking the HDF5 groups on every append (~2.6x).
 - Faster space utilities: `flat_dim` / `flatten_data` / `unflatten_data` of a `DictSpace` cache its flattening layout (sorted keys and offsets) per `start_dim`, invalidated by in-place changes to the space or a nested one (`flat_dim` ~6x, flatten / unflatten 1.1-1.5x); `set_at` assigns into torch tensors in place without `array_api_extra.at` (~2x per leaf), as it already did for NumPy; `BoxSpace.contains` reduces with the array's own `min` / `max` (1.2-1.6x on small arrays).

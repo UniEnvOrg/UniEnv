@@ -97,3 +97,34 @@ def test_async_methods_require_support_from_the_env(tmp_path):
                  lambda: wrapper.step_async(np.zeros(2, np.float32)), wrapper.step_wait):
         with pytest.raises(AttributeError):
             call()
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+def test_masked_reset_leaves_previously_returned_arrays_untouched(tmp_path, use_async):
+    # The merge of a masked reset must not write the reset rows into the observation / context the
+    # caller got from the last step / reset (e.g. the terminal observation of the envs being reset)
+    import copy
+    env = AsyncStubEnv(batch_size=2)
+    rbs = [_rb(tmp_path, f"rb{i}") for i in range(2)]
+    wrapper = ReplayBufferCollectionWrapper(env, rbs, replay_mode="per_env")
+
+    def reset(**kwargs):
+        if use_async:
+            wrapper.reset_async(**kwargs)
+            return wrapper.reset_wait()
+        return wrapper.reset(**kwargs)
+
+    first_context, _, _ = reset(seed=0)
+    first_context_before = copy.deepcopy(first_context)
+    for _ in range(2):
+        last_obs, *_ = wrapper.step(np.full((2, 2), 0.5, np.float32))
+    last_obs_before = copy.deepcopy(last_obs)
+
+    context, obs, info = reset(mask=np.array([True, False]), seed=3)
+
+    for key in last_obs:
+        np.testing.assert_array_equal(last_obs[key], last_obs_before[key])  # caller's arrays unchanged
+        np.testing.assert_array_equal(obs[key][1], last_obs_before[key][1])  # env 1 keeps its observation
+        assert not np.array_equal(obs[key][0], last_obs_before[key][0])  # env 0 was reset
+    np.testing.assert_array_equal(first_context, first_context_before)
+    np.testing.assert_array_equal(context[1], first_context_before[1])
