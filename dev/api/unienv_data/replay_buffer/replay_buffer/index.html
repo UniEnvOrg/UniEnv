@@ -7902,7 +7902,7 @@ of a full buffer), as with any lock-free ring buffer.</p>
               <td><code><a class="autorefs autorefs-internal" title="            append (unienv_data.replay_buffer.replay_buffer.ReplayBuffer.append)" href="#unienv_data.replay_buffer.replay_buffer.ReplayBuffer.append">append</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  
+                  <p>Append one step to the open segment (opening one if needed).</p>
                 </div>
               </td>
             </tr>
@@ -9019,10 +9019,15 @@ Storages that support it (e.g. <code>VideoStorage</code>) encode the samples as 
 
 
 <a href="#unienv_data.replay_buffer.replay_buffer.ReplayBuffer.append" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">append</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">append</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">episode_data</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
+
+        <p>Append one step to the open segment (opening one if needed).</p>
+<p><code>episode_data</code> on the first step of a segment is the segment's episode record, written
+right away (<code>mark_segment_end()</code> then takes none); otherwise the record is given to
+<code>mark_segment_end(episode_data=...)</code>.</p>
 
 
     </div>
@@ -9043,7 +9048,8 @@ Storages that support it (e.g. <code>VideoStorage</code>) encode the samples as 
     <div class="doc doc-contents ">
 
         <p>Close the segment built by <code>append()</code>; <code>episode_data</code> is its episode record
-(required if the buffer has an <code>episode_space</code> and the segment holds steps).</p>
+(required if the buffer has an <code>episode_space</code> and the segment holds steps, unless the
+record came with the segment's first <code>append()</code>).</p>
 
 
     </div>
