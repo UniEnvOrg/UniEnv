@@ -839,6 +839,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="ReplayBuffer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#episode-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Episode Records
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6069,6 +6086,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="ReplayBuffer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#episode-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Episode Records
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6221,6 +6255,51 @@
 <blockquote>
 <p>Visibility note: the base storage append path writes through the active index and may make values visible immediately, but some implementations (notably <code>VideoStorage</code>) buffer data until <code>mark_segment_end()</code>.</p>
 </blockquote>
+<h3 id="episode-records">Episode Records<a class="headerlink" href="#episode-records" title="Permanent link">&para;</a></h3>
+<p>A buffer created with an <code>episode_space</code> stores one record per segment (episode): task, language instruction, success, return, goal, seed and so on, kept once in a second storage instead of repeated on every step. Every segment needs its record, passed when the segment closes:</p>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_interface.backends.numpy</span><span class="w"> </span><span class="kn">import</span> <span class="n">NumpyComputeBackend</span> <span class="k">as</span> <span class="n">B</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_interface.space.spaces</span><span class="w"> </span><span class="kn">import</span> <span class="n">BoxSpace</span><span class="p">,</span> <span class="n">DictSpace</span><span class="p">,</span> <span class="n">TextSpace</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.replay_buffer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReplayBuffer</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.samplers</span><span class="w"> </span><span class="kn">import</span> <span class="n">StepSampler</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.storages.hdf5</span><span class="w"> </span><span class="kn">import</span> <span class="n">HDF5Storage</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="n">steps</span> <span class="o">=</span> <span class="n">DictSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="p">{</span><span class="s2">"obs"</span><span class="p">:</span> <span class="n">BoxSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">4</span><span class="p">,)),</span> <span class="s2">"action"</span><span class="p">:</span> <span class="n">BoxSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,))})</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">episode</span> <span class="o">=</span> <span class="n">DictSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="p">{</span><span class="s2">"instruction"</span><span class="p">:</span> <span class="n">TextSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">128</span><span class="p">),</span> <span class="s2">"success"</span><span class="p">:</span> <span class="n">BoxSpace</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">())})</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">buffer</span> <span class="o">=</span> <span class="n">ReplayBuffer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="n">HDF5Storage</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">cache_path</span><span class="o">=</span><span class="s2">"cache/episodes_demo"</span><span class="p">,</span> <span class="n">capacity</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="n">episode_space</span><span class="o">=</span><span class="n">episode</span><span class="p">,</span> <span class="n">episode_storage_cls</span><span class="o">=</span><span class="n">HDF5Storage</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="p">)</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="k">def</span><span class="w"> </span><span class="nf">step</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">"obs"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">i</span> <span class="o">/</span> <span class="mi">10</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="s2">"action"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)}</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>                      <span class="c1"># an episode built step by step</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>    <span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="p">))</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="n">buffer</span><span class="o">.</span><span class="n">mark_segment_end</span><span class="p">(</span><span class="n">episode_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"instruction"</span><span class="p">:</span> <span class="s2">"open the drawer"</span><span class="p">,</span> <span class="s2">"success"</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="n">batch</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"obs"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">5</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="s2">"action"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)}</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="n">buffer</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">episode_data</span><span class="o">=</span><span class="p">{</span><span class="s2">"instruction"</span><span class="p">:</span> <span class="s2">"close the drawer"</span><span class="p">,</span> <span class="s2">"success"</span><span class="p">:</span> <span class="mi">0</span><span class="p">})</span>   <span class="c1"># one call, one episode</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="k">assert</span> <span class="n">buffer</span><span class="o">.</span><span class="n">get_episode_segments</span><span class="p">()</span> <span class="o">==</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]</span>   <span class="c1"># (start, end, episode_id)</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="k">assert</span> <span class="n">buffer</span><span class="o">.</span><span class="n">get_episode_ids</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a><span class="k">assert</span> <span class="n">buffer</span><span class="o">.</span><span class="n">get_episode_data</span><span class="p">(</span><span class="mi">1</span><span class="p">)[</span><span class="s2">"instruction"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"close the drawer"</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a><span class="c1"># Steps carry their episode only on request, through a view (e.g. for a sampler)</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">StepSampler</span><span class="p">(</span><span class="n">buffer</span><span class="o">.</span><span class="n">with_episode_data</span><span class="p">(),</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a><span class="n">batch</span><span class="p">,</span> <span class="n">metadata</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample_with_metadata</span><span class="p">()</span>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a><span class="n">metadata</span><span class="p">[</span><span class="s2">"episode_id"</span><span class="p">],</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">"episode"</span><span class="p">][</span><span class="s2">"instruction"</span><span class="p">],</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">"episode"</span><span class="p">][</span><span class="s2">"success"</span><span class="p">]</span>
+</code></pre></div>
+<ul>
+<li>Segments close with <code>mark_segment_end(episode_data=...)</code> (after <code>append</code>), <code>extend(value, episode_data=...)</code> (one call is one segment) and <code>commit_segment(writer, episode_data=...)</code> (segment writers, e.g. one per environment). A missing record raises <code>ValueError</code>, and nothing is written.</li>
+<li><code>get_episode_ids(idx)</code> maps steps to episode ids (<code>-1</code> for steps of the segment that is still open); <code>get_episode_data(ids)</code> returns the records; <code>get_episode_segments()</code> lists <code>(start, end, episode_id)</code>. Ids increase in the order segments close and are never reused (not even after <code>clear()</code>).</li>
+<li>A record is available for as long as any step of its episode is in the buffer; with a fixed capacity, overwriting the last step of an episode makes its record unavailable. <code>episode_capacity</code> (default: the buffer's <code>capacity</code>, which always suffices) bounds the stored records.</li>
+<li>Reading the buffer itself is unchanged. <code>with_episode_data()</code> is a read-only view whose samples' metadata holds <code>episode_id</code> and <code>episode</code> (the record, converted to the buffer's backend and device); reading a step of the open segment through it raises <code>ValueError</code>. Samplers and stacked batches built on the view carry episodes too.</li>
+<li><code>dumps()</code> / <code>load_from()</code> keep the records (under <code>episodes/</code>) and the step-to-episode mapping (<code>episode_ids.npy</code>); a reloaded writable buffer continues the ids. The records can use another storage, and another backend, than the steps (e.g. HDF5 records with text for a PyTorch buffer).</li>
+<li>Like other maintained segment metadata, episode records are not supported with <code>multiprocessing=True</code> on a writable buffer (read-only loads are fine).</li>
+</ul>
 <h2 id="storage-backends">Storage Backends<a class="headerlink" href="#storage-backends" title="Permanent link">&para;</a></h2>
 <p>UniEnv includes multiple storage implementations, each useful for a different tradeoff.</p>
 <ul>
@@ -6234,43 +6313,43 @@
 </ul>
 <p>The storage layer is intentionally separate from the replay-buffer semantics, so you can swap persistence formats without changing higher-level code.</p>
 <p><code>VideoStorage</code> streams frames into a temporary file for the active segment and only registers the final file on <code>mark_segment_end()</code>. Do not read from the active segment before finalizing it.</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.replay_buffer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReplayBuffer</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.storages.video_storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">VideoStorage</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">rb</span> <span class="o">=</span> <span class="n">ReplayBuffer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">VideoStorage</span><span class="p">,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">space</span><span class="p">,</span>  <span class="c1"># e.g. BoxSpace(..., shape=(H, W, 3))</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">cache_path</span><span class="o">=</span><span class="s2">"cache/video"</span><span class="p">,</span>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">capacity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">codec</span><span class="o">=</span><span class="s2">"libx264rgb"</span><span class="p">,</span>          <span class="c1"># RGB video</span>
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">file_pixel_format</span><span class="o">=</span><span class="s2">"rgb24"</span><span class="p">,</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">buffer_pixel_format</span><span class="o">=</span><span class="s2">"rgb24"</span><span class="p">,</span>
-<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">file_ext</span><span class="o">=</span><span class="s2">"mkv"</span><span class="p">,</span>
-<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="p">)</span>
-<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>
-<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="k">for</span> <span class="n">frame</span> <span class="ow">in</span> <span class="n">frames</span><span class="p">:</span>
-<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="n">rb</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
-<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="n">rb</span><span class="o">.</span><span class="n">mark_segment_end</span><span class="p">()</span>
-<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
-<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="nb">print</span><span class="p">(</span><span class="n">rb</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">get_segments</span><span class="p">())</span>  <span class="c1"># backend-specific physical file ranges</span>
-<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">rb</span><span class="o">.</span><span class="n">get_segments</span><span class="p">())</span>          <span class="c1"># logical half-open ranges, e.g. [(0, 3)]</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.replay_buffer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReplayBuffer</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.storages.video_storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">VideoStorage</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">rb</span> <span class="o">=</span> <span class="n">ReplayBuffer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">VideoStorage</span><span class="p">,</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">space</span><span class="p">,</span>  <span class="c1"># e.g. BoxSpace(..., shape=(H, W, 3))</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">cache_path</span><span class="o">=</span><span class="s2">"cache/video"</span><span class="p">,</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">capacity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">codec</span><span class="o">=</span><span class="s2">"libx264rgb"</span><span class="p">,</span>          <span class="c1"># RGB video</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">file_pixel_format</span><span class="o">=</span><span class="s2">"rgb24"</span><span class="p">,</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">buffer_pixel_format</span><span class="o">=</span><span class="s2">"rgb24"</span><span class="p">,</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">file_ext</span><span class="o">=</span><span class="s2">"mkv"</span><span class="p">,</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="k">for</span> <span class="n">frame</span> <span class="ow">in</span> <span class="n">frames</span><span class="p">:</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="n">rb</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="n">rb</span><span class="o">.</span><span class="n">mark_segment_end</span><span class="p">()</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="nb">print</span><span class="p">(</span><span class="n">rb</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">get_segments</span><span class="p">())</span>  <span class="c1"># backend-specific physical file ranges</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">rb</span><span class="o">.</span><span class="n">get_segments</span><span class="p">())</span>          <span class="c1"># logical half-open ranges, e.g. [(0, 3)]</span>
 </code></pre></div>
 <p>For depth or other single-channel videos, prefer <code>ffv1</code> with a 2D <code>(H, W)</code> space and a grayscale pixel format such as <code>gray16le</code>. For RGB video, use an RGB-capable codec such as <code>libx264rgb</code> (or <code>h264</code>/<code>libx264</code> with a matching YUV pixel format like <code>yuv420p</code>). Set pixel formats explicitly; there is no automatic RGB fallback.</p>
 <h3 id="routing-leaves-by-metadata">Routing Leaves By Metadata<a class="headerlink" href="#routing-leaves-by-metadata" title="Permanent link">&para;</a></h3>
 <p>When the observation space describes its leaves with <a href="../../concepts/spaces-and-backends/#space-metadata">space metadata</a>, <code>dict_storage_kwargs_from_space</code> builds the <code>DictStorage</code> layout for you: every <code>kind == "image"</code> <code>(H, W, 3)</code> uint8 leaf goes to an <code>ImageStorage</code> (JPEG files by default) and all other leaves to one <code>HDF5Storage</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.storages</span><span class="w"> </span><span class="kn">import</span> <span class="n">DictStorage</span><span class="p">,</span> <span class="n">dict_storage_kwargs_from_space</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">rb</span> <span class="o">=</span> <span class="n">ReplayBuffer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">DictStorage</span><span class="p">,</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">obs_space</span><span class="p">,</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">cache_path</span><span class="o">=</span><span class="s2">"cache/rb"</span><span class="p">,</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">capacity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="o">**</span><span class="n">dict_storage_kwargs_from_space</span><span class="p">(</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="n">obs_space</span><span class="p">,</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        <span class="n">kind_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"image"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"format"</span><span class="p">:</span> <span class="s2">"PNG"</span><span class="p">}},</span>     <span class="c1"># lossless image files</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        <span class="n">key_storage_cls</span><span class="o">=</span><span class="p">{</span><span class="s2">"cameras/debug"</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>      <span class="c1"># keep this camera in the default storage</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="p">),</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.storages</span><span class="w"> </span><span class="kn">import</span> <span class="n">DictStorage</span><span class="p">,</span> <span class="n">dict_storage_kwargs_from_space</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">rb</span> <span class="o">=</span> <span class="n">ReplayBuffer</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">DictStorage</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">obs_space</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">cache_path</span><span class="o">=</span><span class="s2">"cache/rb"</span><span class="p">,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">capacity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="o">**</span><span class="n">dict_storage_kwargs_from_space</span><span class="p">(</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="n">obs_space</span><span class="p">,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>        <span class="n">kind_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">"image"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"format"</span><span class="p">:</span> <span class="s2">"PNG"</span><span class="p">}},</span>     <span class="c1"># lossless image files</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>        <span class="n">key_storage_cls</span><span class="o">=</span><span class="p">{</span><span class="s2">"cameras/debug"</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>      <span class="c1"># keep this camera in the default storage</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="p">),</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">)</span>
 </code></pre></div>
 <p>Storages per kind (<code>kind_storage_cls</code>, e.g. <code>{"image": VideoStorage}</code>, which then also receives the leaf's declared <code>fps</code>), per key (<code>key_storage_cls</code>) and the default storage (<code>default_storage_cls</code>) are all configurable, as are their keyword arguments. Channel-first or non-uint8 images stay in the default storage. <code>create_dict_storage_from_space</code> creates the <code>DictStorage</code> directly.</p>
 <p>Storages keep the metadata of the space they are given, and <code>ReplayBuffer.dumps</code> / <code>load_from</code> persist it with the rest of the space.</p>
