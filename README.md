@@ -1,6 +1,17 @@
-# UniEnv
+<p align="center">
+  <a href="https://unienvorg.github.io/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://unienvorg.github.io/img/unienv-banner-dark.png">
+      <img alt="UniEnv: robot environments, policies and data, unified" src="https://unienvorg.github.io/img/unienv-banner-light.png" width="100%">
+    </picture>
+  </a>
+</p>
 
-![UniEnv overview](docs/static/unienv_overview.webp)
+<p align="center">
+  <a href="https://unienvorg.github.io/UniEnv/"><img alt="Docs" src="https://img.shields.io/badge/docs-unienvorg.github.io-1b5e93"></a>
+  <a href="https://pypi.org/project/unienv/"><img alt="PyPI" src="https://img.shields.io/pypi/v/unienv?color=2a8f75"></a>
+  <a href="https://github.com/UniEnvOrg/UniEnv/blob/main/LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-5a6370"></a>
+</p>
 
 UniEnv is a Python framework for building robot environments and robot data pipelines on top of a shared set of abstractions.
 

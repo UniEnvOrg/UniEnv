@@ -1,6 +1,7 @@
 # UniEnv
 
-![UniEnv overview](static/unienv_overview.webp)
+![UniEnv: robot environments, policies and data, unified](https://unienvorg.github.io/img/unienv-banner-light.png#only-light)
+![UniEnv: robot environments, policies and data, unified](https://unienvorg.github.io/img/unienv-banner-dark.png#only-dark)
 
 UniEnv is a robotics-oriented interface layer for environments, worlds, data pipelines, and backend-aware transformations.
 
