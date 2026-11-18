@@ -96,7 +96,7 @@ For segment-aware storages, `ReplayBuffer.get_segments()` returns logical chrono
 
 ### Episode Records
 
-A buffer created with an `episode_space` stores one record per segment (episode): task, language instruction, success, return, goal, seed and so on, kept once in a second storage instead of repeated on every step. Every segment needs its record, passed when the segment closes:
+A buffer created with an `episode_space` stores one record per segment (episode): task, language instruction, success, return, goal, seed and so on, kept once in a second storage instead of repeated on every step. Every segment needs exactly one record, passed with its first step or when it closes:
 
 ```python
 import numpy as np
@@ -122,12 +122,17 @@ for t in range(3):                      # an episode built step by step
     buffer.append(step(t))
 buffer.mark_segment_end(episode_data={"instruction": "open the drawer", "success": 1})
 
+buffer.append(step(0), episode_data={"instruction": "wipe the table", "success": 0})   # record known up front
+buffer.append(step(1))
+assert buffer.get_episode_data(buffer.get_episode_ids(4))["instruction"] == "wipe the table"   # already readable
+buffer.mark_segment_end()               # no second record
+
 batch = {"obs": np.zeros((5, 4), np.float32), "action": np.zeros((5, 2), np.float32)}
 buffer.extend(batch, episode_data={"instruction": "close the drawer", "success": 0})   # one call, one episode
 
-assert buffer.get_episode_segments() == [(0, 3, 0), (3, 8, 1)]   # (start, end, episode_id)
-assert buffer.get_episode_ids(4) == 1
-assert buffer.get_episode_data(1)["instruction"] == "close the drawer"
+assert buffer.get_episode_segments() == [(0, 3, 0), (3, 5, 1), (5, 10, 2)]   # (start, end, episode_id)
+assert buffer.get_episode_ids(6) == 2
+assert buffer.get_episode_data(2)["instruction"] == "close the drawer"
 
 # Steps carry their episode only on request, through a view (e.g. for a sampler)
 sampler = StepSampler(buffer.with_episode_data(), batch_size=4, seed=0)
@@ -135,11 +140,12 @@ batch, metadata = sampler.sample_with_metadata()
 metadata["episode_id"], metadata["episode"]["instruction"], metadata["episode"]["success"]
 ```
 
-- Segments close with `mark_segment_end(episode_data=...)` (after `append`), `extend(value, episode_data=...)` (one call is one segment) and `commit_segment(writer, episode_data=...)` (segment writers, e.g. one per environment). A missing record raises `ValueError`, and nothing is written.
-- `get_episode_ids(idx)` maps steps to episode ids (`-1` for steps of the segment that is still open); `get_episode_data(ids)` returns the records; `get_episode_segments()` lists `(start, end, episode_id)`. Ids increase in the order segments close and are never reused (not even after `clear()`).
+- A segment built with `append` takes its record either with its first step (`append(value, episode_data=...)`; the record is readable at once, and the segment then closes with a bare `mark_segment_end()`) or when it closes (`mark_segment_end(episode_data=...)`), never both. `extend(value, episode_data=...)` (one call is one segment) and `commit_segment(writer, episode_data=...)` (segment writers, e.g. one per environment) take it with the data. A missing or second record raises `ValueError`, and nothing is written.
+- `get_episode_ids(idx)` maps steps to episode ids (`-1` for steps of an open segment whose record comes at its end); `get_episode_data(ids)` returns the records; `get_episode_segments()` lists `(start, end, episode_id)`. Ids increase in the order records are written and are never reused (not even after `clear()`).
 - A record is available for as long as any step of its episode is in the buffer; with a fixed capacity, overwriting the last step of an episode makes its record unavailable. `episode_capacity` (default: the buffer's `capacity`, which always suffices) bounds the stored records.
-- Reading the buffer itself is unchanged. `with_episode_data()` is a read-only view whose samples' metadata holds `episode_id` and `episode` (the record, converted to the buffer's backend and device); reading a step of the open segment through it raises `ValueError`. Samplers and stacked batches built on the view carry episodes too.
+- Reading the buffer itself is unchanged. `with_episode_data()` is a read-only view whose samples' metadata holds `episode_id` and `episode` (the record, converted to the buffer's backend and device); reading a step of an open segment without its record yet raises `ValueError`. Samplers and stacked batches built on the view carry episodes too.
 - `dumps()` / `load_from()` keep the records (under `episodes/`) and the step-to-episode mapping (`episode_ids.npy`); a reloaded writable buffer continues the ids. The records can use another storage, and another backend, than the steps (e.g. HDF5 records with text for a PyTorch buffer).
+- `ReplayBufferCollectionWrapper` writes the records itself: by default from the episode's context, return, length, `terminated` / `truncated`, `info["success"]` and env slot (the keys of a `DictSpace` episode space), or the context alone for any other space (`episode_space=env.context_space`); `episode_builder(summary)` builds custom ones from an `EpisodeSummary`. `episode_data_at="start"` writes each record with the episode's first step, so the wrapper holds no context while the episode runs (only `context` / `env_index` are known then); `"end"` writes it when the episode ends or is cut by a reset or a buffer swap (`truncated`); the default `"auto"` picks start whenever the default record needs nothing more. Resets in shared mode close the open segment.
 - Like other maintained segment metadata, episode records are not supported with `multiprocessing=True` on a writable buffer (read-only loads are fine).
 
 ## Storage Backends

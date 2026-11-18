@@ -611,6 +611,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         )
         self._episode_buffer = episode_buffer
         self._next_episode_id = int(next_episode_id)
+        # Id of the open segment's record, if it was given with its first append()
+        self._active_segment_episode_id : Optional[int] = None
         if episode_buffer is None:
             self._step_episode_ids = None
         else:
@@ -950,9 +952,24 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             if episode_id is not None:
                 self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
 
-    def append(self, value):
+    def append(self, value, *, episode_data : Optional[Any] = None):
+        """Append one step to the open segment (opening one if needed).
+
+        ``episode_data`` on the first step of a segment is the segment's episode record, written
+        right away (``mark_segment_end()`` then takes none); otherwise the record is given to
+        ``mark_segment_end(episode_data=...)``.
+        """
         self._require_not_column_view("append to")
         with self._lock_scope():
+            if episode_data is not None:
+                if self._episode_buffer is None:
+                    raise ValueError("this replay buffer has no episode_space: episode_data cannot be stored")
+                if (self._active_segment_start_physical is not None and self._active_segment_length > 0) \
+                        or self._active_segment_episode_id is not None:
+                    raise ValueError(
+                        "episode_data goes with the first append() of a segment (or to mark_segment_end()); "
+                        "this segment is already open"
+                    )
             old_count, old_offset = self._ring_state.read()
             if self.capacity is None:
                 physical_index = old_count
@@ -976,7 +993,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._ring_state.write(old_count + 1, 0)
                 if self._maintain_segment_metadata:
                     self._append_to_active_segment(physical_index)
-                self._set_step_episode_ids(slice(physical_index, physical_index + 1), -1)
+                self._set_step_episode_ids(slice(physical_index, physical_index + 1), self._open_step_episode_id(episode_data))
                 return
 
             physical_index = (old_offset + old_count) % self.capacity
@@ -1003,13 +1020,42 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._ring_state.write(min(old_count + 1, self.capacity), (old_offset + outflow) % self.capacity)
             if self._maintain_segment_metadata:
                 self._append_to_active_segment(physical_index)
-            self._set_step_episode_ids(slice(physical_index, physical_index + 1), -1)
+            self._set_step_episode_ids(slice(physical_index, physical_index + 1), self._open_step_episode_id(episode_data))
+
+    def _open_step_episode_id(self, episode_data : Optional[Any]) -> Optional[int]:
+        """Episode id of a step just appended to the open segment, writing the record it came with.
+
+        The record is written after the step, so a failed append leaves no record behind; -1 while
+        the open segment has no record yet (``None`` without episode records).
+        """
+        if self._episode_buffer is None:
+            return None
+        if episode_data is not None:
+            self._active_segment_episode_id = self._write_episode_record(episode_data)
+        return -1 if self._active_segment_episode_id is None else self._active_segment_episode_id
 
     def mark_segment_end(self, *, episode_data : Optional[Any] = None):
         """Close the segment built by ``append()``; ``episode_data`` is its episode record
-        (required if the buffer has an ``episode_space`` and the segment holds steps)."""
+        (required if the buffer has an ``episode_space`` and the segment holds steps, unless the
+        record came with the segment's first ``append()``)."""
         with self._lock_scope():
             open_segment = self._active_segment_start_physical is not None and self._active_segment_length > 0
+            if self._active_segment_episode_id is not None:
+                if episode_data is not None:
+                    raise ValueError("this segment got its episode record with its first append(); mark_segment_end() takes none")
+                # Its steps already map to the record
+                self._active_segment_episode_id = None
+                self.storage.mark_segment_end()
+                if self._maintain_segment_metadata and open_segment:
+                    active_end_physical = (
+                        self._active_segment_start_physical + self._active_segment_length - 1
+                        if self.capacity is None
+                        else (self._active_segment_start_physical + self._active_segment_length - 1) % self.capacity
+                    )
+                    self._physical_segments.append((self._active_segment_start_physical, active_end_physical))
+                self._active_segment_start_physical = None
+                self._active_segment_length = 0
+                return
             if self._episode_buffer is not None and open_segment:
                 self._check_episode_data_argument(episode_data)
             elif episode_data is not None:
@@ -1221,6 +1267,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._physical_segments = []
             self._active_segment_start_physical = None
             self._active_segment_length = 0
+            self._active_segment_episode_id = None
             if self._episode_buffer is not None:
                 # Ids keep increasing: a record id is never reused
                 self._episode_buffer.clear()

@@ -162,7 +162,8 @@ def test_clear_keeps_ids_increasing(tmp_path):
 
 @pytest.mark.parametrize("capacity", [1, 2, 3, 5, 8, 13])
 def test_randomized_episode_ids_match_a_reference(capacity):
-    """Random appends / segment ends / extends / writer commits / clears against a per-step reference."""
+    """Random appends (records at the start or the end) / segment ends / extends / writer commits / clears
+    against a per-step reference."""
     step = BoxSpace(TB, -1e9, 1e9, torch.float64, shape=(1,))
     record = BoxSpace(TB, -1e9, 1e9, torch.int64, shape=())
     rng = random.Random(capacity)
@@ -172,60 +173,88 @@ def test_randomized_episode_ids_match_a_reference(capacity):
             episode_space=record, episode_storage_cls=PytorchTensorStorage,
             episode_storage_kwargs={"is_memmap": False},
         )
-        reference = deque(maxlen=capacity)  # episode id per logical step, -1 while open
-        next_id = 0
+        state = {"reference": deque(maxlen=capacity), "next_id": 0, "open_id": None}  # reference: id per step, -1 open
+
+        def close_open():
+            if state["open_id"] is not None:  # the record came with the first append
+                rb.mark_segment_end()
+                state["open_id"] = None
+            elif rb._active_segment_length > 0:
+                rb.mark_segment_end(episode_data=torch.tensor(state["next_id"]))
+                state["reference"] = deque((state["next_id"] if e == -1 else e for e in state["reference"]), maxlen=capacity)
+                state["next_id"] += 1
+            else:
+                rb.mark_segment_end()
+
         for _ in range(rng.randint(5, 120)):
             op = rng.random()
+            reference = state["reference"]
             if op < 0.45:
-                rb.append(torch.zeros(1, dtype=torch.float64))
-                reference.append(-1)
-            elif op < 0.65:
-                if -1 in reference or rb._active_segment_length > 0:
-                    rb.mark_segment_end(episode_data=torch.tensor(next_id))
-                    reference = deque((next_id if e == -1 else e for e in reference), maxlen=capacity)
-                    next_id += 1
+                opening = rb._active_segment_length == 0 and state["open_id"] is None
+                if opening and rng.random() < 0.5:
+                    rb.append(torch.zeros(1, dtype=torch.float64), episode_data=torch.tensor(state["next_id"]))
+                    state["open_id"] = state["next_id"]
+                    state["next_id"] += 1
                 else:
-                    rb.mark_segment_end()
+                    rb.append(torch.zeros(1, dtype=torch.float64))
+                reference.append(-1 if state["open_id"] is None else state["open_id"])
+            elif op < 0.65:
+                close_open()
             elif op < 0.85:
-                if rb._active_segment_length > 0:
-                    rb.mark_segment_end(episode_data=torch.tensor(next_id))
-                    reference = deque((next_id if e == -1 else e for e in reference), maxlen=capacity)
-                    next_id += 1
+                close_open()
                 size = rng.randint(1, capacity + 3)
-                rb.extend(torch.zeros(size, 1, dtype=torch.float64), episode_data=torch.tensor(next_id))
-                reference.extend([next_id] * size)
-                next_id += 1
+                rb.extend(torch.zeros(size, 1, dtype=torch.float64), episode_data=torch.tensor(state["next_id"]))
+                state["reference"].extend([state["next_id"]] * size)
+                state["next_id"] += 1
             elif op < 0.97:
-                if rb._active_segment_length > 0:
-                    rb.mark_segment_end(episode_data=torch.tensor(next_id))
-                    reference = deque((next_id if e == -1 else e for e in reference), maxlen=capacity)
-                    next_id += 1
+                close_open()
                 size = rng.randint(1, capacity)
                 writer = rb.open_segment_writer()
                 for _ in range(size):
                     writer.append(torch.zeros(1, dtype=torch.float64))
-                rb.commit_segment(writer, episode_data=torch.tensor(next_id))
-                reference.extend([next_id] * size)
-                next_id += 1
+                rb.commit_segment(writer, episode_data=torch.tensor(state["next_id"]))
+                state["reference"].extend([state["next_id"]] * size)
+                state["next_id"] += 1
             else:
-                if rb._active_segment_length > 0:
-                    rb.mark_segment_end(episode_data=torch.tensor(next_id))
-                    next_id += 1
+                close_open()
                 rb.clear()
-                reference.clear()
+                state["reference"].clear()
+            reference = state["reference"]
             assert len(rb) == len(reference)
             if len(rb):
                 ids = rb.get_episode_ids(torch.arange(len(rb)))
                 np.testing.assert_array_equal(ids, list(reference))
-                closed = ids[ids >= 0]
-                if closed.size:
-                    np.testing.assert_array_equal(rb.get_episode_data(closed).numpy(), closed)
-                    if closed.min() > 0:  # older ids have no step left
+                known = ids[ids >= 0]
+                if known.size:
+                    np.testing.assert_array_equal(rb.get_episode_data(known).numpy(), known)
+                    if known.min() > 0:  # older ids have no step left
                         with pytest.raises(IndexError):
-                            rb.get_episode_data(int(closed.min()) - 1)
-            closed_segments = rb.get_episode_segments()
-            for start, end, episode_id in closed_segments:
+                            rb.get_episode_data(int(known.min()) - 1)
+            for start, end, episode_id in rb.get_episode_segments():
                 assert set(np.asarray(list(reference)[start:end]).tolist()) == {episode_id}
+
+
+def test_record_with_the_first_append(tmp_path):
+    rb = _buffer(tmp_path)
+    rb.append(_steps(1)[0], episode_data=_episode(0))
+    rb.append(_steps(1, 1)[0])
+    assert rb.get_episode_ids(np.arange(2)).tolist() == [0, 0]  # known while the segment is open
+    assert rb.get_episode_data(0)["task"] == "task 0"
+    data, metadata = rb.with_episode_data().get_at_with_metadata(np.arange(2))
+    assert list(metadata["episode"]["task"]) == ["task 0", "task 0"]
+    with pytest.raises(ValueError, match="already open"):
+        rb.append(_steps(1)[0], episode_data=_episode(1))
+    with pytest.raises(ValueError, match="takes none"):
+        rb.mark_segment_end(episode_data=_episode(1))
+    rb.mark_segment_end()
+    rb.append(_steps(1)[0])  # this one gets its record at the end
+    with pytest.raises(ValueError, match="already open"):
+        rb.append(_steps(1)[0], episode_data=_episode(1))
+    rb.mark_segment_end(episode_data=_episode(1))
+    assert rb.get_episode_segments() == [(0, 2, 0), (2, 3, 1)]
+    rb.dumps(str(tmp_path / "rb"))
+    loaded = ReplayBuffer.load_from(str(tmp_path / "rb"), backend=NB)
+    assert loaded.get_episode_segments() == [(0, 2, 0), (2, 3, 1)]
 
 
 # --------------------------------------------------------------------------- persistence

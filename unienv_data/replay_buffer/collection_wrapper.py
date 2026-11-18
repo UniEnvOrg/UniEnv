@@ -17,6 +17,7 @@ previous bug in this module.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from typing import (
     Any,
@@ -41,6 +42,43 @@ from unienv_interface.space import DictSpace, Space
 from unienv_interface.transformations import DataTransformation
 
 from .replay_buffer import ReplayBuffer
+
+
+@dataclasses.dataclass
+class EpisodeSummary:
+    """What :class:`ReplayBufferCollectionWrapper` knows about an episode when it builds its record.
+
+    Passed to ``episode_builder`` to build the episode record of a buffer with an
+    ``episode_space`` (see ``ReplayBuffer.create``).  Records built at the episode's
+    start (``at_start``, see ``episode_data_at``) know only ``context`` and
+    ``env_index``: the other fields hold their initial values.
+    """
+    #: The env's context during the episode (one env slot's for batched envs); ``None`` without a context space
+    context: Any
+    #: Sum of the episode's rewards
+    total_reward: float
+    #: Number of steps recorded
+    length: int
+    #: ``terminated`` / ``truncated`` of the last step; an episode cut by a reset or a
+    #: buffer swap before it ended has ``terminated=False, truncated=True``
+    terminated: bool
+    truncated: bool
+    #: ``info`` of the last step (one env slot's entries for batched envs)
+    info: Dict[str, Any]
+    #: The env slot (per-env mode), else ``None``
+    env_index: Optional[int]
+    #: ``True`` when the record is built at the episode's first step, ``False`` when its segment closes
+    at_start: bool = False
+
+
+@dataclasses.dataclass
+class _EpisodeAccumulator:
+    context: Any
+    total_reward: float = 0.0
+    length: int = 0
+    terminated: bool = False
+    truncated: bool = False
+    info: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 PathLike = Union[str, "os.PathLike[str]"]
@@ -93,6 +131,28 @@ class ReplayBufferCollectionWrapper(
         redirect subsequent dumps.  Required if ``dump_on_episode_end`` or
         ``dump_on_reset_boundary`` is ``True``.  Repeated dumps overwrite
         the same path.
+    episode_builder : callable, optional
+        For replay buffers with an ``episode_space``: ``episode_builder(summary)``
+        returns the episode record from an :class:`EpisodeSummary` when the
+        episode's segment closes.  By default the record is built from the
+        summary: for a ``DictSpace`` the keys ``context``, ``return``,
+        ``length``, ``terminated``, ``truncated``, ``success`` (the last
+        step's ``info["success"]``) and ``env_index``; for any other space,
+        the episode's context (e.g. ``episode_space=env.context_space`` stores
+        each episode's context once).
+    episode_data_at : ``"auto"``, ``"start"`` or ``"end"``
+        When episode records are built and written.  ``"start"`` writes the
+        record with the episode's first step, so the wrapper keeps no context
+        while the episode runs and the record is readable while the episode is
+        still open; the record can only use what is known then (``context``,
+        ``env_index``).  ``"end"`` writes it when the episode's segment closes.
+        ``"auto"`` picks ``"start"`` when the default record needs nothing
+        else (a non-``DictSpace`` episode space, or one with only ``context``
+        and ``env_index`` keys) and ``"end"`` otherwise, including whenever an
+        ``episode_builder`` is given.
+
+    Episodes end on ``terminated or truncated`` and on resets (and buffer swaps
+    with ``finalize_old_segments``) that cut an episode short.
     """
 
     # ---- helper constructors ------------------------------------------------
@@ -132,8 +192,16 @@ class ReplayBufferCollectionWrapper(
         dump_on_episode_end: bool = False,
         dump_on_reset_boundary: bool = False,
         dump_path: Optional[PathLike] = None,
+        episode_builder: Optional[Callable[[EpisodeSummary], Any]] = None,
+        episode_data_at: Literal["auto", "start", "end"] = "auto",
     ) -> None:
         super().__init__(env)
+        if episode_data_at not in ("auto", "start", "end"):
+            raise ValueError(f"episode_data_at must be 'auto', 'start' or 'end', got {episode_data_at!r}.")
+        self._episode_builder: Optional[Callable[[EpisodeSummary], Any]] = episode_builder
+        self._episode_data_at: str = episode_data_at
+        # Buffer index -> what is known about its open episode
+        self._episode_accumulators: Dict[int, _EpisodeAccumulator] = {}
 
         self._replay_buffers: List[ReplayBuffer] = self._normalize_replay_buffers(
             replay_buffers
@@ -142,6 +210,8 @@ class ReplayBufferCollectionWrapper(
             replay_mode
         )
         self._validate_mode_layout()
+        # Buffer index -> whether its episode records are written with the episode's first step
+        self._records_at_start: List[bool] = self._resolve_records_at_start(self._replay_buffers)
 
         self._transition_builder_is_transform: bool = isinstance(
             transition_builder, DataTransformation
@@ -193,6 +263,9 @@ class ReplayBufferCollectionWrapper(
             and self._initialized
         ):
             self._dump_shared_on_reset_boundary()
+        elif self._replay_mode == "shared" and self._initialized:
+            # A reset starts a new episode: close the one a segment-aware buffer has open
+            self._close_open_shared_episode()
 
         # Merge compact reset results for masked batched resets.
         if mask is not None and self._initialized:
@@ -251,6 +324,7 @@ class ReplayBufferCollectionWrapper(
             reward=reward,
             terminated=terminated,
             truncated=truncated,
+            info=info,
         )
 
         self._cached_obs = obs
@@ -292,6 +366,9 @@ class ReplayBufferCollectionWrapper(
             and self._initialized
         ):
             self._dump_shared_on_reset_boundary()
+        elif self._replay_mode == "shared" and self._initialized:
+            # A reset starts a new episode: close the one a segment-aware buffer has open
+            self._close_open_shared_episode()
 
         if mask is not None and self._initialized:
             context, obs = self._merge_masked_reset(context, obs, mask)
@@ -333,6 +410,7 @@ class ReplayBufferCollectionWrapper(
             reward=reward,
             terminated=terminated,
             truncated=truncated,
+            info=info,
         )
 
         self._cached_obs = obs
@@ -366,6 +444,7 @@ class ReplayBufferCollectionWrapper(
         reward: Union[SupportsFloat, BArrayType],
         terminated: Union[bool, BArrayType],
         truncated: Union[bool, BArrayType],
+        info: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Build and write transitions according to the resolved mode."""
         if self._replay_mode == "shared":
@@ -377,6 +456,7 @@ class ReplayBufferCollectionWrapper(
                 reward=reward,
                 terminated=terminated,
                 truncated=truncated,
+                info=info,
             )
         else:
             self._record_per_env(
@@ -387,6 +467,7 @@ class ReplayBufferCollectionWrapper(
                 reward=reward,
                 terminated=terminated,
                 truncated=truncated,
+                info=info,
             )
 
     def _record_shared(
@@ -398,6 +479,7 @@ class ReplayBufferCollectionWrapper(
         reward: Union[SupportsFloat, BArrayType],
         terminated: Union[bool, BArrayType],
         truncated: Union[bool, BArrayType],
+        info: Optional[Dict[str, Any]] = None,
     ) -> None:
         rb = self._replay_buffers[0]
         B = self.batch_size
@@ -416,12 +498,12 @@ class ReplayBufferCollectionWrapper(
                 rb_single_space=rb.single_space,
             )
             self._validate(transition, rb.single_space)
-            rb.append(transition)
+            self._append_step(rb, 0, transition, prev_context, reward, terminated, truncated, info or {})
 
             # Check if episode ended
             done = self._done(terminated, truncated)
             if done:
-                rb.mark_segment_end()
+                self._close_episode(rb, 0)
                 if self._dump_on_episode_end:
                     self._dump_buffer(rb)
 
@@ -445,12 +527,16 @@ class ReplayBufferCollectionWrapper(
                 rb_single_space=rb.single_space,
             )
             self._validate(transition, rb.single_space)
-            rb.append(transition)
+            self._append_step(
+                rb, 0, transition,
+                self._unbatch_context(prev_context, 0) if prev_context is not None else None,
+                self._unbatch_scalar(reward, 0), term_0, trunc_0, self._slot_info(info, 0),
+            )
 
             # Check if episode ended
             done = self._done(term_0, trunc_0)
             if done:
-                rb.mark_segment_end()
+                self._close_episode(rb, 0)
                 if self._dump_on_episode_end:
                     self._dump_buffer(rb)
 
@@ -497,6 +583,7 @@ class ReplayBufferCollectionWrapper(
         reward: Union[SupportsFloat, BArrayType],
         terminated: Union[bool, BArrayType],
         truncated: Union[bool, BArrayType],
+        info: Optional[Dict[str, Any]] = None,
     ) -> None:
         B = self.batch_size
         assert B is not None and B > 1, "per_env mode requires batch_size > 1"
@@ -521,11 +608,15 @@ class ReplayBufferCollectionWrapper(
                 rb_single_space=rb.single_space,
             )
             self._validate(transition, rb.single_space)
-            rb.append(transition)
+            self._append_step(
+                rb, i, transition,
+                self._unbatch_context(prev_context, i) if prev_context is not None else None,
+                self._unbatch_scalar(reward, i), term_i, trunc_i, self._slot_info(info, i),
+            )
 
             done = self._done(term_i, trunc_i)
             if done:
-                rb.mark_segment_end()
+                self._close_episode(rb, i)
                 if self._dump_on_episode_end:
                     self._dump_buffer(rb)
 
@@ -974,7 +1065,7 @@ class ReplayBufferCollectionWrapper(
                 rb = self._replay_buffers[i]
                 # Close any open segment before starting a new episode.
                 if rb.storage is not None and rb.storage.has_open_segment:
-                    rb.mark_segment_end()
+                    self._close_episode(rb, i, cut=True)
                     # Dump on reset boundary if enabled (per_env mode).
                     if self._dump_on_reset_boundary:
                         self._dump_buffer(rb)
@@ -1030,6 +1121,154 @@ class ReplayBufferCollectionWrapper(
     # Internal – auto-dump helpers
     # ===================================================================
 
+    # ===================================================================
+    # Internal – episode records
+    # ===================================================================
+
+    def _slot_info(self, info: Optional[Dict[str, Any]], index: int) -> Dict[str, Any]:
+        """One env slot's entries of a batched ``info`` (entries with a leading batch axis are indexed)."""
+        if not info:
+            return {}
+        B = self.batch_size
+        slot = {}
+        for key, value in info.items():
+            shape = getattr(value, "shape", None)
+            if shape is not None and len(shape) > 0 and shape[0] == B:
+                slot[key] = value[index]
+            elif isinstance(value, (list, tuple)) and len(value) == B:
+                slot[key] = value[index]
+            else:
+                slot[key] = value
+        return slot
+
+    _START_RECORD_KEYS = frozenset({"context", "env_index"})
+
+    def _resolve_records_at_start(self, buffers: List[ReplayBuffer]) -> List[bool]:
+        """Per buffer: whether its episode records are written with the episode's first step."""
+        at_start = []
+        for rb in buffers:
+            space = rb.episode_space
+            if space is None or self._episode_data_at == "end":
+                at_start.append(False)
+                continue
+            start_keys_only = not isinstance(space, DictSpace) or set(space.spaces) <= self._START_RECORD_KEYS
+            if self._episode_data_at == "auto":
+                at_start.append(self._episode_builder is None and start_keys_only)
+                continue
+            if self._episode_builder is None and not start_keys_only:
+                missing = sorted(set(space.spaces) - self._START_RECORD_KEYS)
+                raise ValueError(
+                    f"episode_data_at='start' builds the default episode record at the episode's first step, "
+                    f"which cannot provide {missing}; use episode_data_at='end' or pass an episode_builder."
+                )
+            at_start.append(True)
+        return at_start
+
+    def _append_step(
+        self, rb: ReplayBuffer, index: int, transition: Any,
+        context: Any, reward: Any, terminated: Any, truncated: Any, info: Dict[str, Any],
+    ) -> None:
+        """Append one transition to buffer ``index``; the episode's first step carries its record in start mode."""
+        if self._records_at_start[index] and index not in self._episode_accumulators:
+            summary = EpisodeSummary(
+                context=context, total_reward=0.0, length=0, terminated=False, truncated=False, info={},
+                env_index=index if self._replay_mode == "per_env" else None, at_start=True,
+            )
+            rb.append(transition, episode_data=self._build_episode_record(rb, summary))
+            context = None  # the record holds it; the accumulator only counts
+        else:
+            rb.append(transition)
+        self._accumulate_episode(index, context, reward, terminated, truncated, info)
+
+    def _build_episode_record(self, rb: ReplayBuffer, summary: EpisodeSummary) -> Any:
+        if self._episode_builder is not None:
+            record = self._episode_builder(summary)
+        else:
+            record = self._default_episode_record(summary, rb.episode_space)
+        self._validate(record, rb.episode_space)
+        return record
+
+    def _accumulate_episode(
+        self, index: int, context: Any, reward: Any, terminated: Any, truncated: Any, info: Dict[str, Any],
+    ) -> None:
+        accumulator = self._episode_accumulators.get(index)
+        if accumulator is None:
+            accumulator = self._episode_accumulators[index] = _EpisodeAccumulator(context=context)
+        accumulator.total_reward += float(reward)
+        accumulator.length += 1
+        accumulator.terminated = bool(terminated)
+        accumulator.truncated = bool(truncated)
+        accumulator.info = info
+
+    def _close_episode(self, rb: ReplayBuffer, index: int, cut: bool = False) -> None:
+        """Close buffer ``index``'s open segment, with its episode record if the buffer stores them.
+
+        ``cut``: the episode is cut short by a reset or a buffer swap (``truncated``).
+        """
+        accumulator = self._episode_accumulators.pop(index, None)
+        if rb.episode_space is None or accumulator is None or self._records_at_start[index]:
+            rb.mark_segment_end()  # in start mode the record came with the episode's first step
+            return
+        summary = EpisodeSummary(
+            context=accumulator.context,
+            total_reward=accumulator.total_reward,
+            length=accumulator.length,
+            terminated=False if cut else accumulator.terminated,
+            truncated=True if cut else accumulator.truncated,
+            info=accumulator.info,
+            env_index=index if self._replay_mode == "per_env" else None,
+        )
+        rb.mark_segment_end(episode_data=self._build_episode_record(rb, summary))
+
+    def _close_open_shared_episode(self) -> None:
+        rb = self._replay_buffers[0]
+        if rb.storage is not None and rb.storage.has_open_segment:
+            self._close_episode(rb, 0, cut=True)
+
+    def _default_episode_record(self, summary: EpisodeSummary, space: Space) -> Any:
+        """The episode record from ``summary`` (see ``episode_builder`` in the class docstring)."""
+        if not isinstance(space, DictSpace):
+            if summary.context is None:
+                raise KeyError(
+                    "The replay buffer's episode_space is not a DictSpace, so the default episode record is the "
+                    "episode's context, but the environment has no context; pass an episode_builder."
+                )
+            return summary.context
+        record: Dict[str, Any] = {}
+        for key, subspace in space.spaces.items():
+            if key == "context":
+                if summary.context is None:
+                    raise KeyError(
+                        "The episode_space requests 'context' but the environment has no context_space; "
+                        "remove it or pass an episode_builder."
+                    )
+                record[key] = summary.context
+            elif key == "return":
+                record[key] = self._coerce_scalar(summary.total_reward, subspace)
+            elif key == "length":
+                record[key] = self._coerce_scalar(summary.length, subspace)
+            elif key == "terminated":
+                record[key] = self._coerce_scalar(summary.terminated, subspace)
+            elif key == "truncated":
+                record[key] = self._coerce_scalar(summary.truncated, subspace)
+            elif key == "success":
+                if "success" not in summary.info:
+                    raise KeyError(
+                        "The episode_space requests 'success' but the last step's info has no 'success'; "
+                        "pass an episode_builder."
+                    )
+                record[key] = self._coerce_scalar(summary.info["success"], subspace)
+            elif key == "env_index":
+                if summary.env_index is None:
+                    raise KeyError("The episode_space requests 'env_index', which only per_env mode provides.")
+                record[key] = self._coerce_scalar(summary.env_index, subspace)
+            else:
+                raise KeyError(
+                    f"The episode_space requests {key!r}, which the default episode record does not provide "
+                    f"(context, return, length, terminated, truncated, success, env_index); pass an episode_builder."
+                )
+        return record
+
     def _dump_buffer(self, rb: ReplayBuffer) -> None:
         """Dump a replay buffer to the configured ``dump_path``.
 
@@ -1059,7 +1298,7 @@ class ReplayBufferCollectionWrapper(
             and rb.storage.has_open_segment
         )
         if has_open:
-            rb.mark_segment_end()
+            self._close_episode(rb, 0, cut=True)
 
         # Only dump if there's data to dump
         if len(rb) > 0:
@@ -1136,6 +1375,7 @@ class ReplayBufferCollectionWrapper(
         # Validate spaces if required
         if require_same_space:
             self._validate_swap_spaces(old_buffers, new_buffers, new_mode)
+        new_records_at_start = self._resolve_records_at_start(new_buffers)
 
         # Handle open segments in old buffers
         has_open_segments = self._has_open_segments(old_buffers, new_mode)
@@ -1166,8 +1406,10 @@ class ReplayBufferCollectionWrapper(
             elif finalize_old_segments:
                 self._finalize_all_segments(old_buffers, new_mode)
 
-        # Perform the swap
+        # Perform the swap; episodes of the new buffers start from their next step
         self._replay_buffers = new_buffers
+        self._records_at_start = new_records_at_start
+        self._episode_accumulators.clear()
         if replay_mode is not None:
             self._replay_mode = new_mode
 
@@ -1254,9 +1496,9 @@ class ReplayBufferCollectionWrapper(
         mode: Literal["shared", "per_env"],
     ) -> None:
         """Close all open segments in the buffers."""
-        for rb in buffers:
+        for index, rb in enumerate(buffers):
             if rb.storage is not None and rb.storage.has_open_segment:
-                rb.mark_segment_end()
+                self._close_episode(rb, index, cut=True)
 
     def _dump_all_buffers(self, buffers: List[ReplayBuffer]) -> None:
         """Dump all buffers (used for dump_old during swap)."""
