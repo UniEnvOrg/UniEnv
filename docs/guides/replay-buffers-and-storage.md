@@ -94,6 +94,54 @@ For segment-aware storages, `ReplayBuffer.get_segments()` returns logical chrono
 
 > Visibility note: the base storage append path writes through the active index and may make values visible immediately, but some implementations (notably `VideoStorage`) buffer data until `mark_segment_end()`.
 
+### Episode Records
+
+A buffer created with an `episode_space` stores one record per segment (episode): task, language instruction, success, return, goal, seed and so on, kept once in a second storage instead of repeated on every step. Every segment needs its record, passed when the segment closes:
+
+```python
+import numpy as np
+
+from unienv_interface.backends.numpy import NumpyComputeBackend as B
+from unienv_interface.space.spaces import BoxSpace, DictSpace, TextSpace
+from unienv_data.replay_buffer import ReplayBuffer
+from unienv_data.samplers import StepSampler
+from unienv_data.storages.hdf5 import HDF5Storage
+
+steps = DictSpace(B, {"obs": BoxSpace(B, -1.0, 1.0, np.float32, shape=(4,)), "action": BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))})
+episode = DictSpace(B, {"instruction": TextSpace(B, max_length=128), "success": BoxSpace(B, 0, 1, np.int64, shape=())})
+
+buffer = ReplayBuffer.create(
+    HDF5Storage, steps, cache_path="cache/episodes_demo", capacity=10_000,
+    episode_space=episode, episode_storage_cls=HDF5Storage,
+)
+
+def step(i):
+    return {"obs": np.full(4, i / 10, np.float32), "action": np.zeros(2, np.float32)}
+
+for t in range(3):                      # an episode built step by step
+    buffer.append(step(t))
+buffer.mark_segment_end(episode_data={"instruction": "open the drawer", "success": 1})
+
+batch = {"obs": np.zeros((5, 4), np.float32), "action": np.zeros((5, 2), np.float32)}
+buffer.extend(batch, episode_data={"instruction": "close the drawer", "success": 0})   # one call, one episode
+
+assert buffer.get_episode_segments() == [(0, 3, 0), (3, 8, 1)]   # (start, end, episode_id)
+assert buffer.get_episode_ids(4) == 1
+assert buffer.get_episode_data(1)["instruction"] == "close the drawer"
+
+# Steps carry their episode only on request, through a view (e.g. for a sampler)
+sampler = StepSampler(buffer.with_episode_data(), batch_size=4, seed=0)
+batch, metadata = sampler.sample_with_metadata()
+metadata["episode_id"], metadata["episode"]["instruction"], metadata["episode"]["success"]
+```
+
+- Segments close with `mark_segment_end(episode_data=...)` (after `append`), `extend(value, episode_data=...)` (one call is one segment) and `commit_segment(writer, episode_data=...)` (segment writers, e.g. one per environment). A missing record raises `ValueError`, and nothing is written.
+- `get_episode_ids(idx)` maps steps to episode ids (`-1` for steps of the segment that is still open); `get_episode_data(ids)` returns the records; `get_episode_segments()` lists `(start, end, episode_id)`. Ids increase in the order segments close and are never reused (not even after `clear()`).
+- A record is available for as long as any step of its episode is in the buffer; with a fixed capacity, overwriting the last step of an episode makes its record unavailable. `episode_capacity` (default: the buffer's `capacity`, which always suffices) bounds the stored records.
+- Reading the buffer itself is unchanged. `with_episode_data()` is a read-only view whose samples' metadata holds `episode_id` and `episode` (the record, converted to the buffer's backend and device); reading a step of the open segment through it raises `ValueError`. Samplers and stacked batches built on the view carry episodes too.
+- `dumps()` / `load_from()` keep the records (under `episodes/`) and the step-to-episode mapping (`episode_ids.npy`); a reloaded writable buffer continues the ids. The records can use another storage, and another backend, than the steps (e.g. HDF5 records with text for a PyTorch buffer).
+- Like other maintained segment metadata, episode records are not supported with `multiprocessing=True` on a writable buffer (read-only loads are fine).
+
 ## Storage Backends
 
 UniEnv includes multiple storage implementations, each useful for a different tradeoff.

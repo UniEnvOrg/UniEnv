@@ -15,6 +15,11 @@ from unienv_interface.utils.symbol_util import get_class_from_full_name, get_ful
 
 from unienv_data.base import BatchBase, BatchT, IndexableType, SpaceStorage, SegmentWriter
 import json
+import numpy as np
+
+#: Directory (inside a saved buffer) holding the episode records, and the file mapping storage slots to episodes
+_EPISODES_DIR = "episodes"
+_STEP_EPISODE_IDS_FILE = "episode_ids.npy"
 
 def index_with_offset(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -332,9 +337,25 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         capacity : Optional[int] = None,
         multiprocessing : bool = False,
         maintain_segment_metadata : bool = False,
+        episode_space : Optional[Space] = None,
+        episode_storage_cls : Optional[Type[SpaceStorage]] = None,
+        episode_capacity : Optional[int] = -1,
+        episode_storage_kwargs : Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> "ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]":
-        """Create a new replay buffer and its backing storage."""
+        """Create a new replay buffer and its backing storage.
+
+        With ``episode_space``, every segment (episode) of the buffer carries one record of that
+        space (task, instruction, success, return, ...), stored once in a second storage of
+        ``episode_storage_cls`` (``episode_storage_kwargs``) and passed when the segment closes
+        (``extend(..., episode_data=...)``, ``mark_segment_end(episode_data=...)``,
+        ``commit_segment(writer, episode_data=...)``): every segment requires one. Records are kept
+        for as long as any step of their episode is in the buffer; ``episode_capacity`` (``-1``: the
+        buffer's ``capacity``, which always suffices) bounds how many are stored. Segment metadata
+        is maintained. See :meth:`get_episode_data` and :meth:`with_episode_data`.
+        """
+        if episode_space is not None:
+            maintain_segment_metadata = True
         if multiprocessing and maintain_segment_metadata:
             raise RuntimeError(
                 "ReplayBuffer.create() does not support maintain_segment_metadata=True with multiprocessing=True for mutable buffers; "
@@ -351,6 +372,22 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             multiprocessing=multiprocessing,
             **kwargs
         )
+        episode_buffer = None
+        if episode_space is not None:
+            if episode_storage_cls is None:
+                raise ValueError(
+                    "episode_space needs an episode_storage_cls for the episode records "
+                    "(e.g. HDF5Storage or ParquetStorage; PytorchTensorStorage for torch spaces without text)"
+                )
+            episode_buffer = ReplayBuffer.create(
+                episode_storage_cls,
+                episode_space,
+                cache_path=None if cache_path is None else os.path.join(cache_path, _EPISODES_DIR),
+                capacity=capacity if episode_capacity is not None and episode_capacity < 0 else episode_capacity,
+                **(episode_storage_kwargs or {}),
+            )
+        elif episode_storage_cls is not None or episode_storage_kwargs:
+            raise ValueError("episode_storage_cls / episode_storage_kwargs need an episode_space")
         return ReplayBuffer(
             storage,
             storage_path_relative,
@@ -359,6 +396,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             cache_path=cache_path,
             multiprocessing=multiprocessing,
             maintain_segment_metadata=maintain_segment_metadata,
+            episode_buffer=episode_buffer,
         )
     
     @staticmethod
@@ -474,6 +512,21 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             **storage_kwargs
         )
 
+        episode_buffer = None
+        step_episode_ids = None
+        next_episode_id = 0
+        episodes = metadata.get("episodes")
+        if episodes is not None:
+            episode_backend = get_class_from_full_name(episodes["backend"])
+            episode_buffer = ReplayBuffer.load_from(
+                os.path.join(path, episodes["path_relative"]),
+                backend=episode_backend,
+                device=device if episode_backend == backend else None,
+                read_only=read_only,
+            )
+            step_episode_ids = np.load(os.path.join(path, episodes["step_episode_ids_file"]))
+            next_episode_id = int(episodes["next_episode_id"])
+
         return ReplayBuffer(
             storage,
             metadata["storage_path_relative"],
@@ -483,6 +536,9 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             multiprocessing=multiprocessing,
             maintain_segment_metadata=physical_segments is not None,
             physical_segments=physical_segments,
+            episode_buffer=episode_buffer,
+            step_episode_ids=step_episode_ids,
+            next_episode_id=next_episode_id,
         )
 
     # =========== Instance Attributes and Methods ==========
@@ -510,6 +566,15 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 "single_instance_space": bsu.space_to_json(self.storage.single_instance_space),
                 "physical_segments": None if not self._maintain_segment_metadata else [list(segment) for segment in self._physical_segments],
             }
+            if self._episode_buffer is not None:
+                self._episode_buffer.dumps(os.path.join(path, _EPISODES_DIR))
+                np.save(os.path.join(path, _STEP_EPISODE_IDS_FILE), self._step_episode_ids[:self._step_episode_id_length()])
+                metadata["episodes"] = {
+                    "path_relative": _EPISODES_DIR,
+                    "backend": get_full_class_name(self._episode_buffer.backend),
+                    "step_episode_ids_file": _STEP_EPISODE_IDS_FILE,
+                    "next_episode_id": int(self._next_episode_id),
+                }
             with open(os.path.join(path, "metadata.json"), "w") as f:
                 json.dump(metadata, f)
 
@@ -526,14 +591,37 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         physical_segments : Optional[Sequence[Tuple[int, int]]] = None,
         active_segment_start_physical : Optional[int] = None,
         active_segment_length : int = 0,
+        episode_buffer : Optional["ReplayBuffer"] = None,
+        step_episode_ids : Optional[np.ndarray] = None,
+        next_episode_id : int = 0,
     ):
-        """Wrap a storage object with replay-buffer indexing semantics."""
+        """Wrap a storage object with replay-buffer indexing semantics.
+
+        ``episode_buffer`` holds the episode records of the segments (see ``create``);
+        ``step_episode_ids`` maps every storage slot to the episode of the step it holds
+        (-1: no closed episode) and ``next_episode_id`` is the id of the next record.
+        """
         self.storage = storage
         self._column_parent : Optional["ReplayBuffer"] = None
         self._storage_path_relative = storage_path_relative
         self._cache_path = cache_path
         self._multiprocessing = multiprocessing
-        self._maintain_segment_metadata = bool(maintain_segment_metadata or physical_segments is not None)
+        self._maintain_segment_metadata = bool(
+            maintain_segment_metadata or physical_segments is not None or episode_buffer is not None
+        )
+        self._episode_buffer = episode_buffer
+        self._next_episode_id = int(next_episode_id)
+        if episode_buffer is None:
+            self._step_episode_ids = None
+        else:
+            # Ids are assigned in the order records are written, so record `id` sits at
+            # logical index `id - (next_episode_id - len(episode_buffer))` of the episode buffer
+            capacity = storage.capacity
+            ids = np.full(capacity if capacity is not None else max(16, int(count)), -1, dtype=np.int64)
+            if step_episode_ids is not None:
+                step_episode_ids = np.asarray(step_episode_ids, dtype=np.int64)
+                ids[:step_episode_ids.shape[0]] = step_episode_ids
+            self._step_episode_ids = ids
 
         if self._multiprocessing and self._maintain_segment_metadata and self.storage.is_mutable:
             raise RuntimeError(
@@ -745,12 +833,15 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._active_segment_length = 0
         self._active_segment_length += 1
         
-    def extend(self, value):
+    def extend(self, value, *, episode_data : Optional[Any] = None):
+        """Append ``value`` (a batch) at the tail as one segment; ``episode_data`` is its episode
+        record (required if the buffer has an ``episode_space``, see ``create``)."""
         self._require_not_column_view("extend")
         with self._lock_scope():
             B = sbu.batch_size_data(value)
             if B == 0:
                 return
+            self._check_episode_data_argument(episode_data)
             if self.storage.has_open_segment or (
                 self._maintain_segment_metadata
                 and self._active_segment_start_physical is not None
@@ -760,6 +851,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
 
             old_count, old_offset = self._ring_state.read()
 
+            episode_id = self._write_episode_record(episode_data)
+
             if self.capacity is None:
                 assert old_offset == 0, "Offset must be 0 when capacity is None"
                 self.storage.extend_length(B)
@@ -767,6 +860,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._ring_state.write(old_count + B, 0)
                 if self._maintain_segment_metadata:
                     self._physical_segments.append((old_count, old_count + B - 1))
+                self._set_step_episode_ids(slice(old_count, old_count + B), episode_id)
                 return
             
             # We have a fixed capacity, only keep the last `capacity` elements
@@ -777,6 +871,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                     self._physical_segments = [(0, self.capacity - 1)]
                 self._active_segment_start_physical = None
                 self._active_segment_length = 0
+                self._set_step_episode_ids(slice(0, self.capacity), episode_id)
                 return
             
             # Otherwise, perform round-robin writes
@@ -789,6 +884,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
             self._account_round_robin_write(start_physical, B)
+            self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
 
     def _account_round_robin_write(self, start_physical: int, B: int) -> None:
         """Update count / offset / segment metadata after `B` (<= capacity) samples were written at the tail."""
@@ -810,14 +906,18 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         """
         return self.storage.open_segment_writer()
 
-    def commit_segment(self, writer: SegmentWriter) -> None:
-        """Append the segment built by `writer` (from `open_segment_writer()`) at the tail, as `extend()` would."""
+    def commit_segment(self, writer: SegmentWriter, *, episode_data : Optional[Any] = None) -> None:
+        """Append the segment built by `writer` (from `open_segment_writer()`) at the tail, as `extend()` would.
+
+        ``episode_data`` is the segment's episode record (required if the buffer has an
+        ``episode_space``; an empty writer is aborted and needs none)."""
         with self._lock_scope():
             assert writer.storage is self.storage, "The writer was not opened on this replay buffer"
             B = len(writer)
             if B == 0:
                 writer.abort()
                 return
+            self._check_episode_data_argument(episode_data)
             if self.storage.has_open_segment or (
                 self._maintain_segment_metadata
                 and self._active_segment_start_physical is not None
@@ -826,6 +926,10 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 raise RuntimeError("Cannot commit a segment while an append-built segment is open; call mark_segment_end() first")
 
             old_count, old_offset = self._ring_state.read()
+            if self.capacity is not None and B > self.capacity:
+                writer.abort()
+                raise ValueError(f"Cannot commit a {B}-sample segment into a replay buffer of capacity {self.capacity}")
+            episode_id = self._write_episode_record(episode_data)
             if self.capacity is None:
                 self.storage.extend_length(B)
                 try:
@@ -836,14 +940,13 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._ring_state.write(old_count + B, 0)
                 if self._maintain_segment_metadata:
                     self._physical_segments.append((old_count, old_count + B - 1))
+                self._set_step_episode_ids(slice(old_count, old_count + B), episode_id)
                 return
 
-            if B > self.capacity:
-                writer.abort()
-                raise ValueError(f"Cannot commit a {B}-sample segment into a replay buffer of capacity {self.capacity}")
             start_physical = (old_offset + old_count) % self.capacity
             writer.commit(start_physical)
             self._account_round_robin_write(start_physical, B)
+            self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
 
     def append(self, value):
         self._require_not_column_view("append to")
@@ -871,6 +974,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._ring_state.write(old_count + 1, 0)
                 if self._maintain_segment_metadata:
                     self._append_to_active_segment(physical_index)
+                self._set_step_episode_ids(slice(physical_index, physical_index + 1), -1)
                 return
 
             physical_index = (old_offset + old_count) % self.capacity
@@ -897,11 +1001,22 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._ring_state.write(min(old_count + 1, self.capacity), (old_offset + outflow) % self.capacity)
             if self._maintain_segment_metadata:
                 self._append_to_active_segment(physical_index)
+            self._set_step_episode_ids(slice(physical_index, physical_index + 1), -1)
 
-    def mark_segment_end(self):
+    def mark_segment_end(self, *, episode_data : Optional[Any] = None):
+        """Close the segment built by ``append()``; ``episode_data`` is its episode record
+        (required if the buffer has an ``episode_space`` and the segment holds steps)."""
         with self._lock_scope():
+            open_segment = self._active_segment_start_physical is not None and self._active_segment_length > 0
+            if self._episode_buffer is not None and open_segment:
+                self._check_episode_data_argument(episode_data)
+            elif episode_data is not None:
+                raise ValueError("episode_data was given but there is no open segment (nothing was appended since the last mark_segment_end())"
+                                 if self._episode_buffer is not None else "this replay buffer has no episode_space")
+            episode_id = self._write_episode_record(episode_data) if (self._episode_buffer is not None and open_segment) else None
+            active_slots = self._active_segment_physical_indices() if episode_id is not None else []
             self.storage.mark_segment_end()
-            if self._maintain_segment_metadata and self._active_segment_start_physical is not None and self._active_segment_length > 0:
+            if self._maintain_segment_metadata and open_segment:
                 active_end_physical = (
                     self._active_segment_start_physical + self._active_segment_length - 1
                     if self.capacity is None
@@ -910,6 +1025,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 self._physical_segments.append((self._active_segment_start_physical, active_end_physical))
             self._active_segment_start_physical = None
             self._active_segment_length = 0
+            if episode_id is not None:
+                self._set_step_episode_ids(np.asarray(active_slots, dtype=np.int64), episode_id)
 
     def get_segments(self):
         column_parent = getattr(self, "_column_parent", None)
@@ -933,6 +1050,142 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 count=count,
                 capacity=self.capacity,
             )
+
+    # =========== Episode records ==========
+    def _episode_owner(self) -> "ReplayBuffer":
+        """The buffer holding the episode records (the parent of a column view)."""
+        parent = getattr(self, "_column_parent", None)
+        return parent if parent is not None else self
+
+    @property
+    def episode_space(self) -> Optional[Space]:
+        """Space of the per-episode records (``None`` if the buffer stores none, see ``create``)."""
+        episode_buffer = self._episode_owner()._episode_buffer
+        return None if episode_buffer is None else episode_buffer.single_space
+
+    def _check_episode_data_argument(self, episode_data : Optional[Any]) -> None:
+        if self._episode_buffer is None:
+            if episode_data is not None:
+                raise ValueError("this replay buffer has no episode_space: episode_data cannot be stored")
+        elif episode_data is None:
+            raise ValueError("this replay buffer has an episode_space: every segment needs its episode_data")
+
+    def _write_episode_record(self, episode_data : Optional[Any]) -> Optional[int]:
+        """Store the record of a closing segment; returns its episode id (``None`` without episode records)."""
+        if self._episode_buffer is None:
+            return None
+        self._episode_buffer.extend(sbu.concatenate(self._episode_buffer.single_space, [episode_data]))
+        episode_id = self._next_episode_id
+        self._next_episode_id += 1
+        return episode_id
+
+    def _physical_run(self, start_physical : int, length : int) -> Union[slice, np.ndarray]:
+        """Storage slots of ``length`` steps written from ``start_physical`` (wrapping around a fixed capacity)."""
+        if self.capacity is None or start_physical + length <= self.capacity:
+            return slice(start_physical, start_physical + length)
+        return (np.arange(length, dtype=np.int64) + start_physical) % self.capacity
+
+    def _step_episode_id_length(self) -> int:
+        """Slots of ``_step_episode_ids`` in use: the capacity, or the count of an unbounded buffer."""
+        return self.capacity if self.capacity is not None else self.count
+
+    def _set_step_episode_ids(self, slots : Union[slice, np.ndarray], episode_id : Optional[int]) -> None:
+        """Map storage slots to ``episode_id`` (-1: a step of the open segment)."""
+        if self._step_episode_ids is None or episode_id is None:
+            return
+        if isinstance(slots, slice):
+            needed = int(slots.stop)
+        else:
+            slots = np.asarray(slots, dtype=np.int64)
+            needed = int(slots.max()) + 1 if slots.size else 0
+        size = self._step_episode_ids.shape[0]
+        if needed > size:  # an unbounded buffer grew
+            grown = np.full(max(needed, 2 * size), -1, dtype=np.int64)
+            grown[:size] = self._step_episode_ids
+            self._step_episode_ids = grown
+        self._step_episode_ids[slots] = episode_id
+
+    def get_episode_ids(self, idx : Union[IndexableType, BArrayType]) -> Union[int, np.ndarray]:
+        """Episode id of the step(s) at logical index ``idx``: an ``int``, or a NumPy int64 array.
+
+        Steps of the segment that is still open (``append()`` without ``mark_segment_end()``) have
+        no episode yet and get ``-1``.
+        """
+        owner = self._episode_owner()
+        if owner._step_episode_ids is None:
+            raise RuntimeError("this replay buffer has no episode_space")
+        physical = self._logical_to_physical_index(idx)
+        if isinstance(physical, (int, np.integer)):
+            return int(owner._step_episode_ids[int(physical)])
+        physical = np.asarray(self.backend.to_numpy(physical), dtype=np.int64)
+        return owner._step_episode_ids[physical]
+
+    def get_episode_data(self, episode_ids : Union[int, Sequence[int], np.ndarray]) -> Any:
+        """The episode record of each id (one record for an ``int``, a batch for an array).
+
+        The episodes available are the ones with a step in the buffer. Raises ``IndexError`` for
+        ``-1`` (a step of the open segment), for episodes whose steps were all overwritten (or
+        whose record no longer fits ``episode_capacity``) and for unknown ids.
+        """
+        owner = self._episode_owner()
+        episode_buffer = owner._episode_buffer
+        if episode_buffer is None:
+            raise RuntimeError("this replay buffer has no episode_space")
+        with owner._lock_scope():
+            next_id = owner._next_episode_id
+            first_stored_id = next_id - len(episode_buffer)
+            # Segments are stored in id order (only the open segment follows them), so the episodes
+            # with a step in the buffer are the ids from the one of the oldest step on
+            first_live_id = owner._oldest_step_episode_id()
+            first_id = max(first_stored_id, first_live_id)
+            ids = np.asarray(episode_ids, dtype=np.int64)
+            out_of_range = (ids < first_id) | (ids >= next_id)
+            if np.any(out_of_range):
+                bad = np.unique(ids[out_of_range])[:5].tolist()
+                if -1 in bad:
+                    reason = "-1 marks steps of the segment that is still open (close it with mark_segment_end())"
+                elif min(bad) < first_live_id:
+                    reason = "all their steps were overwritten"
+                elif min(bad) < first_stored_id:
+                    reason = "their records were evicted while their steps remain: episode_capacity is too small"
+                else:
+                    reason = "no such episode"
+                raise IndexError(f"episode id(s) {bad} not available: {reason}; available ids: [{first_id}, {next_id})")
+            # Record `id` sits at logical index `id - first_stored_id` of the episode buffer
+            if ids.ndim == 0:
+                return episode_buffer.get_at(int(ids) - first_stored_id)
+            logical = episode_buffer.backend.from_numpy(
+                ids - first_stored_id, dtype=episode_buffer.backend.default_integer_dtype, device=episode_buffer.device,
+            )
+            return episode_buffer.get_at(logical)
+
+    def _oldest_step_episode_id(self) -> int:
+        """Episode id of the oldest step (``next_episode_id`` if there is no closed episode in the buffer)."""
+        count, offset = self._ring_state.read()
+        if count == 0:
+            return self._next_episode_id
+        oldest = int(self._step_episode_ids[offset % self.capacity if self.capacity is not None else 0])
+        return self._next_episode_id if oldest < 0 else oldest
+
+    def get_episode_segments(self) -> List[Tuple[int, int, int]]:
+        """``(start, end, episode_id)`` of every closed segment, as logical half-open ranges in buffer order."""
+        segments = self.get_segments() or []
+        if not segments:
+            return []
+        starts = self.backend.from_numpy(
+            np.array([start for start, _ in segments], dtype=np.int64),
+            dtype=self.backend.default_integer_dtype, device=self.device,
+        )
+        ids = self.get_episode_ids(starts)
+        return [(int(start), int(end), int(episode_id)) for (start, end), episode_id in zip(segments, ids)]
+
+    def with_episode_data(self) -> "ReplayBufferEpisodeView":
+        """A read-only view whose samples carry their episode: metadata ``episode_id`` and ``episode``.
+
+        Steps are only joined with their episode records on request, through this view (e.g.
+        ``StepSampler(rb.with_episode_data(), ...)``); reading the buffer itself is unchanged.
+        """
+        return ReplayBufferEpisodeView(self)
 
     def get_column(self, nested_keys):
         if hasattr(self.storage, "get_column"):
@@ -966,9 +1219,62 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             self._physical_segments = []
             self._active_segment_start_physical = None
             self._active_segment_length = 0
+            if self._episode_buffer is not None:
+                # Ids keep increasing: a record id is never reused
+                self._episode_buffer.clear()
+                self._step_episode_ids[:] = -1
 
     def close(self) -> None:
         # Only dereference the storage
         # the actual cleanup logic should be implemented in the storage's close method if necessary
         # We do this to avoid issues when we create multiple ReplayBuffer instances that reference the same underlying storage (e.g. when using different RBs for different columns)
         self.storage = None
+
+
+class ReplayBufferEpisodeView(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+    """The steps of a :class:`ReplayBuffer` with their episodes (see :meth:`ReplayBuffer.with_episode_data`).
+
+    Samples are the buffer's steps; their metadata holds ``episode_id`` and ``episode``, the
+    episode's record converted to the buffer's backend and device. Reading a step of the segment
+    that is still open raises ``ValueError``: its episode record does not exist yet.
+    """
+    is_mutable = False
+
+    def __init__(self, buffer : ReplayBuffer[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
+        from unienv_interface.space import BoxSpace, DictSpace
+        episode_space = buffer.episode_space
+        if episode_space is None:
+            raise RuntimeError("this replay buffer has no episode_space")
+        backend, device = buffer.backend, buffer.device
+        self._source_episode_space = episode_space
+        self._convert_episodes = episode_space.backend != backend or (device is not None and episode_space.device != device)
+        local_episode_space = episode_space.to(backend=backend, device=device) if self._convert_episodes else episode_space
+        super().__init__(
+            buffer.single_space,
+            DictSpace(backend, {
+                "episode_id": BoxSpace(backend, 0, np.inf, dtype=backend.default_integer_dtype, shape=(), device=device),
+                "episode": local_episode_space,
+            }, device=device),
+        )
+        self.buffer = buffer
+
+    def __len__(self) -> int:
+        return len(self.buffer)
+
+    def get_at(self, idx):
+        return self.buffer.get_at(idx)
+
+    def get_at_with_metadata(self, idx):
+        data = self.buffer.get_at(idx)
+        episode_ids = self.buffer.get_episode_ids(idx)
+        if np.any(np.asarray(episode_ids) < 0):
+            raise ValueError(
+                "some steps belong to the segment that is still open: its episode record does not exist yet "
+                "(call mark_segment_end(episode_data=...) first)"
+            )
+        episodes = self.buffer.get_episode_data(episode_ids)
+        if self._convert_episodes:
+            episodes = self._source_episode_space.data_to(episodes, backend=self.backend, device=self.device)
+        backend = self.backend
+        episode_ids = backend.from_numpy(np.asarray(episode_ids, dtype=np.int64), dtype=backend.default_integer_dtype, device=self.device)
+        return data, {"episode_id": episode_ids, "episode": episodes}
