@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, BoxSpace, DictSpace, BinarySpace
+from unienv_interface.space import Space, BoxSpace, DictSpace, BinarySpace, TextSpace
 from unienv_interface.space.space_utils import batch_utils as sbu
 from unienv_data.base import BatchBase, BatchT, IndexableType
 
@@ -222,6 +222,13 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         )
         frame = dataset[42]
         batch = dataset[0:100]
+
+    The metadata of every frame (``get_at_with_metadata``, ``sample_with_metadata``) holds its
+    episode: ``episode_id`` (LeRobot's ``episode_index``) and ``episode`` =
+    ``{"task", "task_index", "length"}`` (the episode's first task if it lists several;
+    ``task_index`` is -1 for a task missing from ``meta/tasks``), the same layout as
+    ``ReplayBuffer.with_episode_data()``. ``get_episode_ids``, ``get_episode_data`` and
+    ``get_episode_segments`` read them without loading frames.
     """
 
     is_mutable = False
@@ -311,11 +318,19 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         exclude_features: Optional[List[str]] = None,
         video_hwaccel: Optional[Any] = "auto",
     ):
-        super().__init__(space)
         self._dataset_dir = dataset_dir
         self._schema = schema
         self._index = index
         self._device = _device
+        # Per episode (in index order): LeRobot episode_index, task_index, length and task text
+        episodes = index.episodes
+        self._episode_ids = np.array([e.index for e in episodes], dtype=np.int64)
+        self._episode_task_indices = np.array([e.task_index for e in episodes], dtype=np.int64)
+        self._episode_lengths = np.array([e.length for e in episodes], dtype=np.int64)
+        self._episode_tasks = np.empty(len(episodes), dtype=object)
+        self._episode_tasks[:] = [e.task for e in episodes]
+        self._episode_ids_contiguous = bool(np.array_equal(self._episode_ids, np.arange(len(episodes))))
+        super().__init__(space, self._build_metadata_space(_backend, _device))
         self._decode_video = decode_video
         self._video_backend = video_backend
         self._video_hwaccel = video_hwaccel
@@ -355,11 +370,23 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         return self._index.total_frames
 
     def get_at(self, idx: Union[IndexableType, BArrayType]) -> BatchT:
-        return self.get_at_with_metadata(idx)[0]
+        return self._read(idx)[0]
 
     def get_at_with_metadata(
         self, idx: Union[IndexableType, BArrayType]
     ) -> Tuple[BatchT, Dict[str, Any]]:
+        result, global_indices, is_single = self._read(idx)
+        positions = np.searchsorted(self._index.cumulative_lengths[1:], global_indices, side="right")
+        metadata = {
+            "episode_id": self._ints_to_backend(self._episode_ids[positions]),
+            "episode": self._episode_records(positions),
+        }
+        if is_single:
+            metadata = sbu.get_at(sbu.batch_space(self.single_metadata_space, len(global_indices)), metadata, 0)
+        return result, metadata
+
+    def _read(self, idx: Union[IndexableType, BArrayType]) -> Tuple[BatchT, np.ndarray, bool]:
+        """The frames at ``idx``, their global indices and whether ``idx`` is a single index."""
         is_single = isinstance(idx, int)
         global_indices = self._normalize_index(idx)
         episode_groups = self._index.global_indices_to_episode_and_local(global_indices)
@@ -484,7 +511,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             batched_space = sbu.batch_space(self.single_space, batch_size)
             result = sbu.get_at(batched_space, result, 0)
 
-        return result, {}
+        return result, global_indices, is_single
 
     def get_column(self, nested_keys: Sequence[str]) -> "BatchBase":
         """Return a view over a single feature column, joining nested keys with dots."""
@@ -496,9 +523,30 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
     # ========== Episode-level access ==========
 
     def get_episode(self, episode_index: int) -> BatchT:
-        """Load all frames for a single episode."""
-        start, end = self._index.episode_frame_range(episode_index)
+        """Load all frames of the episode with LeRobot ``episode_index``."""
+        start, end = self._index.episode_frame_range(int(self._episode_positions(episode_index)))
         return self.get_at(slice(start, end))
+
+    def get_episode_ids(self, idx: Union[IndexableType, BArrayType]) -> Union[int, np.ndarray]:
+        """LeRobot ``episode_index`` of the frames at ``idx`` (an ``int`` for an ``int`` index)."""
+        global_indices = self._normalize_index(idx)
+        ids = self._episode_ids[np.searchsorted(self._index.cumulative_lengths[1:], global_indices, side="right")]
+        return int(ids[0]) if isinstance(idx, int) else ids
+
+    def get_episode_data(self, episode_ids: Union[int, Sequence[int], np.ndarray, BArrayType]) -> Dict[str, Any]:
+        """Records ``{"task", "task_index", "length"}`` of episodes by LeRobot ``episode_index``
+        (scalars for an ``int``, else batched like the ids)."""
+        is_single = isinstance(episode_ids, (int, np.integer))
+        positions = np.atleast_1d(self._episode_positions(episode_ids))
+        records = self._episode_records(positions)
+        if is_single:
+            records = sbu.get_at(sbu.batch_space(self.single_metadata_space["episode"], len(positions)), records, 0)
+        return records
+
+    def get_episode_segments(self) -> List[Tuple[int, int, int]]:
+        """``(start, end, episode_id)`` per episode: its frames ``[start, end)`` and its LeRobot ``episode_index``."""
+        bounds = self._index.cumulative_lengths
+        return [(int(bounds[i]), int(bounds[i + 1]), int(e)) for i, e in enumerate(self._episode_ids)]
 
     @property
     def num_episodes(self) -> int:
@@ -517,6 +565,43 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         return self._index.episodes
 
     # ========== Internal helpers ==========
+
+    def _build_metadata_space(self, backend: ComputeBackend, device: Optional[Any]) -> DictSpace:
+        integer = backend.default_integer_dtype
+        max_task_length = max((len(task) for task in self._episode_tasks), default=0)
+        return DictSpace(backend, {
+            "episode_id": BoxSpace(backend, 0, np.inf, dtype=integer, shape=(), device=device),
+            "episode": DictSpace(backend, {
+                "task": TextSpace(backend, max_length=max(1, max_task_length), device=device),
+                "task_index": BoxSpace(backend, -1, np.inf, dtype=integer, shape=(), device=device),
+                "length": BoxSpace(backend, 0, np.inf, dtype=integer, shape=(), device=device),
+            }, device=device),
+        }, device=device)
+
+    def _ints_to_backend(self, values: np.ndarray) -> Any:
+        return self.backend.from_numpy(values, dtype=self.backend.default_integer_dtype, device=self._device)
+
+    def _episode_records(self, positions: np.ndarray) -> Dict[str, Any]:
+        return {
+            "task": self._episode_tasks[positions],
+            "task_index": self._ints_to_backend(self._episode_task_indices[positions]),
+            "length": self._ints_to_backend(self._episode_lengths[positions]),
+        }
+
+    def _episode_positions(self, episode_ids: Any) -> np.ndarray:
+        """Positions in the episode list of LeRobot ``episode_index`` values."""
+        if self.backend.is_backendarray(episode_ids):
+            episode_ids = self.backend.to_numpy(episode_ids)
+        ids = np.asarray(episode_ids, dtype=np.int64)
+        if self._episode_ids_contiguous:
+            positions = ids
+        else:
+            positions = np.searchsorted(self._episode_ids, ids)
+        valid = (positions >= 0) & (positions < len(self._episode_ids))
+        if not np.all(valid) or not np.array_equal(self._episode_ids[positions[valid]], ids[valid]):
+            missing = np.setdiff1d(np.atleast_1d(ids), self._episode_ids)
+            raise IndexError(f"no episodes with episode_index {missing.tolist()} in this dataset")
+        return positions
 
     def _normalize_index(self, idx: Union[IndexableType, BArrayType]) -> np.ndarray:
         total = self._index.total_frames

@@ -32,6 +32,18 @@ Highlights:
 - can include or exclude named features
 - can optionally decode video features
 - describes the features through [space metadata](../concepts/spaces-and-backends.md#space-metadata): image and video features carry `{"kind": "image", "format": "rgb", "layout": "HWC", "fps": <dataset fps>, "source": <feature key>}`, `observation.state` and `action` carry `kind` `"proprio"` / `"action"`
+- every frame's metadata holds its episode, laid out like [replay buffer episode records](replay-buffers-and-storage.md#episode-records): `episode_id` (LeRobot's `episode_index`) and `episode` = `{"task", "task_index", "length"}`, so `sample_with_metadata()` returns each frame's task text; `get_episode_ids`, `get_episode_data` and `get_episode_segments` read them without loading frames
+
+```python
+from unienv_data.samplers import StepSampler
+
+sampler = StepSampler(dataset, batch_size=32)
+batch, metadata = sampler.sample_with_metadata()
+metadata["episode"]["task"]      # object array of task strings, one per frame
+metadata["episode_id"]           # LeRobot episode_index, on the dataset's backend
+```
+
+An episode that lists several tasks records its first one; `task_index` is -1 for a task missing from `meta/tasks`.
 
 This is the most direct path for bringing LeRobot-formatted robotics datasets into UniEnv-native tooling.
 

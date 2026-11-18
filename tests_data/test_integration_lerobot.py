@@ -419,3 +419,102 @@ def test_image_feature_metadata_describes_the_normalized_layout():
     assert _feature_to_space(LeRobotFeature(name="action", dtype="float32", shape=(2,)), NB, fps=30).metadata == {"kind": "action"}
     assert _feature_to_space(LeRobotFeature(name="observation.state", dtype="float64", shape=(2,)), NB).metadata == {"kind": "proprio"}
     assert _feature_to_space(LeRobotFeature(name="reward", dtype="float32", shape=(1,)), NB).metadata == {}
+
+
+# --------------------------------------------------------------------------- episode metadata
+
+TASKS = ["stack the cubes", "open the drawer"]
+EPISODE_TASKS = [0, 1, 0]
+
+
+def _with_text_tasks_v3(ds: Path, index_name="task") -> Path:
+    """The metadata LeRobot v3.0 writes: episodes list their tasks by text, ``meta/tasks.parquet`` is a pandas
+    frame indexed by the task text (``index_name=None``: an unnamed index, stored as ``__index_level_0__``)."""
+    pd = pytest.importorskip("pandas")
+    path, = (ds / "meta" / "episodes").rglob("file-000.parquet")
+    table = pq.read_table(path).drop(["task_index"])
+    table = table.append_column("tasks", pa.array([[TASKS[t]] for t in EPISODE_TASKS], type=pa.list_(pa.string())))
+    pq.write_table(table, path)
+    frame = pd.DataFrame({"task_index": range(len(TASKS))}, index=pd.Index(TASKS, name=index_name))
+    pq.write_table(pa.Table.from_pandas(frame), ds / "meta" / "tasks.parquet")
+    return ds
+
+
+def _with_text_tasks_v2(ds: Path) -> Path:
+    with open(ds / "meta" / "episodes.jsonl", "w") as f:
+        for e, n in enumerate(EPISODE_LENGTHS):
+            f.write(json.dumps({"episode_index": e, "length": n, "tasks": [TASKS[EPISODE_TASKS[e]]]}) + "\n")
+    with open(ds / "meta" / "tasks.jsonl", "w") as f:
+        for i, task in enumerate(TASKS):
+            f.write(json.dumps({"task_index": i, "task": task}) + "\n")
+    return ds
+
+
+def _episodes_of(global_indices):
+    return (np.searchsorted(STARTS, global_indices, side="right") - 1).tolist()
+
+
+def _check_episode_metadata(ds):
+    data, metadata = ds.get_at_with_metadata(PICKS)
+    episodes = _episodes_of(PICKS)
+    assert to_numpy(metadata["episode_id"]).tolist() == episodes
+    assert list(metadata["episode"]["task"]) == [TASKS[EPISODE_TASKS[e]] for e in episodes]
+    assert to_numpy(metadata["episode"]["task_index"]).tolist() == [EPISODE_TASKS[e] for e in episodes]
+    assert to_numpy(metadata["episode"]["length"]).tolist() == [EPISODE_LENGTHS[e] for e in episodes]
+    assert _state_ids(data) == PICKS.tolist()
+
+    _, single = ds.get_at_with_metadata(4)
+    assert int(single["episode_id"]) == 1 and single["episode"]["task"] == TASKS[1]
+    assert int(single["episode"]["length"]) == 2
+
+
+@pytest.mark.parametrize("index_name", ["task", None])
+def test_v3_frames_carry_their_episode(tmp_path, index_name):
+    path = _with_text_tasks_v3(write_v3(tmp_path, data_files=[[0, 1, 2]], nested_episodes=True), index_name)
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB)
+    _check_episode_metadata(ds)
+    assert ds.get_episode_ids(PICKS).tolist() == _episodes_of(PICKS)
+    assert ds.get_episode_ids(5) == 2
+    assert ds.get_episode_data(1)["task"] == TASKS[1]
+    records = ds.get_episode_data([2, 0])
+    assert list(records["task"]) == [TASKS[0], TASKS[0]] and records["length"].tolist() == [4, 3]
+    assert ds.get_episode_segments() == [(0, 3, 0), (3, 5, 1), (5, 9, 2)]
+    with pytest.raises(IndexError, match=r"episode_index \[3\]"):
+        ds.get_episode_data(3)
+
+
+def test_v2_text_task_lists_map_to_their_task(tmp_path):
+    ds = LeRobotAsUniEnvDataset.from_local(str(_with_text_tasks_v2(write_v2(tmp_path, with_video=False))), backend=NB)
+    assert [e.task_index for e in ds.episode_metadata] == EPISODE_TASKS
+    _check_episode_metadata(ds)
+
+
+def test_episode_metadata_through_a_sampler_on_torch(tmp_path):
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+    from unienv_data.samplers import StepSampler
+
+    path = _with_text_tasks_v3(write_v3(tmp_path, data_files=[[0, 1], [2]]))
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=PyTorchComputeBackend)
+    sampler = StepSampler(ds, batch_size=16, seed=0)
+    data, metadata = sampler.sample_with_metadata()
+    states = data["observation.state"].reshape(-1).long().tolist()
+    assert isinstance(metadata["episode_id"], torch.Tensor)
+    assert metadata["episode_id"].tolist() == _episodes_of(states)
+    assert list(metadata["episode"]["task"]) == [TASKS[EPISODE_TASKS[e]] for e in _episodes_of(states)]
+    assert sampler.sampled_metadata_space.contains(metadata)
+
+
+def test_episode_ids_are_lerobot_episode_indices(tmp_path):
+    path = write_v3(tmp_path, data_files=[[0, 1, 2]])
+    episodes_path = path / "meta" / "episodes" / "file-000.parquet"
+    table = pq.read_table(episodes_path)
+    table = table.set_column(table.column_names.index("episode_index"), "episode_index", pa.array([0, 5, 7], pa.int64()))
+    pq.write_table(table, episodes_path)
+    ds = LeRobotAsUniEnvDataset.from_local(str(path), backend=NB)
+    assert ds.get_episode_ids(PICKS).tolist() == [[0, 5, 7][e] for e in _episodes_of(PICKS)]
+    assert _state_ids(ds.get_episode(5)) == [3, 4]
+    assert int(ds.get_episode_data(7)["length"]) == 4
+    assert ds.get_episode_segments() == [(0, 3, 0), (3, 5, 5), (5, 9, 7)]
+    with pytest.raises(IndexError):
+        ds.get_episode_data(1)

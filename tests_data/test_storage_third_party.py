@@ -141,7 +141,9 @@ def test_v2_paths_and_episodes(tmp_path):
     schema = parse_info_json(root)
     index = build_index(root, schema)
     assert [e.index for e in index.episodes] == [0, 1, 2]
-    assert [e.task for e in index.episodes] == ["place", "place", "pick"]
+    # Episode 2 lists its task by text (as LeRobot writes episodes.jsonl)
+    assert [e.task for e in index.episodes] == ["place", "place", "place"]
+    assert [e.task_index for e in index.episodes] == [1, 1, 1]
     assert index.total_frames == 7 and index.total_episodes == 3
     assert index.episode_frame_range(2) == (4, 7)
     # the zero-length episode is skipped by the lookup

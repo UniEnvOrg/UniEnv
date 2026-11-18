@@ -12,6 +12,7 @@ from .schema import LeRobotSchema, LeRobotVersion
 class EpisodeMetadata:
     index: int
     length: int
+    # The episode's (first) task: its index in meta/tasks.* (-1 if the task is not listed there) and its text
     task_index: int = 0
     task: str = ""
     # v3.0 packed-file metadata (optional)
@@ -93,16 +94,43 @@ def build_index(dataset_dir: str, schema: LeRobotSchema) -> LeRobotIndex:
 
 
 def _load_tasks(dataset_dir: str) -> Dict[int, str]:
-    tasks_path = os.path.join(dataset_dir, "meta", "tasks.jsonl")
+    """task_index -> task, from ``meta/tasks.jsonl`` (v2.x) or ``meta/tasks.parquet`` (v3.0)."""
     tasks: Dict[int, str] = {}
-    if os.path.exists(tasks_path):
-        with open(tasks_path, "r") as f:
+    jsonl_path = os.path.join(dataset_dir, "meta", "tasks.jsonl")
+    parquet_path = os.path.join(dataset_dir, "meta", "tasks.parquet")
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r") as f:
             for line in f:
                 line = line.strip()
                 if line:
                     entry = json.loads(line)
-                    tasks[entry["task_index"]] = entry["task"]
+                    tasks[int(entry["task_index"])] = entry["task"]
+    elif os.path.exists(parquet_path):
+        import pyarrow.parquet as pq
+        table = pq.read_table(parquet_path)
+        # LeRobot writes a pandas frame indexed by the task text: pyarrow keeps the index as a column,
+        # named after the index ("task") or "__index_level_0__" when the index is unnamed.
+        task_column = next(
+            (name for name in ("task", "__index_level_0__") if name in table.column_names),
+            None,
+        )
+        if task_column is None or "task_index" not in table.column_names:
+            raise ValueError(
+                f"{parquet_path} has columns {table.column_names}; expected task_index and the task text"
+            )
+        for task_index, task in zip(table.column("task_index").to_pylist(), table.column(task_column).to_pylist()):
+            tasks[int(task_index)] = task
     return tasks
+
+
+def _episode_task(entry_tasks, tasks: Dict[int, str], task_indices: Dict[str, int]) -> Tuple[int, str]:
+    """(task_index, task) of an episode's first task, listed as task indices or task texts."""
+    if not entry_tasks:
+        return 0, tasks.get(0, "")
+    first = entry_tasks[0]
+    if isinstance(first, str):
+        return task_indices.get(first, -1), first
+    return int(first), tasks.get(int(first), "")
 
 
 def _load_episodes(
@@ -122,6 +150,7 @@ def _load_episodes_v2(
 ) -> List[EpisodeMetadata]:
     episodes_path = os.path.join(dataset_dir, "meta", "episodes.jsonl")
     episodes: List[EpisodeMetadata] = []
+    task_indices = {task: index for index, task in tasks.items()}
     with open(episodes_path, "r") as f:
         for line in f:
             line = line.strip()
@@ -131,24 +160,18 @@ def _load_episodes_v2(
             ep_idx = entry["episode_index"]
             length = entry["length"]
 
-            # task_index can come from different fields depending on dataset
+            # LeRobot lists an episode's tasks by text ("tasks"); some datasets give a "task_index"
             if "task_index" in entry:
-                task_idx = entry["task_index"]
-            elif "tasks" in entry:
-                task_list = entry["tasks"]
-                # tasks field may be a list of strings or indices
-                if task_list and isinstance(task_list[0], int):
-                    task_idx = task_list[0]
-                else:
-                    task_idx = 0
+                task_idx = int(entry["task_index"])
+                task = tasks.get(task_idx, "")
             else:
-                task_idx = 0
+                task_idx, task = _episode_task(entry.get("tasks"), tasks, task_indices)
 
             episodes.append(EpisodeMetadata(
                 index=ep_idx,
                 length=length,
                 task_index=task_idx,
-                task=tasks.get(task_idx, ""),
+                task=task,
             ))
 
     episodes.sort(key=lambda e: e.index)
@@ -164,6 +187,7 @@ def _load_episodes_v3(
 
     episodes_dir = os.path.join(dataset_dir, "meta", "episodes")
     episodes: List[EpisodeMetadata] = []
+    task_indices = {task: index for index, task in tasks.items()}
 
     if not os.path.isdir(episodes_dir):
         raise FileNotFoundError(
@@ -185,7 +209,14 @@ def _load_episodes_v3(
         for i in range(table.num_rows):
             ep_idx = int(table.column("episode_index")[i].as_py())
             length = int(table.column("length")[i].as_py())
-            task_idx = int(table.column("task_index")[i].as_py()) if "task_index" in col_names else 0
+            # LeRobot v3.0 lists an episode's tasks by text ("tasks"); older writers give a "task_index"
+            if "task_index" in col_names:
+                task_idx = int(table.column("task_index")[i].as_py())
+                task = tasks.get(task_idx, "")
+            else:
+                task_idx, task = _episode_task(
+                    table.column("tasks")[i].as_py() if "tasks" in col_names else None, tasks, task_indices,
+                )
 
             # Extract packed-file metadata if available
             data_chunk_index = None
@@ -205,7 +236,7 @@ def _load_episodes_v3(
                 index=ep_idx,
                 length=length,
                 task_index=task_idx,
-                task=tasks.get(task_idx, ""),
+                task=task,
                 data_chunk_index=data_chunk_index,
                 data_file_index=data_file_index,
                 dataset_from_index=dataset_from,
