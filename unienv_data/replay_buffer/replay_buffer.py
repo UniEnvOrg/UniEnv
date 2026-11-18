@@ -884,7 +884,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
                 indexes = (self.backend.arange(B, device=self.device) + start_physical) % self.capacity
             self.storage.set(indexes, value)
             self._account_round_robin_write(start_physical, B)
-            self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
+            if episode_id is not None:
+                self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
 
     def _account_round_robin_write(self, start_physical: int, B: int) -> None:
         """Update count / offset / segment metadata after `B` (<= capacity) samples were written at the tail."""
@@ -946,7 +947,8 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
             start_physical = (old_offset + old_count) % self.capacity
             writer.commit(start_physical)
             self._account_round_robin_write(start_physical, B)
-            self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
+            if episode_id is not None:
+                self._set_step_episode_ids(self._physical_run(start_physical, B), episode_id)
 
     def append(self, value):
         self._require_not_column_view("append to")
