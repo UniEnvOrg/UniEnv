@@ -5334,6 +5334,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_segments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.close" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6501,6 +6534,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_data
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;get_episode_segments
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.close" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6759,6 +6825,12 @@ dataset = LeRobotAsUniEnvDataset.from_local(
 frame = dataset[42]
 batch = dataset[0:100]
 </code></pre></div>
+<p>The metadata of every frame (<code>get_at_with_metadata</code>, <code>sample_with_metadata</code>) holds its
+episode: <code>episode_id</code> (LeRobot's <code>episode_index</code>) and <code>episode</code> =
+<code>{"task", "task_index", "length"}</code> (the episode's first task if it lists several;
+<code>task_index</code> is -1 for a task missing from <code>meta/tasks</code>), the same layout as
+<code>ReplayBuffer.with_episode_data()</code>. <code>get_episode_ids</code>, <code>get_episode_data</code> and
+<code>get_episode_segments</code> read them without loading frames.</p>
 
 
 
@@ -6834,7 +6906,31 @@ batch = dataset[0:100]
               <td><code><a class="autorefs autorefs-internal" title="            get_episode (unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode)" href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode">get_episode</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>Load all frames for a single episode.</p>
+                  <p>Load all frames of the episode with LeRobot <code>episode_index</code>.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            get_episode_ids (unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids)" href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids">get_episode_ids</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>LeRobot <code>episode_index</code> of the frames at <code>idx</code> (an <code>int</code> for an <code>int</code> index).</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            get_episode_data (unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data)" href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data">get_episode_data</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Records <code>{"task", "task_index", "length"}</code> of episodes by LeRobot <code>episode_index</code></p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            get_episode_segments (unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments)" href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments">get_episode_segments</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p><code>(start, end, episode_id)</code> per episode: its frames <code>[start, end)</code> and its LeRobot <code>episode_index</code>.</p>
                 </div>
               </td>
             </tr>
@@ -7472,7 +7568,75 @@ and often faster for small frames read at random positions (the usual training c
 
     <div class="doc doc-contents ">
 
-        <p>Load all frames for a single episode.</p>
+        <p>Load all frames of the episode with LeRobot <code>episode_index</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_episode_ids</span>
+
+
+<a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_ids" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_episode_ids</span><span class="p">(</span><span class="n">idx</span><span class="p">:</span> <span class="n"><span title="typing.Union">Union</span></span><span class="p">[</span><span class="n"><a class="autorefs autorefs-internal" title="            IndexableType
+
+
+  
+      module-attribute
+   (unienv_data.base.IndexableType)" href="../../#unienv_data.IndexableType">IndexableType</a></span><span class="p">,</span> <span class="n"><span title="unienv_interface.backends.BArrayType">BArrayType</span></span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n"><span title="typing.Union">Union</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">,</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>LeRobot <code>episode_index</code> of the frames at <code>idx</code> (an <code>int</code> for an <code>int</code> index).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_episode_data</span>
+
+
+<a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_data" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_episode_data</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">episode_ids</span><span class="p">:</span> <span class="n"><span title="typing.Union">Union</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">,</span> <span class="n"><span title="typing.Sequence">Sequence</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">],</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">,</span> <span class="n"><span title="unienv_interface.backends.BArrayType">BArrayType</span></span><span class="p">],</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="typing.Dict">Dict</span></span><span class="p">[</span><span class="n"><span title="str">str</span></span><span class="p">,</span> <span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Records <code>{"task", "task_index", "length"}</code> of episodes by LeRobot <code>episode_index</code>
+(scalars for an <code>int</code>, else batched like the ids).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">get_episode_segments</span>
+
+
+<a href="#unienv_data.integrations.lerobot.LeRobotAsUniEnvDataset.get_episode_segments" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">get_episode_segments</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n"><span title="typing.List">List</span></span><span class="p">[</span><span class="n"><span title="typing.Tuple">Tuple</span></span><span class="p">[</span><span class="n"><span title="int">int</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">,</span> <span class="n"><span title="int">int</span></span><span class="p">]]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>(start, end, episode_id)</code> per episode: its frames <code>[start, end)</code> and its LeRobot <code>episode_index</code>.</p>
 
 
     </div>

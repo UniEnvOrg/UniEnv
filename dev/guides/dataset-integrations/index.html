@@ -6112,7 +6112,16 @@
 <li>can include or exclude named features</li>
 <li>can optionally decode video features</li>
 <li>describes the features through <a href="../../concepts/spaces-and-backends/#space-metadata">space metadata</a>: image and video features carry <code>{"kind": "image", "format": "rgb", "layout": "HWC", "fps": &lt;dataset fps&gt;, "source": &lt;feature key&gt;}</code>, <code>observation.state</code> and <code>action</code> carry <code>kind</code> <code>"proprio"</code> / <code>"action"</code></li>
+<li>every frame's metadata holds its episode, laid out like <a href="../replay-buffers-and-storage/#episode-records">replay buffer episode records</a>: <code>episode_id</code> (LeRobot's <code>episode_index</code>) and <code>episode</code> = <code>{"task", "task_index", "length"}</code>, so <code>sample_with_metadata()</code> returns each frame's task text; <code>get_episode_ids</code>, <code>get_episode_data</code> and <code>get_episode_segments</code> read them without loading frames</li>
 </ul>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.samplers</span><span class="w"> </span><span class="kn">import</span> <span class="n">StepSampler</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">sampler</span> <span class="o">=</span> <span class="n">StepSampler</span><span class="p">(</span><span class="n">dataset</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">batch</span><span class="p">,</span> <span class="n">metadata</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">sample_with_metadata</span><span class="p">()</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">metadata</span><span class="p">[</span><span class="s2">"episode"</span><span class="p">][</span><span class="s2">"task"</span><span class="p">]</span>      <span class="c1"># object array of task strings, one per frame</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">metadata</span><span class="p">[</span><span class="s2">"episode_id"</span><span class="p">]</span>           <span class="c1"># LeRobot episode_index, on the dataset's backend</span>
+</code></pre></div>
+<p>An episode that lists several tasks records its first one; <code>task_index</code> is -1 for a task missing from <code>meta/tasks</code>.</p>
 <p>This is the most direct path for bringing LeRobot-formatted robotics datasets into UniEnv-native tooling.</p>
 <h2 id="pytorch-dataset-adapters">PyTorch Dataset Adapters<a class="headerlink" href="#pytorch-dataset-adapters" title="Permanent link">&para;</a></h2>
 <p>UniEnv provides both directions:</p>
