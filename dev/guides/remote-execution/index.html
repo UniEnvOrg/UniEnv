@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../unienv/favicon.svg">
-      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.2">
     
     
       
@@ -930,6 +930,17 @@
     <span class="md-ellipsis">
       
         Hosting a policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#building-objects-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building objects on demand
       
     </span>
   </a>
@@ -6132,6 +6143,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#building-objects-on-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Building objects on demand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#threads-and-concurrency" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6311,6 +6333,38 @@ policy's spaces, <code>batch_size</code> and <code>metadata</code>.</p>
 <p>Each control step is two round trips (<code>observe_transition</code>, then <code>get_action</code>).
 Observations travel to the server uncompressed: the <code>compress</code> option below
 applies only to results the server sends back.</p>
+<h2 id="building-objects-on-demand">Building objects on demand<a class="headerlink" href="#building-objects-on-demand" title="Permanent link">&para;</a></h2>
+<p><code>server.register_factory(name, factory)</code> hosts an object that exists only while
+clients use it. <code>factory()</code> runs on the object's own worker thread when a client
+first opens <code>name</code>, and the server closes the object there once the last client
+that opened it is gone:</p>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">server</span><span class="o">.</span><span class="n">register_factory</span><span class="p">(</span><span class="s2">"sim"</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">make_env</span><span class="p">(),</span> <span class="n">release_after</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+</code></pre></div>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">with</span> <span class="n">RemoteClient</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">"tcp://sim-box:7000"</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">env</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">env</span><span class="p">(</span><span class="s2">"sim"</span><span class="p">)</span>        <span class="c1"># builds the env on the server (if not built yet)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">env</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="n">seed</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>              <span class="c1"># a newly built env starts unreset, like a local one</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="o">...</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">env</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>                    <span class="c1"># releases it (so does closing the client or losing the connection)</span>
+</code></pre></div>
+<ul>
+<li>Clients open a factory-hosted object by getting its proxy (<code>client.env(name)</code>,
+  <code>client.resource(name)</code>, ...), calling it (<code>client.call</code>) or subscribing to it;
+  its spaces and attributes are read then. Until a client opens it, <code>client.resources</code>
+  lists it as <code>{"kind": None, "factory": True}</code>.</li>
+<li>Every client that opened it uses the same object. It is released by
+  <code>client.release(name)</code>, <code>close()</code> on its proxy (a <code>with env:</code> block, a wrapper's
+  <code>close()</code>), closing the client or losing the connection.</li>
+<li>Once no client uses it, the object is closed after <code>release_after</code> seconds
+  (default 60; <code>0</code>: at once; <code>None</code>: never, which only makes building lazy).
+  Opening it again within that time gets the same object, state included;
+  afterwards, a newly built one.</li>
+<li>A released proxy stops working (<code>RemoteError</code> wrapping <code>PermissionError</code>);
+  get the proxy again to reopen.</li>
+<li><code>backend</code> / <code>device</code> are passed for a factory of <code>DataTransformation</code>s, as in
+  <code>register</code>. There is no recursive variant: only the built object is hosted.</li>
+<li>Clients of earlier versions do not see factory-hosted objects; everything
+  else works between versions as before.</li>
+</ul>
 <h2 id="threads-and-concurrency">Threads and concurrency<a class="headerlink" href="#threads-and-concurrency" title="Permanent link">&para;</a></h2>
 <p>Every registered root object gets one worker thread. All calls on it, and on the
 world and nodes it exposes, run on that thread one at a time, in arrival order.
@@ -6318,8 +6372,9 @@ Simulators that need thread affinity therefore always see the same thread. Any
 number of clients may connect and call; their calls simply queue. A client is
 thread-safe and may be shared by several threads. Different roots run in parallel.</p>
 <p>When the server closes, it drops all connections and closes the objects registered
-with <code>close=True</code> (the default) on their worker threads. Proxies' <code>close()</code> does
-nothing: clients never close hosted objects.</p>
+with <code>close=True</code> (the default), and every object a factory built, on their worker
+threads. Proxies' <code>close()</code> does nothing for objects hosted with <code>register</code>: clients
+never close those; it releases objects hosted with <code>register_factory</code>.</p>
 <h2 id="errors-timeouts-and-disconnects">Errors, timeouts and disconnects<a class="headerlink" href="#errors-timeouts-and-disconnects" title="Permanent link">&para;</a></h2>
 <ul>
 <li>An exception raised by the hosted object is re-raised as <code>RemoteError</code>, with the
@@ -6349,22 +6404,22 @@ and every child node as <code>&lt;node name&gt;/&lt;child name&gt;</code> (for e
 with <code>register</code>; objects that share a world always run on the same worker.
 Compose them with a plain local <code>WorldEnv</code> (or a local combination of remote child
 nodes); each lifecycle hook is then one remote call:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_interface.world</span><span class="w"> </span><span class="kn">import</span> <span class="n">WorldEnv</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">server</span><span class="o">.</span><span class="n">register_recursive</span><span class="p">(</span><span class="s2">"robot"</span><span class="p">,</span> <span class="n">make_env</span><span class="p">())</span>   <span class="c1"># on the server</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">world</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">world</span><span class="p">(</span><span class="s2">"robot/world"</span><span class="p">)</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="n">env</span> <span class="o">=</span> <span class="n">WorldEnv</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node"</span><span class="p">))</span>   <span class="c1"># the whole node tree</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">env</span> <span class="o">=</span> <span class="n">WorldEnv</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="p">[</span><span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node/arm"</span><span class="p">),</span> <span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node/camera"</span><span class="p">)])</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_interface.world</span><span class="w"> </span><span class="kn">import</span> <span class="n">WorldEnv</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">server</span><span class="o">.</span><span class="n">register_recursive</span><span class="p">(</span><span class="s2">"robot"</span><span class="p">,</span> <span class="n">make_env</span><span class="p">())</span>   <span class="c1"># on the server</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">world</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">world</span><span class="p">(</span><span class="s2">"robot/world"</span><span class="p">)</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">env</span> <span class="o">=</span> <span class="n">WorldEnv</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node"</span><span class="p">))</span>   <span class="c1"># the whole node tree</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="n">env</span> <span class="o">=</span> <span class="n">WorldEnv</span><span class="p">(</span><span class="n">world</span><span class="p">,</span> <span class="p">[</span><span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node/arm"</span><span class="p">),</span> <span class="n">client</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="s2">"robot/node/camera"</span><span class="p">)])</span>
 </code></pre></div>
 <p><code>client.resources</code> lists every hosted resource with its descriptor (kind, callable
 methods, and links to its world, root node and children when those are hosted too;
 a node proxy's <code>world</code>, <code>nodes</code> and <code>get_node</code> only see hosted objects). A node whose <code>world</code> is <code>None</code> runs on its own
 worker; it must declare <code>backend</code> / <code>device</code> for argument conversion.</p>
 <h2 id="observers">Observers<a class="headerlink" href="#observers" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">with</span> <span class="n">observer</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="s2">"robot"</span><span class="p">)</span> <span class="k">as</span> <span class="n">stream</span><span class="p">:</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>                    <span class="c1"># or stream.next(timeout=1.0)</span>
-<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">sequence</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">with</span> <span class="n">observer</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="s2">"robot"</span><span class="p">)</span> <span class="k">as</span> <span class="n">stream</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">stream</span><span class="p">:</span>                    <span class="c1"># or stream.next(timeout=1.0)</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">sequence</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
 <p>A subscription yields the result of every <code>reset</code>, <code>reload</code> and <code>step</code> of a hosted
 env, whichever client called it, as <code>SubscriptionEvent(kind, sequence, value)</code>.
@@ -6373,7 +6428,7 @@ Delivery is latest-wins: a slow subscriber skips results (visible as gaps in
 subscription unsubscribes; a lost connection ends it with <code>ConnectionError</code>.</p>
 <h2 id="image-compression">Image compression<a class="headerlink" href="#image-compression" title="Permanent link">&para;</a></h2>
 <p>Over a slow network, a client can ask for lossy compression of camera images:</p>
-<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">client</span> <span class="o">=</span> <span class="n">RemoteClient</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">address</span><span class="p">,</span> <span class="n">compress</span><span class="o">=</span><span class="p">{</span><span class="s2">"image"</span><span class="p">:</span> <span class="s2">"jpeg:90"</span><span class="p">})</span>  <span class="c1"># quality 1-100</span>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">client</span> <span class="o">=</span> <span class="n">RemoteClient</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">address</span><span class="p">,</span> <span class="n">compress</span><span class="o">=</span><span class="p">{</span><span class="s2">"image"</span><span class="p">:</span> <span class="s2">"jpeg:90"</span><span class="p">})</span>  <span class="c1"># quality 1-100</span>
 </code></pre></div>
 <p>The server then JPEG-encodes every uint8 leaf of a <code>reset</code> / <code>step</code> result (and of
 node <code>get_observation</code> / <code>get_context</code>) whose space has <code>metadata["kind"] ==
@@ -6394,8 +6449,8 @@ Unix sockets, an 84x84x3 image about 50 µs and a batch of 64 such images about
 140-160 µs; WebSocket adds roughly 50 µs per call. Run
 <code>python benchmarks/envs/bench_remote.py</code> to measure your setup.</p>
 <h2 id="runnable-examples">Runnable examples<a class="headerlink" href="#runnable-examples" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>python<span class="w"> </span>examples/remote/environment.py
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>python<span class="w"> </span>examples/remote/components.py
+<div class="language-bash highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>python<span class="w"> </span>examples/remote/environment.py
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>python<span class="w"> </span>examples/remote/components.py
 </code></pre></div>
 <p>See the <a href="../../reference/remote-protocol/">protocol reference</a> for the wire format.</p>
 

@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../../../unienv/favicon.svg">
-      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.2">
     
     
       
@@ -2116,6 +2116,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;call
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_interface.remote.client.RemoteClient.release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;release
       
     </span>
   </a>
@@ -6415,6 +6426,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_interface.remote.client.RemoteClient.release" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;release
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_interface.remote.client.RemoteClient.resource" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6991,6 +7013,9 @@ is re-raised as :class:<code>RemoteError</code>; a lost connection raises
 <code>ConnectionError</code>, in which case a call that was in flight may or may not
 have run on the server. <code>timeout</code> (seconds, <code>None</code> = wait forever) bounds
 each call; a timed-out call keeps running on the server.</p>
+<p>Objects the server hosts through <code>register_factory</code> are opened (built on the
+server if needed) the first time this client gets their proxy or calls them, and
+released by :meth:<code>release</code>, <code>close()</code> on their proxy, or closing the client.</p>
 
 
 
@@ -7030,6 +7055,14 @@ each call; a timed-out call keeps running on the server.</p>
               <td>
                 <div class="doc-md-description">
                   <p>Call an allowed <code>method</code> of the hosted resource <code>name</code>.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            release (unienv_interface.remote.client.RemoteClient.release)" href="#unienv_interface.remote.client.RemoteClient.release">release</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Stop using factory-hosted <code>name</code>: the server closes it once no client uses it.</p>
                 </div>
               </td>
             </tr>
@@ -7140,7 +7173,7 @@ each call; a timed-out call keeps running on the server.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Descriptor of every hosted resource, by name.</p>
+                <p>Descriptor of every hosted resource, by name (<code>kind</code> is <code>None</code> for a factory not opened yet).</p>
               </div>
             </td>
           </tr>
@@ -7198,7 +7231,7 @@ each call; a timed-out call keeps running on the server.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Descriptor of every hosted resource, by name.</p>
+        <p>Descriptor of every hosted resource, by name (<code>kind</code> is <code>None</code> for a factory not opened yet).</p>
 
     </div>
 
@@ -7267,6 +7300,28 @@ each call; a timed-out call keeps running on the server.</p>
     <div class="doc doc-contents ">
 
         <p>Call an allowed <code>method</code> of the hosted resource <code>name</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="unienv_interface.remote.client.RemoteClient.release" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">release</span>
+
+
+<a href="#unienv_interface.remote.client.RemoteClient.release" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">release</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Stop using factory-hosted <code>name</code>: the server closes it once no client uses it.</p>
+<p>Its proxy stops working; getting the proxy again opens it again (possibly a newly
+built object). A no-op for resources registered with <code>register</code>.</p>
 
 
     </div>

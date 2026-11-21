@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../../../unienv/favicon.svg">
-      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.2">
     
     
       
@@ -2167,6 +2167,17 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;register_recursive
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unienv_interface.remote.server.RemoteServer.register_factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;register_factory
       
     </span>
   </a>
@@ -6193,6 +6204,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#unienv_interface.remote.server.RemoteServer.register_factory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-method"></code>&nbsp;register_factory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#unienv_interface.remote.server.RemoteServer.listen" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6370,7 +6392,8 @@
 <p>Each registered root runs on its own worker thread, shared by every hosted object
 with the same world; calls on them are executed there one at a time, in arrival
 order, whichever client sent them. Only the methods in <code>protocol.METHODS</code> can be
-called.</p>
+called. :meth:<code>register_factory</code> hosts an object that is built when a client first
+opens it and closed once no client uses it.</p>
 
 
 
@@ -6405,6 +6428,14 @@ called.</p>
               <td>
                 <div class="doc-md-description">
                   <p>Like :meth:<code>register</code>, but also expose everything <code>obj</code> is built from.</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            register_factory (unienv_interface.remote.server.RemoteServer.register_factory)" href="#unienv_interface.remote.server.RemoteServer.register_factory">register_factory</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>Host the object <code>factory()</code> builds, only while clients use it.</p>
                 </div>
               </td>
             </tr>
@@ -6483,7 +6514,7 @@ called.</p>
             </td>
             <td>
               <div class="doc-md-description">
-                <p>Names of every hosted resource.</p>
+                <p>Names of every hosted resource (factories included, built or not).</p>
               </div>
             </td>
           </tr>
@@ -6541,7 +6572,7 @@ called.</p>
 
     <div class="doc doc-contents ">
 
-        <p>Names of every hosted resource.</p>
+        <p>Names of every hosted resource (factories included, built or not).</p>
 
     </div>
 
@@ -6616,6 +6647,46 @@ calls are rebuilt on the server. Other objects use their own.</p>
 (the root node), and every node exposes its world (<code>&lt;node name&gt;/world</code>, unless
 already hosted) and its children as <code>&lt;node name&gt;/&lt;child&gt;</code>, so clients can
 compose them in components mode. Objects already hosted keep their first name.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="unienv_interface.remote.server.RemoteServer.register_factory" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <span class="doc doc-object-name doc-function-name">register_factory</span>
+
+
+<a href="#unienv_interface.remote.server.RemoteServer.register_factory" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">register_factory</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">name</span><span class="p">:</span> <span class="n"><span title="str">str</span></span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">factory</span><span class="p">:</span> <span class="n"><span title="typing.Callable">Callable</span></span><span class="p">[[],</span> <span class="n"><a class="autorefs autorefs-internal" title="            Hosted
+
+
+  
+      module-attribute
+   (unienv_interface.remote.server.Hosted)" href="#unienv_interface.remote.server.Hosted">Hosted</a></span><span class="p">],</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">release_after</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="float">float</span></span><span class="p">]</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">backend</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="unienv_interface.backends.ComputeBackend">ComputeBackend</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">device</span><span class="p">:</span> <span class="n"><span title="typing.Optional">Optional</span></span><span class="p">[</span><span class="n"><span title="typing.Any">Any</span></span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="str">str</span></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Host the object <code>factory()</code> builds, only while clients use it.</p>
+<p>The object is built on its own worker thread when a client first opens <code>name</code>
+(<code>client.env(name)</code>, <code>client.resource(name)</code>, ...; its spaces and attributes
+are read then), and closed there <code>release_after</code> seconds after the last client
+that opened it disconnects or calls <code>close()</code> on its proxy (<code>0</code>: at once,
+<code>None</code>: never). The next client gets a newly built object, which it resets
+first like any fresh env. <code>backend</code> / <code>device</code> are given for a factory of
+<code>DataTransformation</code> s, as in :meth:<code>register</code>. Only the object itself is
+hosted (no :meth:<code>register_recursive</code> counterpart).</p>
 
 
     </div>

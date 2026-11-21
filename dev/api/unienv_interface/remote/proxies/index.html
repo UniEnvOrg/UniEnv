@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../../../unienv/favicon.svg">
-      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-ProperDocs 1.6.7, mkdocs-material-9.8.2">
     
     
       
@@ -8940,7 +8940,8 @@
         <p>Local <code>Env</code> / <code>World</code> / <code>WorldNode</code> / <code>DataTransformation</code> / <code>Policy</code> views of objects hosted by a server.</p>
 <p>Every method is one remote call. Spaces, timings and metadata come from the
 server's descriptor; spaces are refreshed whenever a reset changed them.
-<code>close()</code> on a proxy does nothing: hosted objects belong to the server.</p>
+<code>close()</code> on a proxy does nothing (hosted objects belong to the server), except that it
+releases an object hosted through <code>register_factory</code>.</p>
 <p>Components mode is a plain local <code>WorldEnv</code> over remote proxies (host them with
 <code>server.register_recursive("sim", env)</code>)::</p>
 <div class="language-text highlight"><pre><span></span><code>env = WorldEnv(client.world("sim/world"), client.node("sim/node"))
@@ -9107,7 +9108,7 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
               <td><code><a class="autorefs autorefs-internal" title="            close (unienv_interface.remote.proxies.RemoteEnv.close)" href="#unienv_interface.remote.proxies.RemoteEnv.close">close</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>No-op: the hosted object stays open (it is closed by its server).</p>
+                  <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the</p>
                 </div>
               </td>
             </tr>
@@ -9892,7 +9893,8 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
 
     <div class="doc doc-contents ">
 
-        <p>No-op: the hosted object stays open (it is closed by its server).</p>
+        <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the
+hosted object stays open (it is closed by its server).</p>
 
 
     </div>
@@ -10220,7 +10222,7 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
               <td><code><a class="autorefs autorefs-internal" title="            close (unienv_interface.remote.proxies.RemoteWorld.close)" href="#unienv_interface.remote.proxies.RemoteWorld.close">close</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>No-op: the hosted object stays open (it is closed by its server).</p>
+                  <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the</p>
                 </div>
               </td>
             </tr>
@@ -10644,7 +10646,8 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
 
     <div class="doc doc-contents ">
 
-        <p>No-op: the hosted object stays open (it is closed by its server).</p>
+        <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the
+hosted object stays open (it is closed by its server).</p>
 
 
     </div>
@@ -10859,7 +10862,7 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
               <td><code><a class="autorefs autorefs-internal" title="            close (unienv_interface.remote.proxies.RemoteWorldNode.close)" href="#unienv_interface.remote.proxies.RemoteWorldNode.close">close</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>No-op: the hosted object stays open (it is closed by its server).</p>
+                  <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the</p>
                 </div>
               </td>
             </tr>
@@ -12338,7 +12341,8 @@ server's descriptor; spaces are refreshed whenever a reset changed them.
 
     <div class="doc doc-contents ">
 
-        <p>No-op: the hosted object stays open (it is closed by its server).</p>
+        <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the
+hosted object stays open (it is closed by its server).</p>
 
 
     </div>
@@ -12509,7 +12513,7 @@ connection (serialize the hosted transformation on the server instead).</p>
               <td><code><a class="autorefs autorefs-internal" title="            close (unienv_interface.remote.proxies.RemoteDataTransformation.close)" href="#unienv_interface.remote.proxies.RemoteDataTransformation.close">close</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>No-op: the hosted object stays open (it is closed by its server).</p>
+                  <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the</p>
                 </div>
               </td>
             </tr>
@@ -12796,7 +12800,8 @@ connection (serialize the hosted transformation on the server instead).</p>
 
     <div class="doc doc-contents ">
 
-        <p>No-op: the hosted object stays open (it is closed by its server).</p>
+        <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the
+hosted object stays open (it is closed by its server).</p>
 
 
     </div>
@@ -12893,7 +12898,7 @@ a robot) or in another environment (pinned dependencies). Spaces and
               <td><code><a class="autorefs autorefs-internal" title="            close (unienv_interface.remote.proxies.RemotePolicy.close)" href="#unienv_interface.remote.proxies.RemotePolicy.close">close</a></code></td>
               <td>
                 <div class="doc-md-description">
-                  <p>No-op: the hosted object stays open (it is closed by its server).</p>
+                  <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the</p>
                 </div>
               </td>
             </tr>
@@ -13571,7 +13576,8 @@ a robot) or in another environment (pinned dependencies). Spaces and
 
     <div class="doc doc-contents ">
 
-        <p>No-op: the hosted object stays open (it is closed by its server).</p>
+        <p>Release a factory-hosted object (see <code>RemoteClient.release</code>); otherwise a no-op, the
+hosted object stays open (it is closed by its server).</p>
 
 
     </div>
