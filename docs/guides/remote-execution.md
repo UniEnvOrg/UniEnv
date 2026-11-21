@@ -97,6 +97,43 @@ Each control step is two round trips (`observe_transition`, then `get_action`).
 Observations travel to the server uncompressed: the `compress` option below
 applies only to results the server sends back.
 
+## Building objects on demand
+
+`server.register_factory(name, factory)` hosts an object that exists only while
+clients use it. `factory()` runs on the object's own worker thread when a client
+first opens `name`, and the server closes the object there once the last client
+that opened it is gone:
+
+```python
+server.register_factory("sim", lambda: make_env(), release_after=60)
+```
+
+```python
+with RemoteClient.connect("tcp://sim-box:7000") as client:
+    env = client.env("sim")        # builds the env on the server (if not built yet)
+    env.reset(seed=0)              # a newly built env starts unreset, like a local one
+    ...
+    env.close()                    # releases it (so does closing the client or losing the connection)
+```
+
+- Clients open a factory-hosted object by getting its proxy (`client.env(name)`,
+  `client.resource(name)`, ...), calling it (`client.call`) or subscribing to it;
+  its spaces and attributes are read then. Until a client opens it, `client.resources`
+  lists it as `{"kind": None, "factory": True}`.
+- Every client that opened it uses the same object. It is released by
+  `client.release(name)`, `close()` on its proxy (a `with env:` block, a wrapper's
+  `close()`), closing the client or losing the connection.
+- Once no client uses it, the object is closed after `release_after` seconds
+  (default 60; `0`: at once; `None`: never, which only makes building lazy).
+  Opening it again within that time gets the same object, state included;
+  afterwards, a newly built one.
+- A released proxy stops working (`RemoteError` wrapping `PermissionError`);
+  get the proxy again to reopen.
+- `backend` / `device` are passed for a factory of `DataTransformation`s, as in
+  `register`. There is no recursive variant: only the built object is hosted.
+- Clients of earlier versions do not see factory-hosted objects; everything
+  else works between versions as before.
+
 ## Threads and concurrency
 
 Every registered root object gets one worker thread. All calls on it, and on the
@@ -106,8 +143,9 @@ number of clients may connect and call; their calls simply queue. A client is
 thread-safe and may be shared by several threads. Different roots run in parallel.
 
 When the server closes, it drops all connections and closes the objects registered
-with `close=True` (the default) on their worker threads. Proxies' `close()` does
-nothing: clients never close hosted objects.
+with `close=True` (the default), and every object a factory built, on their worker
+threads. Proxies' `close()` does nothing for objects hosted with `register`: clients
+never close those; it releases objects hosted with `register_factory`.
 
 ## Errors, timeouts and disconnects
 

@@ -2,7 +2,8 @@
 
 Every method is one remote call. Spaces, timings and metadata come from the
 server's descriptor; spaces are refreshed whenever a reset changed them.
-``close()`` on a proxy does nothing: hosted objects belong to the server.
+``close()`` on a proxy does nothing (hosted objects belong to the server), except that it
+releases an object hosted through ``register_factory``.
 
 Components mode is a plain local ``WorldEnv`` over remote proxies (host them with
 ``server.register_recursive("sim", env)``)::
@@ -49,7 +50,10 @@ class _Remote:
         return self.client._request(self.remote_name, method, list(args), kwargs)
 
     def close(self) -> None:
-        """No-op: the hosted object stays open (it is closed by its server)."""
+        """Release a factory-hosted object (see ``RemoteClient.release``); otherwise a no-op, the
+        hosted object stays open (it is closed by its server)."""
+        if self.client._proxies.get(self.remote_name) is self:
+            self.client.release(self.remote_name)
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.remote_name!r}>"

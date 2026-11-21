@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import traceback
 from queue import SimpleQueue
-from threading import Condition, Event, Lock, Thread
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
+from threading import Condition, Event, Lock, Thread, Timer
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING, Union
 from urllib.parse import quote
 
 from unienv_interface.env_base.env import Env
@@ -67,6 +67,8 @@ class _Resource:
         self.sequence = 0
         self.subscribers: Tuple[_Connection, ...] = ()
         self.static: Dict[str, Any] = {}
+        self.factory: Optional[_Factory] = None  # set for objects built by a factory
+        self.released = False  # a factory-built object that has since been closed
         if kind != "world":
             self.spaces = tuple(getattr(obj, attr, None) for attr in SPACES)
             self.documents = tuple(_document(space) for space in self.spaces)
@@ -91,6 +93,32 @@ class _Resource:
     def space_update(self) -> List[Any]:
         return [self.version, {attr: None if doc is None else wire.SpaceJSON(doc)
                                for attr, doc in zip(SPACES, self.documents)}]
+
+
+class _Factory:
+    """An object built on demand (:meth:`RemoteServer.register_factory`) on its own worker."""
+
+    def __init__(self, name: str, make: Callable[[], Hosted], release_after: Optional[float],
+                 backend: Optional[ComputeBackend], device: Optional[Any]) -> None:
+        self.name, self.make, self.release_after = name, make, release_after
+        self.backend, self.device = backend, device
+        self.group = _Group(name)
+        self.resource: Optional[_Resource] = None  # while the object exists
+        self.users: Set[_Connection] = set()  # connections that opened it
+        self.generation = 0  # bumped by every open and release; a stale release does nothing
+        self.timer: Optional[Timer] = None
+
+
+def _kind(obj: Any) -> str:
+    """The resource kind of a hostable object (``TypeError`` for anything else)."""
+    if isinstance(obj, FuncPolicy):
+        raise TypeError("A FuncPolicy passes its state through every call; host it as a Policy with "
+                        "FuncPolicyBasedPolicy(func_policy)")
+    if not isinstance(obj, (Env, World, WorldNode, DataTransformation, Policy)):
+        raise TypeError(f"Expected an Env, World, WorldNode, DataTransformation or Policy, got {type(obj).__name__}")
+    return ("env" if isinstance(obj, Env) else "world" if isinstance(obj, World)
+            else "transformation" if isinstance(obj, DataTransformation)
+            else "policy" if isinstance(obj, Policy) else "node")
 
 
 def _related(obj: Hosted, kind: str) -> Dict[str, Any]:
@@ -120,6 +148,11 @@ def _document(space: Any) -> Optional[Dict[str, Any]]:
         raise TypeError(f"Cannot serve a space of type {type(space).__name__}: {exc}") from None
 
 
+def _not_open(name: str) -> Exception:
+    return PermissionError(f"{name!r} is built on demand and this connection has not opened it (or released it): "
+                           "get it through RemoteClient.resource / env / ... first")
+
+
 def _error(request_id: Any, exc: BaseException) -> Tuple[List[Any], int]:
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return wire.encode([request_id, ERROR, [type(exc).__name__, str(exc), text]])
@@ -134,6 +167,7 @@ class _Connection:
         self.compress_key: Any = None
         self.seen: Dict[_Group, int] = {}
         self.subscriptions: Dict[str, _Resource] = {}
+        self.factories: Set[_Factory] = set()  # factory-built objects this connection opened
         self.closed = False
         self._events: Dict[str, Tuple[List[Any], int]] = {}
         self._condition = Condition()
@@ -182,6 +216,8 @@ class _Connection:
         self.transport.close()
         for name in list(self.subscriptions):
             self.unsubscribe(name)
+        for factory in list(self.factories):
+            self.server._release_use(self, factory)
 
 
 class RemoteServer:
@@ -196,12 +232,14 @@ class RemoteServer:
     Each registered root runs on its own worker thread, shared by every hosted object
     with the same world; calls on them are executed there one at a time, in arrival
     order, whichever client sent them. Only the methods in ``protocol.METHODS`` can be
-    called.
+    called. :meth:`register_factory` hosts an object that is built when a client first
+    opens it and closed once no client uses it.
     """
 
     def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> None:
         self.max_frame_size = max_frame_size
         self._resources: Dict[str, _Resource] = {}
+        self._factories: Dict[str, _Factory] = {}
         self._names: Dict[int, str] = {}  # id(object) -> resource name
         self._groups: Dict[int, _Group] = {}  # id(world or base env) -> group
         self._listeners: List[Listener] = []
@@ -246,11 +284,7 @@ class RemoteServer:
                   backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
         if not isinstance(name, str) or not name:
             raise ValueError("Resource names must be non-empty strings")
-        if isinstance(obj, FuncPolicy):
-            raise TypeError("A FuncPolicy passes its state through every call; host it as a Policy with "
-                            "FuncPolicyBasedPolicy(func_policy)")
-        if not isinstance(obj, (Env, World, WorldNode, DataTransformation, Policy)):
-            raise TypeError(f"Expected an Env, World, WorldNode, DataTransformation or Policy, got {type(obj).__name__}")
+        _kind(obj)
         if (backend is not None or device is not None) and not isinstance(obj, DataTransformation):
             raise ValueError("backend / device are only given for a DataTransformation (others have their own)")
         base = obj.unwrapped if isinstance(obj, (Env, Policy)) else obj
@@ -290,11 +324,9 @@ class RemoteServer:
         existing = self._names.get(id(obj)) or names.get(id(obj))
         if existing is not None:
             return existing
-        if name in self._resources or name in added:
+        if name in self._resources or name in added or name in self._factories:
             raise ValueError(f"Resource name {name!r} is already registered")
-        kind = ("env" if isinstance(obj, Env) else "world" if isinstance(obj, World)
-                else "transformation" if isinstance(obj, DataTransformation)
-                else "policy" if isinstance(obj, Policy) else "node")
+        kind = _kind(obj)
         resource = _Resource(name, obj, kind, group)
         added[name], names[id(obj)] = resource, name
         if recursive:
@@ -305,6 +337,132 @@ class RemoteServer:
             for child_name, child in related.get("children", {}).items():
                 self._expose(f"{name}/{quote(child_name, safe='')}", child, group, added, names, recursive)
         return name
+
+    def register_factory(self, name: str, factory: Callable[[], Hosted], *, release_after: Optional[float] = 60.0,
+                         backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
+        """Host the object ``factory()`` builds, only while clients use it.
+
+        The object is built on its own worker thread when a client first opens ``name``
+        (``client.env(name)``, ``client.resource(name)``, ...; its spaces and attributes
+        are read then), and closed there ``release_after`` seconds after the last client
+        that opened it disconnects or calls ``close()`` on its proxy (``0``: at once,
+        ``None``: never). The next client gets a newly built object, which it resets
+        first like any fresh env. ``backend`` / ``device`` are given for a factory of
+        ``DataTransformation`` s, as in :meth:`register`. Only the object itself is
+        hosted (no :meth:`register_recursive` counterpart).
+        """
+        if not isinstance(name, str) or not name:
+            raise ValueError("Resource names must be non-empty strings")
+        if not callable(factory):
+            raise TypeError(f"factory must be callable, got {type(factory).__name__}")
+        if release_after is not None and not release_after >= 0:
+            raise ValueError(f"release_after must be >= 0 seconds or None, got {release_after!r}")
+        with self._lock:
+            if self._closed.is_set():
+                raise RuntimeError("Server is closed")
+            if name in self._resources or name in self._factories:
+                raise ValueError(f"Resource name {name!r} is already registered")
+            record = _Factory(name, factory, release_after, backend, device)
+            self._factories[name] = record
+            self._groups[id(record)] = record.group
+        return name
+
+    # ------------------------------------------------------------------ factory-built objects
+
+    def _open(self, connection: _Connection, record: _Factory, request_id: int) -> None:
+        """Worker side of ``open``: build the object if needed and count ``connection`` as a user."""
+        try:
+            with self._lock:
+                record.generation += 1  # a release queued before this open no longer applies
+            if record.resource is None:
+                self._build(record)
+            with self._lock:
+                if connection.closed:  # its close() already released what it used
+                    if not record.users:
+                        self._schedule_release(record)
+                    return
+                record.users.add(connection)
+                connection.factories.add(record)
+                resource = record.resource
+            group = record.group
+            descriptor = dict(resource.static, **self._links(resource), spaces=resource.space_update(), factory=True)
+            frame = wire.encode([request_id, OK, descriptor])
+            connection.seen[group] = group.version
+        except Exception as exc:
+            frame = _error(request_id, exc)
+        connection.send(frame)
+
+    def _build(self, record: _Factory) -> None:
+        obj = record.make()
+        try:
+            kind = _kind(obj)
+            if kind != "transformation" and (record.backend is not None or record.device is not None):
+                raise ValueError("backend / device are only given for a DataTransformation (others have their own)")
+            resource = _Resource(record.name, obj, kind, record.group)
+            if kind == "transformation":
+                from unienv_interface.backends.numpy import NumpyComputeBackend
+                resource.backend, resource.device = record.backend or NumpyComputeBackend, record.device
+            resource.static = resource.descriptor()
+        except BaseException:
+            self._close_quietly(obj)
+            raise
+        resource.factory = record
+        group = record.group
+        group.version += 1  # clients see the spaces of a rebuilt object as an update
+        resource.version = group.version
+        with self._lock:
+            record.resource = resource
+            group.resources, group.owned = [resource], [obj]
+            self._resources[record.name] = resource
+
+    def _release_use(self, connection: _Connection, record: _Factory) -> None:
+        """``connection`` stopped using ``record``'s object (``release`` call or disconnect)."""
+        with self._lock:
+            connection.factories.discard(record)
+            if connection in record.users:
+                record.users.discard(connection)
+                if not record.users:
+                    self._schedule_release(record)
+
+    def _schedule_release(self, record: _Factory) -> None:
+        """Queue closing the object in ``release_after`` seconds, unless it is opened again (holds the lock)."""
+        record.generation += 1
+        if record.timer is not None:
+            record.timer.cancel()
+            record.timer = None
+        if record.resource is None or record.release_after is None or self._closed.is_set():
+            return
+        task = (self._release_if_idle, (record, record.generation))
+        if record.release_after == 0:
+            record.group.queue.put(task)
+        else:
+            record.timer = Timer(record.release_after, record.group.queue.put, args=(task,))
+            record.timer.daemon = True
+            record.timer.start()
+
+    def _release_if_idle(self, record: _Factory, generation: int) -> None:
+        """Worker side of a release: close the object if nobody opened it since the release was queued."""
+        with self._lock:
+            resource = record.resource
+            if record.generation != generation or record.users or resource is None or self._closed.is_set():
+                return
+            record.resource, record.timer = None, None
+            record.group.resources, record.group.owned = [], []
+            self._resources.pop(record.name, None)
+            resource.released = True
+            subscribers, resource.subscribers = resource.subscribers, ()
+        for connection in subscribers:
+            connection.subscriptions.pop(record.name, None)
+        self._close_quietly(resource.obj)
+
+    @staticmethod
+    def _close_quietly(obj: Any) -> None:
+        if not callable(getattr(obj, "close", None)):
+            return
+        try:
+            obj.close()
+        except Exception:
+            _log.exception("Closing a hosted object failed")
 
     def _links(self, resource: _Resource) -> Dict[str, Any]:
         """Names of the hosted objects ``resource`` links to (unhosted ones are left out)."""
@@ -323,8 +481,8 @@ class RemoteServer:
 
     @property
     def resources(self) -> List[str]:
-        """Names of every hosted resource."""
-        return list(self._resources)
+        """Names of every hosted resource (factories included, built or not)."""
+        return list(dict.fromkeys([*self._resources, *self._factories]))
 
     # ------------------------------------------------------------------ connections
 
@@ -392,6 +550,17 @@ class RemoteServer:
                 or type(message[1]) is not str or type(message[2]) is not str):
             raise wire.WireError("Requests must be [id, target, method, args, kwargs]")
         request_id, target, method = message[:3]
+        if target == "" and method in ("open", "release"):
+            args = wire.restore(message[3:], buffers)[0]
+            record = self._factories.get(args[0]) if type(args) is list and len(args) == 1 else None
+            if record is None:
+                connection.send(_error(request_id, KeyError(f"No factory-hosted resource named {args!r}")))
+            elif method == "open":
+                record.group.queue.put((self._open, (connection, record, request_id)))
+            else:
+                self._release_use(connection, record)
+                connection.send(wire.encode([request_id, OK, None]))
+            return
         if target == "":
             try:
                 value = self._protocol_call(connection, method, *wire.restore(message[3:], buffers))
@@ -402,6 +571,14 @@ class RemoteServer:
                 connection.send(_error(request_id, exc))
             return
         resource = self._resources.get(target)
+        if resource is not None and resource.factory is not None and connection not in resource.factory.users:
+            wire.restore(message[3:], buffers)
+            connection.send(_error(request_id, _not_open(target)))
+            return
+        if resource is None and target in self._factories:
+            wire.restore(message[3:], buffers)
+            connection.send(_error(request_id, _not_open(target)))
+            return
         if resource is None or method not in resource.methods:
             exc: Exception = (KeyError(f"No resource named {target!r}") if resource is None else
                               AttributeError(f"{resource.kind} {target!r} does not expose {method!r}"))
@@ -430,13 +607,21 @@ class RemoteServer:
                 connection.compress_key = repr(sorted(connection.compress.items()))
             resources = {}
             for name, resource in list(self._resources.items()):
+                if resource.factory is not None:
+                    continue  # listed below, opened on demand
                 group = resource.group
                 connection.seen.setdefault(group, group.version)  # read before the spaces
                 resources[name] = dict(resource.static, **self._links(resource), spaces=resource.space_update())
+            if kwargs.get("factories"):  # clients that know how to open them
+                for name in list(self._factories):
+                    resources[name] = {"kind": None, "factory": True}
             return {"version": PROTOCOL_VERSION, "resources": resources}
         if method in ("subscribe", "unsubscribe"):
             name = args[0]
             resource = self._resources.get(name)
+            if resource is None and name in self._factories or (
+                    resource is not None and resource.factory is not None and connection not in resource.factory.users):
+                raise _not_open(name)
             if resource is None or resource.kind != "env":
                 raise KeyError(f"No environment named {name!r}")
             if method == "subscribe" and name not in connection.subscriptions:
@@ -453,6 +638,8 @@ class RemoteServer:
     def _execute(self, connection: _Connection, resource: _Resource, request_id: int, method: str,
                  args: List[Any], kwargs: Dict[str, Any]) -> None:
         try:
+            if resource.released:
+                raise _not_open(resource.name)
             value = getattr(resource.obj, method)(*args, **kwargs)
             group = resource.group
             if method in RESET_METHODS:
@@ -515,6 +702,9 @@ class RemoteServer:
                 return
             self._closed.set()
             listeners, connections, threads = list(self._listeners), list(self._connections), list(self._threads)
+            for record in self._factories.values():
+                if record.timer is not None:
+                    record.timer.cancel()
         for connection in connections:
             connection.close()
         for listener in listeners:

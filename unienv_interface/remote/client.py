@@ -109,7 +109,13 @@ class RemoteClient:
     ``ConnectionError``, in which case a call that was in flight may or may not
     have run on the server. ``timeout`` (seconds, ``None`` = wait forever) bounds
     each call; a timed-out call keeps running on the server.
+
+    Objects the server hosts through ``register_factory`` are opened (built on the
+    server if needed) the first time this client gets their proxy or calls them, and
+    released by :meth:`release`, ``close()`` on their proxy, or closing the client.
     """
+
+    _FACTORY_STUB = {"kind": None, "factory": True}
 
     def __init__(self, transport: Transport, *, backend: ComputeBackend = NumpyComputeBackend,
                  device: Optional[Any] = None, timeout: Optional[float] = None,
@@ -125,20 +131,23 @@ class RemoteClient:
         self._proxies: Dict[str, Any] = {}
         self._lock = Lock()
         self._subscribe_lock = RLock()
+        self._open_lock = Lock()
         self._error: BaseException = ConnectionError("Client is closed")
         self._reader = Thread(target=self._read, name="unienv-remote-client", daemon=True)
         self._reader.start()
         try:
-            hello = self._request("", "hello", [], {"version": PROTOCOL_VERSION, "compress": compress},
+            hello = self._request("", "hello", [], {"version": PROTOCOL_VERSION, "compress": compress,
+                                                    "factories": True},
                                   timeout=30.0 if timeout is None else timeout)
         except BaseException:
             self.close()
             raise
         self.resources: Dict[str, Dict[str, Any]] = hello["resources"]
-        """Descriptor of every hosted resource, by name."""
+        """Descriptor of every hosted resource, by name (``kind`` is ``None`` for a factory not opened yet)."""
         for descriptor in self.resources.values():
-            version, spaces = descriptor.pop("spaces")
-            descriptor.update(version=version, spaces=spaces)
+            if "spaces" in descriptor:
+                version, spaces = descriptor.pop("spaces")
+                descriptor.update(version=version, spaces=spaces)
 
     @classmethod
     def connect(cls, address: str, *, timeout: Optional[float] = None, connect_timeout: float = 10.0,
@@ -234,7 +243,45 @@ class RemoteClient:
 
     def call(self, name: str, method: str, *args: Any, **kwargs: Any) -> Any:
         """Call an allowed ``method`` of the hosted resource ``name``."""
+        self._open(name)
         return self._request(name, method, list(args), kwargs)
+
+    # ------------------------------------------------------------------ factory-hosted objects
+
+    def _open(self, name: str) -> None:
+        """Open factory-hosted ``name`` unless this client already has (no-op for other resources)."""
+        descriptor = self.resources.get(name)
+        if descriptor is None or not descriptor.get("factory") or descriptor.get("open"):
+            return
+        with self._open_lock:
+            if self.resources[name].get("open"):
+                return
+            opened = self._request("", "open", [name], {})
+            version, spaces = opened.pop("spaces")
+            opened.update(version=version, spaces=spaces, open=True)
+            with self._lock:
+                self.resources[name] = opened
+
+    def release(self, name: str) -> None:
+        """Stop using factory-hosted ``name``: the server closes it once no client uses it.
+
+        Its proxy stops working; getting the proxy again opens it again (possibly a newly
+        built object). A no-op for resources registered with ``register``.
+        """
+        descriptor = self.resources.get(name)
+        if descriptor is None or not descriptor.get("factory"):
+            return
+        with self._open_lock:
+            if not self.resources[name].get("open"):
+                return
+            with self._lock:
+                self._proxies.pop(name, None)
+                self.resources[name] = dict(self._FACTORY_STUB)
+            if not self.closed:
+                try:
+                    self._request("", "release", [name], {})
+                except ConnectionError:
+                    pass  # the server releases what a lost connection used
 
     # ------------------------------------------------------------------ proxies
 
@@ -246,6 +293,7 @@ class RemoteClient:
             from .proxies import RemoteDataTransformation, RemoteEnv, RemotePolicy, RemoteWorld, RemoteWorldNode
             if name not in self.resources:
                 raise KeyError(f"The server hosts no resource named {name!r}; it has {sorted(self.resources)}")
+            self._open(name)
             kind = self.resources[name]["kind"]
             proxy = {"env": RemoteEnv, "world": RemoteWorld, "node": RemoteWorldNode,
                      "transformation": RemoteDataTransformation, "policy": RemotePolicy}[kind](self, name)
@@ -286,6 +334,7 @@ class RemoteClient:
         Results of calls by any client are delivered, latest wins: a slow
         subscriber skips results rather than slowing the server down.
         """
+        self._open(name)
         subscription = Subscription(self, name)
         with self._subscribe_lock:
             with self._lock:
