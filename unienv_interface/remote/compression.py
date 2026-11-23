@@ -90,11 +90,14 @@ class JpegCodec(ArrayCodec):
         layout = options.get("layout")
         if dtype != np.uint8 or layout not in ("HWC", "CHW") or len(shape) < 3:
             raise WireError("Invalid JPEG array")
+        # Validate the shape against the blobs before allocating anything.
+        height, width, channels = shape[-3:] if layout == "HWC" else (shape[-2], shape[-1], shape[-3])
+        if channels not in (1, 3) or not 0 < height <= _MAX_SIDE or not 0 < width <= _MAX_SIDE:
+            raise WireError("Invalid JPEG array shape")
+        if math.prod(shape[:-3]) != len(blobs):
+            raise WireError("JPEG array has the wrong number of images")
         result = np.empty(shape, np.uint8)
         images = self._images(result, layout)
-        if len(blobs) != len(images):
-            raise WireError("JPEG array has the wrong number of images")
-        height, width, channels = images.shape[1:]
         bgr = options.get("format") == "bgr"
         if cv2 is not None:
             flag = cv2.IMREAD_GRAYSCALE if channels == 1 else (

@@ -153,6 +153,12 @@ def _not_open(name: str) -> Exception:
                            "get it through RemoteClient.resource / env / ... first")
 
 
+def _restore(message: List[Any], buffers: List[Any], backend: Optional[ComputeBackend] = None,
+             device: Optional[Any] = None) -> Any:
+    """Decode the ``[args, kwargs]`` of a request (clients never send compressed arrays)."""
+    return wire.restore(message[3:], buffers, backend, device, allow_codecs=False)
+
+
 def _error(request_id: Any, exc: BaseException) -> Tuple[List[Any], int]:
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return wire.encode([request_id, ERROR, [type(exc).__name__, str(exc), text]])
@@ -551,7 +557,7 @@ class RemoteServer:
             raise wire.WireError("Requests must be [id, target, method, args, kwargs]")
         request_id, target, method = message[:3]
         if target == "" and method in ("open", "release"):
-            args = wire.restore(message[3:], buffers)[0]
+            args = _restore(message, buffers)[0]
             record = self._factories.get(args[0]) if type(args) is list and len(args) == 1 else None
             if record is None:
                 connection.send(_error(request_id, KeyError(f"No factory-hosted resource named {args!r}")))
@@ -563,7 +569,7 @@ class RemoteServer:
             return
         if target == "":
             try:
-                value = self._protocol_call(connection, method, *wire.restore(message[3:], buffers))
+                value = self._protocol_call(connection, method, *_restore(message, buffers))
                 connection.send(wire.encode([request_id, OK, value]))
             except wire.WireError:
                 raise
@@ -572,21 +578,21 @@ class RemoteServer:
             return
         resource = self._resources.get(target)
         if resource is not None and resource.factory is not None and connection not in resource.factory.users:
-            wire.restore(message[3:], buffers)
+            _restore(message, buffers)
             connection.send(_error(request_id, _not_open(target)))
             return
         if resource is None and target in self._factories:
-            wire.restore(message[3:], buffers)
+            _restore(message, buffers)
             connection.send(_error(request_id, _not_open(target)))
             return
         if resource is None or method not in resource.methods:
             exc: Exception = (KeyError(f"No resource named {target!r}") if resource is None else
                               AttributeError(f"{resource.kind} {target!r} does not expose {method!r}"))
-            wire.restore(message[3:], buffers)  # still validate the frame
+            _restore(message, buffers)  # still validate the frame
             connection.send(_error(request_id, exc))
             return
         try:
-            args, kwargs = wire.restore(message[3:], buffers, resource.backend, resource.device)
+            args, kwargs = _restore(message, buffers, resource.backend, resource.device)
         except wire.WireError:
             raise
         except Exception as exc:  # e.g. the hosted backend cannot represent a dtype

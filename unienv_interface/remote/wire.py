@@ -293,13 +293,15 @@ def _to_backend(array: np.ndarray, backend: ComputeBackend, device: Optional[obj
 
 
 class _Decoder:
-    __slots__ = ("buffers", "used", "backend", "device", "convert")
+    __slots__ = ("buffers", "used", "backend", "device", "convert", "allow_codecs")
 
-    def __init__(self, buffers: Sequence[Any], backend: Optional[ComputeBackend], device: Optional[object]) -> None:
+    def __init__(self, buffers: Sequence[Any], backend: Optional[ComputeBackend], device: Optional[object],
+                 allow_codecs: bool = True) -> None:
         self.buffers = buffers
         self.used = [False] * len(buffers)
         self.backend, self.device = backend, device
         self.convert = backend is not None and backend.simplified_name != "numpy"
+        self.allow_codecs = allow_codecs
 
     def take(self, index: Any) -> Any:
         if type(index) is not int or not 0 <= index < len(self.buffers) or self.used[index]:
@@ -316,6 +318,8 @@ class _Decoder:
                 raise WireError("Array shape and dtype do not match the buffer length")
             array = np.frombuffer(data, dtype=dtype).reshape(shape)
         else:
+            if not self.allow_codecs:
+                raise WireError("Compressed arrays are not accepted here")
             indices, options = node.get("b"), node.get("o", {})
             if type(indices) is not list or type(options) is not dict:
                 raise WireError("Invalid codec array")
@@ -380,13 +384,16 @@ class _Decoder:
 
 
 def restore(node: Any, buffers: Sequence[Any], backend: Optional[ComputeBackend] = None,
-            device: Optional[object] = None) -> Any:
+            device: Optional[object] = None, *, allow_codecs: bool = True) -> Any:
     """Resolve the tags of a parsed frame; arrays become ``backend`` arrays on ``device``.
 
     Every buffer must be referenced exactly once. Arrays share memory with the
-    (writable) buffers when no backend conversion is needed.
+    (writable) buffers when no backend conversion is needed. With ``allow_codecs=False``
+    compressed (codec) arrays are rejected: the server decodes requests that way, since
+    only server-to-client data is ever compressed and a small compressed array can
+    decode to far more than the frame size limit.
     """
-    decoder = _Decoder(buffers, backend, device)
+    decoder = _Decoder(buffers, backend, device, allow_codecs)
     value = decoder.value(node, 0)
     if not all(decoder.used):
         raise WireError("Frame has unreferenced buffers")
