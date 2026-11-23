@@ -87,7 +87,12 @@ class ChainedTransformation(DataTransformation):
 
         source_spaces = [source_space]
         for transformation in self.transformations:
-            next_space = transformation.get_target_space_from_source(source_spaces[-1])
+            if source_spaces[-1] is None:
+                # Without a source space the intermediate spaces are unknown; each
+                # member then inverts without one (as it would on its own).
+                next_space = None
+            else:
+                next_space = transformation.get_target_space_from_source(source_spaces[-1])
             source_spaces.append(next_space)
         
         inverted_transformations = []

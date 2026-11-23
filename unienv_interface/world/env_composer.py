@@ -5,6 +5,7 @@ from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGT
 from unienv_interface.space.space_utils import batch_utils as sbu
 
 from .world import World
+from unienv_interface.utils.control_util import is_integer_multiple
 from .node import WorldNode
 from .nodes.combined_node import CombinedWorldNode
 
@@ -56,6 +57,12 @@ class WorldEnv(Env[BArrayType, ContextType, ObsType, ActType, RenderFrame, BDevi
 
         assert world.is_control_timestep_compatible(update_ts), \
             f"Update timestep {update_ts} is not compatible with world timestep {world_ts}."
+
+        # One control step runs round(control / update) update sub-steps, so the
+        # control timestep must be a (tolerance-checked) integer multiple k >= 1 of
+        # the update timestep.
+        assert control_ts is None or update_ts is None or is_integer_multiple(control_ts, update_ts), \
+            f"Control timestep {control_ts} is not an integer multiple of update timestep {update_ts}."
 
         if control_ts is not None and update_ts is not None:
             self._n_update_substeps = round(control_ts / update_ts)

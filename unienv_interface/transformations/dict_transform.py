@@ -127,20 +127,45 @@ class DictTransformation(DataTransformation):
             )
         return new_space
 
+    def _has_nested_keys(self) -> bool:
+        """Whether one mapping key lies below another (e.g. ``"a"`` and ``"a/x"``).
+
+        Such keys are applied in mapping order, each one to the output of the
+        previous ones, so the source space of a later key is the target space of
+        the earlier transformations.
+        """
+        chained_keys = [key.split(self.nested_separator) for key in self.mapping.keys()]
+        return any(
+            len(a) < len(b) and b[:len(a)] == a
+            for a in chained_keys for b in chained_keys
+        )
+
     def transform(
         self, 
         source_space: Space,
         data: Union[Mapping[str, Any], BArrayType]
     ) -> Union[Mapping[str, Any], BArrayType]:
         new_data = data
+        current_space = source_space
+        # With nested keys a later transformation sees data already transformed by
+        # an earlier one, so it must also see the matching (transformed) space.
+        track_space = self._has_nested_keys()
         for key, transformation in self.mapping.items():
+            chained_key = key.split(self.nested_separator)
             new_data = call_conditioned_function_on_chained_dict(
-                source_space,
+                current_space,
                 new_data,
-                key.split(self.nested_separator),
+                chained_key,
                 transformation.transform,
                 ignore_missing_keys=self.ignore_missing_keys
             )
+            if track_space:
+                current_space = call_function_on_chained_dict(
+                    current_space,
+                    chained_key,
+                    transformation.get_target_space_from_source,
+                    ignore_missing_keys=self.ignore_missing_keys
+                )
         return new_data
 
     def direction_inverse(
@@ -150,24 +175,33 @@ class DictTransformation(DataTransformation):
         if not self.has_inverse:
             return None
 
-        inverse_mapping = {}
+        # The inverse undoes the transformations in reverse order; each one is
+        # inverted against the space it was applied to (the source space with the
+        # earlier transformations applied, which only differs for nested keys).
+        inverse_items = []
+        current_space = source_space
         for key, transformation in self.mapping.items():
-            if source_space is not None:
+            chained_key = key.split(self.nested_separator)
+            if current_space is not None:
                 current_source = get_chained_value(
-                    source_space,
-                    key.split(self.nested_separator),
+                    current_space,
+                    chained_key,
                     ignore_missing_keys=self.ignore_missing_keys
                 )
                 if current_source is None:
                     continue
+                inverse_items.append((key, transformation.direction_inverse(current_source)))
+                current_space = call_function_on_chained_dict(
+                    current_space,
+                    chained_key,
+                    transformation.get_target_space_from_source,
+                    ignore_missing_keys=self.ignore_missing_keys
+                )
             else:
-                current_source = None
-            inverse_mapping[key] = transformation.direction_inverse(
-                current_source
-            )
+                inverse_items.append((key, transformation.direction_inverse(None)))
         
         return DictTransformation(
-            mapping=inverse_mapping,
+            mapping=dict(reversed(inverse_items)),
             ignore_missing_keys=self.ignore_missing_keys,
             nested_separator=self.nested_separator
         )

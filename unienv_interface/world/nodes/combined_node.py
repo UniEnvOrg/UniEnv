@@ -125,6 +125,11 @@ class CombinedWorldNode(WorldNode[
                 "root_node must belong to the same world as the other nodes."
             assert root_node.name, \
                 "root_node must have a non-empty name (used for info / render keys)."
+            if root_node.name in names:
+                raise ValueError(
+                    f"root_node name '{root_node.name}' collides with a child node name; "
+                    f"info / render / pernode_kwargs entries are keyed by node name."
+                )
         self.root_node = root_node
         if root_node is not None:
             self._all_nodes.append(root_node)
@@ -178,6 +183,11 @@ class CombinedWorldNode(WorldNode[
             largest_ctrl = max(ctrls)
             for node in self._all_nodes:
                 if node.control_timestep is not None:
+                    # Actions are dispatched every round(ct / smallest) control steps, so
+                    # every control_timestep must be an integer multiple of the smallest.
+                    r = node.control_timestep / self._smallest_control_ts
+                    assert abs(r - round(r)) < 1e-9, \
+                        f"Node {node.name} control_timestep ({node.control_timestep}) not integer multiple of smallest ({self._smallest_control_ts})"
                     r = largest_ctrl / node.control_timestep
                     assert abs(r - round(r)) < 1e-9, \
                         f"Largest control ({largest_ctrl}) not integer multiple of {node.name}'s ({node.control_timestep})"
@@ -476,8 +486,15 @@ class CombinedWorldNode(WorldNode[
         return result
 
     @property
-    def world(self) -> World[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+    def world(self) -> Optional[World[BArrayType, BDeviceType, BDtypeType, BRNGType]]:
         return self.nodes[0].world
+
+    @property
+    def _batch_size(self) -> Optional[int]:
+        # Nodes may be built without a world (e.g. ``EnvAsWorldNode(world=None)``,
+        # which only supports unbatched environments): treat them as unbatched.
+        world = self.world
+        return world.batch_size if world is not None else None
 
     @property
     def control_timestep(self) -> Optional[float]:
@@ -535,7 +552,8 @@ class CombinedWorldNode(WorldNode[
 
         for node, ratio, eff_dt in self._cached_step_entries['pre_step'].get(priority, ()):
             if (self._update_substeps - 1) % ratio == 0:
-                node.pre_environment_step(eff_dt, priority=priority)
+                # Nodes without their own update timestep run at the caller's rate.
+                node.pre_environment_step(eff_dt if eff_dt is not None else dt, priority=priority)
     
     def get_context(self):
         assert self.context_space is not None, "Context space is None, cannot get context."
@@ -547,30 +565,30 @@ class CombinedWorldNode(WorldNode[
     
     def get_reward(self):
         assert self.has_reward, "This node does not provide a reward."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return sum(node.get_reward() for node in self._cached_reward_nodes)
         else:
-            rewards = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_floating_dtype, device=self.device)
+            rewards = self.backend.zeros((self._batch_size,), dtype=self.backend.default_floating_dtype, device=self.device)
             for node in self._cached_reward_nodes:
                 rewards = rewards + node.get_reward()
             return rewards
     
     def get_termination(self):
         assert self.has_termination_signal, "This node does not provide a termination signal."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return any(node.get_termination() for node in self._cached_termination_nodes)
         else:
-            terminations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
+            terminations = self.backend.zeros((self._batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self._cached_termination_nodes:
                 terminations = self.backend.logical_or(terminations, node.get_termination())
             return terminations
         
     def get_truncation(self):
         assert self.has_truncation_signal, "This node does not provide a truncation signal."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return any(node.get_truncation() for node in self._cached_truncation_nodes)
         else:
-            truncations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
+            truncations = self.backend.zeros((self._batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self._cached_truncation_nodes:
                 truncations = self.backend.logical_or(truncations, node.get_truncation())
             return truncations
@@ -685,13 +703,14 @@ class CombinedWorldNode(WorldNode[
 
         for node, ratio, eff_dt in self._cached_step_entries['post_step'].get(priority, ()):
             if (self._update_substeps - 1) % ratio == 0:
-                node.post_environment_step(eff_dt, priority=priority)
+                # Nodes without their own update timestep run at the caller's rate.
+                node.post_environment_step(eff_dt if eff_dt is not None else dt, priority=priority)
 
         # With a single shared counter the pre/post balance is trivially
         # consistent (there is only one counter), so no equality assert is
         # needed here.
     
-    def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+    def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}, **kwargs):
         """Forward reset calls to the nodes (children and the optional root node)
         that participate at ``priority``."""
         for node in self._cached_participants.get(('reset', priority), ()):
@@ -699,10 +718,11 @@ class CombinedWorldNode(WorldNode[
                 priority=priority,
                 seed=seed,
                 mask=mask,
-                **pernode_kwargs.get(node.name, {})
+                # Shared extra kwargs go to every node; per-node kwargs override them.
+                **{**kwargs, **pernode_kwargs.get(node.name, {})}
             )
 
-    def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+    def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}, **kwargs):
         """Forward reload calls to the nodes (children and the optional root node)
         that participate at ``priority``."""
         for node in self._cached_participants.get(('reload', priority), ()):
@@ -710,7 +730,8 @@ class CombinedWorldNode(WorldNode[
                 priority=priority,
                 seed=seed,
                 mask=mask,
-                **pernode_kwargs.get(node.name, {})
+                # Shared extra kwargs go to every node; per-node kwargs override them.
+                **{**kwargs, **pernode_kwargs.get(node.name, {})}
             )
 
     def after_reset(self, *, priority : int = 0, mask = None):

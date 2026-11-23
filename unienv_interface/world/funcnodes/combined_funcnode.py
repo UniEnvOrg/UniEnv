@@ -130,6 +130,11 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				"root_node must belong to the same world as the other nodes."
 			assert root_node.name, \
 				"root_node must have a non-empty name (used for info / render keys)."
+			if root_node.name in names:
+				raise ValueError(
+					f"root_node name '{root_node.name}' collides with a child node name; "
+					f"info / render / pernode_kwargs entries are keyed by node name."
+				)
 		self.root_node = root_node
 		if root_node is not None:
 			self._all_nodes.append(root_node)
@@ -139,9 +144,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 		# Aggregate spaces. For FuncWorldNodes, spaces are static interface metadata
 		# declared at construction; they are not refreshed after after_reload.
-		_, self.context_space = self._aggregate_channel_spaces('context_space', 'context')
-		_, self.observation_space = self._aggregate_channel_spaces('observation_space', 'observation')
-		self._action_node_name_direct, self.action_space = self._aggregate_channel_spaces('action_space', 'action')
+		self._init_spaces()
 
 		self.has_reward = any(node.has_reward for node in self._all_nodes)
 		self.has_termination_signal = any(node.has_termination_signal for node in self._all_nodes)
@@ -183,6 +186,11 @@ class CombinedFuncWorldNode(FuncWorldNode[
 			largest_ctrl = max(ctrls)
 			for node in self._all_nodes:
 				if node.control_timestep is not None:
+					# Actions are dispatched every round(ct / smallest) control steps, so
+					# every control_timestep must be an integer multiple of the smallest.
+					r = node.control_timestep / self._smallest_control_ts
+					assert abs(r - round(r)) < 1e-9, \
+						f"Node {node.name} control_timestep ({node.control_timestep}) not integer multiple of smallest ({self._smallest_control_ts})"
 					r = largest_ctrl / node.control_timestep
 					assert abs(r - round(r)) < 1e-9, \
 						f"Largest control ({largest_ctrl}) not integer multiple of {node.name}'s ({node.control_timestep})"
@@ -205,6 +213,18 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		self._action_period = lcm(*self._action_ratios.values()) if self._action_ratios else 1
 
 	# ========== Helper aggregation methods ==========
+	def _init_spaces(self) -> None:
+		"""Aggregate the child (and optional root node) spaces into
+		``context_space`` / ``observation_space`` / ``action_space``.
+
+		Called once from ``__init__``. Subclasses may override this to implement a
+		different aggregation strategy (e.g. :class:`FlatCombinedFuncWorldNode`
+		merges keys instead of nesting them).
+		"""
+		_, self.context_space = self._aggregate_channel_spaces('context_space', 'context')
+		_, self.observation_space = self._aggregate_channel_spaces('observation_space', 'observation')
+		self._action_node_name_direct, self.action_space = self._aggregate_channel_spaces('action_space', 'action')
+
 	def _node_key(self, node: FuncWorldNode) -> str:
 		"""Internal dispatch / state key for ``node``.
 
@@ -421,18 +441,47 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 		seed: Optional[int] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
+		**kwargs,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		"""Create node states (children and the optional root node, whose state is
 		stored under the reserved key) for the current initialization priority."""
 		node_states: CombinedNodeStateT = {}
 		for node in self._all_nodes:
 			if priority in node.initial_priorities:
-				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **{**kwargs, **pernode_kwargs.get(node.name, {})})
 				node_states[self._node_key(node)] = node_state
 		node_states[self._COUNTER_PRE] = 0
 		node_states[self._COUNTER_ACTION] = 0
 		node_states[self._CACHED_ACTIONS] = {}
 		return world_state, node_states
+
+	def merge_partial_states(
+		self,
+		accumulated: CombinedNodeStateT,
+		partial: CombinedNodeStateT,
+	) -> CombinedNodeStateT:
+		"""Merge the node state returned by ``initial`` / ``reload`` at one priority
+		into the state accumulated over the previous priorities.
+
+		Each priority only returns the states of the nodes that participate in it,
+		so the states are merged key by key. Nested combined nodes are merged
+		recursively; their per-priority states are partial as well, and replacing
+		them wholesale would drop the children initialized at other priorities.
+		Returns a new dictionary; the inputs are not modified.
+		"""
+		merged = dict(accumulated)
+		nodes_by_key = {self._node_key(node): node for node in self._all_nodes}
+		for key, value in partial.items():
+			node = nodes_by_key.get(key)
+			if (
+				isinstance(node, CombinedFuncWorldNode)
+				and isinstance(merged.get(key), dict)
+				and isinstance(value, dict)
+			):
+				merged[key] = node.merge_partial_states(merged[key], value)
+			else:
+				merged[key] = value
+		return merged
 
 	def reload(
 		self,
@@ -441,12 +490,13 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 		seed: Optional[int] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
+		**kwargs,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		"""Recreate node states (children and the optional root node) for the current reload priority."""
 		node_states: CombinedNodeStateT = {}
 		for node in self._all_nodes:
 			if priority in node.reload_priorities:
-				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **{**kwargs, **pernode_kwargs.get(node.name, {})})
 				node_states[self._node_key(node)] = node_state
 		node_states[self._COUNTER_PRE] = 0
 		node_states[self._COUNTER_ACTION] = 0
@@ -477,7 +527,8 @@ class CombinedFuncWorldNode(FuncWorldNode[
 					priority=priority,
 					seed=seed,
 					mask=mask,
-					**pernode_kwargs.get(node.name, {}),
+					# Shared extra kwargs go to every node; per-node kwargs override them.
+					**{**kwargs, **pernode_kwargs.get(node.name, {})},
 				)
 				node_state[key] = ns
 		return world_state, node_state
@@ -562,7 +613,9 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				ratio = self._update_ratios[key]
 				if (node_state[self._COUNTER_PRE] - 1) % ratio == 0:
 					ns = node_state[key]
-					world_state, ns = node.pre_environment_step(world_state, ns, node.effective_update_timestep, priority=priority)
+					# Nodes without their own update timestep run at the caller's rate.
+					node_dt = node.effective_update_timestep if node.effective_update_timestep is not None else dt
+					world_state, ns = node.pre_environment_step(world_state, ns, node_dt, priority=priority)
 					node_state[key] = ns
 		return world_state, node_state
 
@@ -670,7 +723,9 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				ratio = self._update_ratios[key]
 				if (node_state[self._COUNTER_PRE] - 1) % ratio == 0:
 					ns = node_state[key]
-					world_state, ns = node.post_environment_step(world_state, ns, node.effective_update_timestep, priority=priority)
+					# Nodes without their own update timestep run at the caller's rate.
+					node_dt = node.effective_update_timestep if node.effective_update_timestep is not None else dt
+					world_state, ns = node.post_environment_step(world_state, ns, node_dt, priority=priority)
 					node_state[key] = ns
 
 		# With a single shared counter the pre/post balance is trivially

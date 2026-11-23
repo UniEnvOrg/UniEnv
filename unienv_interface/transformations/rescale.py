@@ -2,7 +2,12 @@ from .transformation import DataTransformation, TargetDataT
 from unienv_interface.space import Space, BoxSpace
 from typing import Union, Any, Optional, Dict
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.backends.serialization import serialize_dtype, deserialize_dtype
+from unienv_interface.backends.serialization import (
+    serialize_backend,
+    deserialize_backend,
+    serialize_dtype,
+    deserialize_dtype,
+)
 from unienv_interface.utils.array_serialization import (
     serialize_scalar_or_array_value,
     deserialize_scalar_or_array_value,
@@ -19,6 +24,26 @@ def _get_broadcastable_value(
         assert target_ndim >= len(value.shape), "Target space must have at least as many dimensions as the value"
         target_shape = tuple([1] * (target_ndim - len(value.shape)) + list(value.shape))
         return backend.reshape(value, target_shape)
+
+
+def _serialize_dtype_without_backend(dtype) -> tuple:
+    """Serialize ``dtype`` when no backend is known from the source space or the bounds.
+
+    Returns ``(backend_name, dtype_name)``. PyTorch dtypes are resolved by the
+    PyTorch backend; anything else (NumPy dtypes / scalar types, which JAX also
+    uses) by the NumPy backend, falling back to JAX.
+    """
+    if type(dtype).__module__.split(".")[0] == "torch":
+        candidates = ["pytorch"]
+    else:
+        candidates = ["numpy", "jax"]
+    for name in candidates:
+        try:
+            backend = deserialize_backend(name)
+            return name, serialize_dtype(backend, dtype)
+        except (ImportError, ValueError, TypeError):
+            continue
+    raise ValueError(f"Cannot serialize dtype {dtype!r} without a source space")
 
 
 class RescaleTransformation(DataTransformation):
@@ -184,9 +209,15 @@ class RescaleTransformation(DataTransformation):
             "new_high": new_high_data,
             "nan_to": nan_to_data,
         }
-        # Store dtype as string if present (dtype is backend-agnostic string representation)
-        if self.new_dtype is not None and backend is not None:
-            result["new_dtype"] = serialize_dtype(backend, self.new_dtype)
+        # Store dtype as string if present (dtype is backend-agnostic string representation),
+        # together with the backend it was resolved with, so that it can be restored
+        # even when neither a source space nor array bounds provide a backend.
+        if self.new_dtype is not None:
+            if backend is not None:
+                result["new_dtype"] = serialize_dtype(backend, self.new_dtype)
+                result["new_dtype_backend"] = serialize_backend(backend)
+            else:
+                result["new_dtype_backend"], result["new_dtype"] = _serialize_dtype_without_backend(self.new_dtype)
         return result
 
     @classmethod
@@ -218,6 +249,8 @@ class RescaleTransformation(DataTransformation):
             override_device=override_device,
         )
         result_backend = override_backend or new_low_backend or new_high_backend or nan_to_backend
+        if result_backend is None and json_data.get("new_dtype_backend") is not None:
+            result_backend = deserialize_backend(json_data["new_dtype_backend"])
 
         new_dtype = None
         if json_data.get("new_dtype") is not None and result_backend is not None:
