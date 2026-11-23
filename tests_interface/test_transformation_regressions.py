@@ -131,3 +131,41 @@ def test_rescale_serialized_dtype_follows_source_space_backend_on_load():
     space = BoxSpace(TB, 0.0, 10.0, torch.float32, shape=(2,))
     restored = json_to_transformation(json.loads(json.dumps(transformation_to_json(t))), space)
     assert restored.new_dtype == torch.float64
+
+
+# ---------------------------------------------------------------------------
+# DictTransformation with nested (overlapping) keys
+# ---------------------------------------------------------------------------
+
+def _box(low, high):
+    return BoxSpace(NB, low, high, np.float32, shape=(1,))
+
+
+def test_dict_transformation_nested_keys_transform_matches_target_space():
+    source = DictSpace(NB, {"a": DictSpace(NB, {"x": _box(0.0, 100.0), "y": _box(0.0, 1.0)})})
+    t = DictTransformation({
+        "a": IterativeTransformation(RescaleTransformation(-1.0, 1.0)),
+        "a/x": RescaleTransformation(0.0, 10.0),
+    })
+    target = t.get_target_space_from_source(source)
+    x = {"a": {"x": np.array([0.0], np.float32), "y": np.array([1.0], np.float32)}}
+    y = t.transform(source, x)
+    assert target.contains(y)
+    np.testing.assert_allclose(y["a"]["x"], [0.0], atol=1e-6)
+    np.testing.assert_allclose(y["a"]["y"], [1.0], atol=1e-6)
+
+    inverse = t.direction_inverse(source)
+    assert inverse.get_target_space_from_source(target) == source
+    back = inverse.transform(target, y)
+    np.testing.assert_allclose(back["a"]["x"], x["a"]["x"], atol=1e-4)
+    np.testing.assert_allclose(back["a"]["y"], x["a"]["y"], atol=1e-6)
+
+
+def test_dict_transformation_disjoint_keys_unchanged():
+    source = DictSpace(NB, {"x": _box(0.0, 100.0), "y": _box(0.0, 1.0)})
+    t = DictTransformation({"x": RescaleTransformation(0.0, 1.0), "y": RescaleTransformation(-1.0, 1.0)})
+    y = t.transform(source, {"x": np.array([50.0], np.float32), "y": np.array([0.5], np.float32)})
+    np.testing.assert_allclose(y["x"], [0.5])
+    np.testing.assert_allclose(y["y"], [0.0])
+    back = t.direction_inverse(source).transform(t.get_target_space_from_source(source), y)
+    np.testing.assert_allclose(back["x"], [50.0], atol=1e-4)
