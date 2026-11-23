@@ -92,3 +92,42 @@ def test_image_resize_downscale_is_antialiased_on_numpy():
     space = BoxSpace(NB, 0.0, 1.0, np.float32, shape=(8, 8, 1))
     y = ImageResizeTransformation(2, 2).transform(space, img)[..., 0]
     np.testing.assert_allclose(y, [[0.287, 0.249], [0.249, 0.216]], atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# RescaleTransformation keeps new_dtype through JSON without a source space
+# ---------------------------------------------------------------------------
+
+def test_rescale_new_dtype_survives_json_without_source_space():
+    t = RescaleTransformation(-1.0, 1.0, new_dtype=np.float64)
+    restored = json_to_transformation(json.loads(json.dumps(transformation_to_json(t))))
+    assert restored.new_dtype == np.float64
+    space = BoxSpace(NB, 0.0, 10.0, np.float32, shape=(3,))
+    y = restored.transform(space, np.array([0.0, 5.0, 10.0], np.float32))
+    assert y.dtype == np.float64
+    np.testing.assert_allclose(y, [-1.0, 0.0, 1.0])
+
+
+def test_rescale_new_dtype_survives_json_inside_iterative_without_source_space():
+    t = IterativeTransformation(RescaleTransformation(-1.0, 1.0, new_dtype=np.float64))
+    restored = json_to_transformation(json.loads(json.dumps(transformation_to_json(t))))
+    assert restored.transformation.new_dtype == np.float64
+
+
+def test_rescale_torch_new_dtype_survives_json_without_source_space():
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+    t = RescaleTransformation(-1.0, 1.0, new_dtype=torch.float64)
+    restored = json_to_transformation(json.loads(json.dumps(transformation_to_json(t))))
+    assert restored.new_dtype == torch.float64
+    space = BoxSpace(TB, 0.0, 10.0, torch.float32, shape=(2,))
+    assert restored.transform(space, torch.tensor([0.0, 10.0])).dtype == torch.float64
+
+
+def test_rescale_serialized_dtype_follows_source_space_backend_on_load():
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+    t = RescaleTransformation(-1.0, 1.0, new_dtype=np.float64)
+    space = BoxSpace(TB, 0.0, 10.0, torch.float32, shape=(2,))
+    restored = json_to_transformation(json.loads(json.dumps(transformation_to_json(t))), space)
+    assert restored.new_dtype == torch.float64
