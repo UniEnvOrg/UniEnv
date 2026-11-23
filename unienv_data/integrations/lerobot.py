@@ -5,6 +5,7 @@ import io
 import math
 import os
 import threading
+import warnings
 
 import numpy as np
 import pyarrow as pa
@@ -34,6 +35,9 @@ except ImportError:
 
 __all__ = [
     "LeRobotAsUniEnvDataset",
+    "LeRobotDatasetWriter",
+    "export_lerobot",
+    "lerobot_features",
 ]
 
 # LeRobot dtype strings to numpy dtypes
@@ -930,7 +934,7 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         from unienv_data.storages.video_storage import PyAvVideoReader, TorchCodecVideoReader
 
         if self._video_backend == "auto":
-            if importlib.util.find_spec("torchcodec"):
+            if _torchcodec_usable is not False and importlib.util.find_spec("torchcodec"):
                 reader_cls = TorchCodecVideoReader
             else:
                 reader_cls = PyAvVideoReader
@@ -940,7 +944,21 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             reader_cls = PyAvVideoReader
 
         from unienv_interface.backends.numpy import NumpyComputeBackend
-        reader = self._checkout_video_reader(video_path, reader_cls)
+        try:
+            reader = self._checkout_video_reader(video_path, reader_cls)
+        except Exception as error:
+            # TorchCodec loads its native library with the first decoder, so an install that does not
+            # match the local torch or FFmpeg only fails here; "auto" then settles on PyAV.
+            if self._video_backend != "auto" or reader_cls is not TorchCodecVideoReader or _torchcodec_usable:
+                raise
+            try:
+                reader = self._checkout_video_reader(video_path, PyAvVideoReader)
+            except Exception:
+                raise error  # PyAV cannot open it either: the file is the problem, not TorchCodec
+            _torchcodec_failed(error)
+        else:
+            if reader_cls is TorchCodecVideoReader:
+                _torchcodec_worked()
         try:
             with reader:
                 frames = reader.read(local_indices, total_frames)
@@ -1043,3 +1061,24 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                 reader.close()
         else:
             self._owned_video_reader_cache()
+
+
+# Whether TorchCodec decoded a video in this process (True), failed to (False), or was not tried (None).
+_torchcodec_usable: Optional[bool] = None
+
+
+def _torchcodec_failed(error: BaseException) -> None:
+    global _torchcodec_usable
+    if _torchcodec_usable is None:
+        _torchcodec_usable = False
+        message = (str(error).splitlines() or [""])[0]
+        warnings.warn(f"TorchCodec could not open a video that PyAV can ({type(error).__name__}: {message}); "
+                      "decoding LeRobot videos with PyAV from now on", RuntimeWarning, stacklevel=3)
+
+
+def _torchcodec_worked() -> None:
+    global _torchcodec_usable
+    _torchcodec_usable = True
+
+
+from .lerobot_writer import LeRobotDatasetWriter, export_lerobot, lerobot_features  # noqa: E402

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import struct
-import zlib
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from unienv_interface.space import BoxSpace, Space
+from unienv_interface.utils.png import encode_png
 
 __all__ = ["image_kind", "prepare_image", "encode_png"]
 
@@ -77,20 +76,6 @@ def prepare_image(space: Space, image: np.ndarray, kind: str, *, max_side: int =
     if array.shape[-1] == 2:  # gray + alpha is not a PNG color type we write: drop alpha
         array = array[..., :1]
     return np.ascontiguousarray(array), notes
-
-
-def _chunk(kind: bytes, data: bytes) -> bytes:
-    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-
-
-def encode_png(image: np.ndarray) -> bytes:
-    """PNG bytes of a ``uint8`` ``(H, W, 1|3|4)`` image (no third-party encoder needed)."""
-    height, width, channels = image.shape
-    color_type = {1: 0, 3: 2, 4: 6}[channels]
-    rows = np.concatenate([np.zeros((height, 1), np.uint8), image.reshape(height, width * channels)], axis=1)
-    header = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
-    return (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", header) + _chunk(b"IDAT", zlib.compress(rows.tobytes(), 6))
-            + _chunk(b"IEND", b""))
 
 
 def split_batch(array: np.ndarray, batch_ndim: int) -> List[Tuple[Tuple[int, ...], np.ndarray]]:

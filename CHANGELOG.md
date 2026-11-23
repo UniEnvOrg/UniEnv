@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Added a LeRobot dataset writer (format v3.0, no `lerobot` package needed), in `unienv_data.integrations.lerobot`. `LeRobotDatasetWriter.create(root, space, fps, ...)` writes frame by frame with `add_frame` / `add_frames`, `save_episode` / `clear_episode` and `finalize`. `export_lerobot(source, root, fps)` writes a whole replay buffer (episodes and tasks come from its episode records) or LeRobot dataset. `push_to_hub` uploads the result and tags it `v3.0`. Features are named by their joined keys (`obs.state`) unless a `features` mapping is given. Images are written as AV1/H.264 videos, or as PNGs with `videos=False`. LeRobot's `LeRobotDataset` loads the output, statistics included.
+- `LeRobotAsUniEnvDataset` with `video_backend="auto"` falls back to PyAV, with a warning, when TorchCodec is installed but cannot load (a build that does not match torch or FFmpeg). Before, every video read failed.
+- Added `unienv_interface.utils.png.encode_png`, a dependency-free PNG encoder. It was moved out of `unienv_mcp`.
+
 ## 1.0.0 (2026-11-23)
 
 First stable release. Requires `xbarray>=1.0.0`.
