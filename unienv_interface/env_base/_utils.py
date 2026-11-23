@@ -116,12 +116,19 @@ def set_attr_on_first_layer(layer : Any, name : str, value : Any, owner_name : s
     """Set ``name`` on the outermost layer (walking ``prev_wrapper_layer``) that defines it and
     can set it; layers that only expose it through a read-only property are skipped."""
     found = False
+    start = layer
     while layer is not None:
         if settable_here(layer, name):
             setattr(layer, name, value)
             return
         found = found or hasattr(layer, name)
-        layer = layer.prev_wrapper_layer
+        inner = layer.prev_wrapper_layer
+        if inner is None and layer is not start and layer.has_wrapper_attr(name):
+            # Let the innermost layer apply its own lookup (e.g. FuncEnvBasedEnv searching its
+            # functional stack, FuncPolicyBasedPolicy its functional policy)
+            layer.set_wrapper_attr(name, value)
+            return
+        layer = inner
     if found:
         raise AttributeError(f"attribute {name!r} of wrapper {owner_name} is read-only on every layer")
     raise AttributeError(f"wrapper {owner_name} has no attribute {name!r}")

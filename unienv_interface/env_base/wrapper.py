@@ -4,6 +4,7 @@ from typing import Any, Generic, SupportsFloat, TypeVar, Optional, Union, Dict, 
 import abc
 from unienv_interface.space import Space
 from unienv_interface.backends import ComputeBackend, ArrayAPIArray
+from ._utils import set_attr_on_first_layer
 import numpy as np
 
 WrapperBArrayT = TypeVar("WrapperBArrayT")
@@ -209,20 +210,9 @@ class Wrapper(
             name: The variable name
             value: The new variable value
         """
-        sub_env = self
-        attr_set = False
-
-        while attr_set is False and sub_env is not None:
-            if hasattr(sub_env, name):
-                setattr(sub_env, name, value)
-                attr_set = True
-            else:
-                sub_env = sub_env.prev_wrapper_layer
-
-        if attr_set is False and sub_env is None:
-            raise AttributeError(
-                f"wrapper {type(self).__name__} has no attribute {name!r}"
-            )
+        # Layers that only forward ``name`` through a read-only property (e.g. ``batch_size``,
+        # ``render_mode``) are skipped: the value is set on the layer that owns it.
+        set_attr_on_first_layer(self, name, value, type(self).__name__)
 
     def __str__(self):
         """Returns the wrapper name and the :attr:`env` representation string."""

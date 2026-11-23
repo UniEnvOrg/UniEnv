@@ -163,3 +163,50 @@ def test_context_observation_wrapper_defaults(stub_env):
         wrapper.reverse_map_context(context)
     with pytest.raises(NotImplementedError):
         wrapper.reverse_map_observation(obs)
+
+
+# ---------------------------------------------------------------------------
+# Regression: set_wrapper_attr through read-only forwarding properties
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,value", [("render_mode", "human"), ("render_fps", 30), ("device", None), ("batch_size", None)])
+def test_set_wrapper_attr_skips_read_only_forwarding_properties(name, value):
+    base = StubEnv()
+    wrapper = _Plain(_Plain(base))
+    wrapper.set_wrapper_attr(name, value)
+    assert getattr(base, name) == value
+    assert getattr(wrapper, name) == value
+
+
+def test_set_wrapper_attr_keeps_wrapper_overrides_and_reports_missing(stub_env):
+    wrapper = _Plain(_Plain(stub_env))
+    own = np.random.default_rng(5)
+    wrapper.set_wrapper_attr("rng", own)  # settable on the outer wrapper: an explicit override, as before
+    assert wrapper.rng is own and stub_env.rng is not own
+    wrapper.set_wrapper_attr("terminate_above", 0.5)
+    assert stub_env.terminate_above == 0.5
+    with pytest.raises(AttributeError):
+        wrapper.set_wrapper_attr("no_such_attribute", 1)
+
+
+def test_set_wrapper_attr_through_func_env_based_env():
+    from tests_common.envs import StubFuncEnv
+    from unienv_interface.env_base.funcenv import FuncEnvBasedEnv
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    inner = StubFuncEnv()
+    wrapper = _Plain(FuncEnvBasedEnv(FuncFrameStackWrapper(inner, obs_stack_size=1)))
+    wrapper.set_wrapper_attr("terminate_above", 0.25)
+    assert inner.terminate_above == 0.25
+    assert wrapper.get_wrapper_attr("terminate_above") == 0.25
+
+
+def test_func_env_wrapper_set_wrapper_attr_skips_read_only_properties():
+    from tests_common.envs import StubFuncEnv
+    from unienv_interface.env_base.funcenv_wrapper import FuncEnvWrapper
+    inner = StubFuncEnv()
+    wrapper = FuncEnvWrapper(FuncEnvWrapper(inner))
+    wrapper.set_wrapper_attr("batch_size", None)
+    wrapper.set_wrapper_attr("device", None)
+    assert inner.batch_size is None and inner.device is None
+    with pytest.raises(AttributeError):
+        wrapper.set_wrapper_attr("no_such_attribute", 1)

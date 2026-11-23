@@ -3,6 +3,7 @@ import abc
 
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
+from unienv_interface.env_base._utils import set_attr_on_first_layer
 
 __all__ = [
     "Policy",
@@ -308,16 +309,6 @@ class PolicyWrapper(
 
     def set_wrapper_attr(self, name: str, value: Any):
         """Sets the attribute `name` on the policy with `value`."""
-        sub_env = self
-        attr_set = False
-        while not attr_set and sub_env is not None:
-            if hasattr(sub_env, name):
-                setattr(sub_env, name, value)
-                attr_set = True
-            else:
-                sub_env = sub_env.prev_wrapper_layer
-        
-        if not attr_set and sub_env is None:
-            raise AttributeError(
-                f"wrapper {type(self).__name__} has no attribute {name!r}"
-            )
+        # Layers that only forward ``name`` through a read-only property (e.g. ``batch_size``)
+        # are skipped: the value is set on the layer that owns it.
+        set_attr_on_first_layer(self, name, value, type(self).__name__)

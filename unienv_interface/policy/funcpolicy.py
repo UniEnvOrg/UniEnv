@@ -3,6 +3,7 @@ import abc
 
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 from unienv_interface.space import Space
+from unienv_interface.env_base._utils import set_attr_on_first_layer, settable_here
 
 from .policy import Policy, ContextType, ObsType, ActType, RenderFrame, WrapperContextT, WrapperObsT, WrapperActT, WrapperRenderFrame, WrapperBArrayT, WrapperBDeviceT, WrapperBDtypeT, WrapperBRngT
 
@@ -286,19 +287,9 @@ class FuncPolicyWrapper(
 
     def set_wrapper_attr(self, name: str, value: Any):
         """Sets the attribute `name` on the policy with `value`."""
-        sub_env = self
-        attr_set = False
-        while not attr_set and sub_env is not None:
-            if hasattr(sub_env, name):
-                setattr(sub_env, name, value)
-                attr_set = True
-            else:
-                sub_env = sub_env.prev_wrapper_layer
-        
-        if not attr_set and sub_env is None:
-            raise AttributeError(
-                f"wrapper {type(self).__name__} has no attribute {name!r}"
-            )
+        # Layers that only forward ``name`` through a read-only property (e.g. ``batch_size``)
+        # are skipped: the value is set on the layer that owns it.
+        set_attr_on_first_layer(self, name, value, type(self).__name__)
     
 class FuncPolicyBasedPolicy(
     Generic[StateType, BArrayType, ContextType, ObsType, ActType, RenderFrame, BDeviceType, BDtypeType, BRNGType],
@@ -445,19 +436,9 @@ class FuncPolicyBasedPolicy(
 
     def set_wrapper_attr(self, name: str, value: Any):
         """Sets the attribute `name` on the policy with `value`."""
-        sub_env = self
-        attr_set = False
-        while not attr_set and sub_env is not None:
-            if hasattr(sub_env, name):
-                setattr(sub_env, name, value)
-                attr_set = True
-            else:
-                if sub_env == self:
-                    sub_env = self.func_policy
-                else:
-                    sub_env = sub_env.prev_wrapper_layer
-        
-        if not attr_set and sub_env is None:
-            raise AttributeError(
-                f"wrapper {type(self).__name__} has no attribute {name!r}"
-            )
+        # Attributes this policy only forwards through a read-only property (e.g. ``batch_size``)
+        # are set on the functional policy stack that owns them.
+        if settable_here(self, name):
+            setattr(self, name, value)
+        else:
+            set_attr_on_first_layer(self.func_policy, name, value, type(self).__name__)

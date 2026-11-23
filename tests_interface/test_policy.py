@@ -233,3 +233,23 @@ def test_func_policy_wrapper_and_attr_lookup():
         policy.set_wrapper_attr("missing", 0)
     policy.metadata = {"kind": "adapter"}
     assert policy.metadata == {"kind": "adapter"} and func.metadata == {}
+
+
+def test_set_wrapper_attr_skips_read_only_forwarding_properties():
+    """Regression: PolicyWrapper / FuncPolicyWrapper / FuncPolicyBasedPolicy forward ``batch_size``,
+    ``backend`` and ``device`` through read-only properties, so set_wrapper_attr raised
+    'property ... has no setter' instead of setting the policy that owns the attribute."""
+    inner = ReactivePolicy()
+    outer = PolicyWrapper(PolicyWrapper(inner))
+    outer.set_wrapper_attr("batch_size", 4)
+    outer.set_wrapper_attr("device", "cpu")
+    assert inner.batch_size == 4 and outer.batch_size == 4 and inner.device == "cpu"
+
+    func = RunningSumFuncPolicy()
+    FuncPolicyWrapper(FuncPolicyWrapper(func)).set_wrapper_attr("device", "cpu")
+    assert func.device == "cpu"
+    policy = FuncPolicyBasedPolicy(FuncPolicyWrapper(func))
+    policy.set_wrapper_attr("batch_size", 3)
+    assert func.batch_size == 3 and policy.batch_size == 3
+    with pytest.raises(AttributeError):
+        PolicyWrapper(inner).set_wrapper_attr("missing", 0)
