@@ -912,11 +912,39 @@ def _set_at_dynamic_box(
     index: ArrayAPISetIndex,
     value: typing.Union[BArrayType, float, int],
 ) -> BArrayType:
-    try:
-        return space.backend.at(items)[index].set(value)
-    except Exception as e:
-        value = space.pad_data(value, start_axis=1)
-        return space.backend.at(items)[index].set(value)
+    # Pad shorter values first: a dynamic axis of length 1 would otherwise silently
+    # broadcast (``[4]`` written as ``[4, 4, 4, 4, 4]`` instead of ``[4, fill, ...]``)
+    value = _pad_dynamic_value(space, items, index, value)
+    return space.backend.at(items)[index].set(value)
+
+def _pad_dynamic_value(
+    space: DynamicBoxSpace,
+    items: BArrayType,
+    index: ArrayAPISetIndex,
+    value: BArrayType,
+) -> BArrayType:
+    """Pad the dynamic axes of ``value`` with ``fill_value`` to the shape of ``items[index]``.
+
+    The selection keeps the trailing axes of ``items``, so the axes of ``value``
+    are matched to the space's axes from the right; this works whether ``index``
+    drops the batch axis (an integer) or keeps it (a slice, a mask, ...).
+    """
+    if not space.backend.is_backendarray(value):
+        return value
+    target_shape = tuple(_index_array(space.backend, items, index).shape)
+    ndim_space = len(space.shape_low)
+    for value_axis in range(len(value.shape)):
+        target_axis = len(target_shape) - len(value.shape) + value_axis
+        space_axis = ndim_space - len(target_shape) + target_axis
+        if target_axis < 0 or space_axis < 0:
+            continue
+        if space.shape_low[space_axis] == space.shape_high[space_axis]:
+            continue
+        if value.shape[value_axis] < target_shape[target_axis]:
+            value = space.pad_array_on_axis(
+                space.backend, value, value_axis, target_shape[target_axis], fill_value=space.fill_value
+            )
+    return value
 
 @set_at.register(GraphSpace)
 def _set_at_graph(
