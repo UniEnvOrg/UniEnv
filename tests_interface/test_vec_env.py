@@ -18,6 +18,49 @@ from tests_common.trees import assert_tree_equal
 # data_stack
 # ---------------------------------------------------------------------------
 
+from tests_common.backends import cpu_backend_params
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_data_stack_promotes_mixed_scalars(backend, device):
+    """Regression: the dtype came from the first element only (``[0, 0.75]`` -> ``[0, 0]``)."""
+    to_np = backend.to_numpy
+    out = data_stack([{"d": 0}, {"d": 0.75}], backend, device)["d"]
+    np.testing.assert_allclose(to_np(out), [0.0, 0.75])
+    out = data_stack([np.True_, np.False_], backend, device)
+    assert to_np(out).dtype == np.bool_ and to_np(out).tolist() == [True, False]
+    out = data_stack([np.int64(3), 4], backend, device)
+    assert np.issubdtype(to_np(out).dtype, np.integer) and to_np(out).tolist() == [3, 4]
+    out = data_stack([True, 2], backend, device)
+    assert to_np(out).tolist() == [1, 2]
+    out = data_stack([1, None], backend, device)
+    assert out == [1, None]
+
+
+def test_data_stack_large_ints_on_torch():
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+    out = data_stack([1_700_000_000_000_000_000, 1], TB)
+    assert out.dtype == torch.int64 and out.tolist() == [1_700_000_000_000_000_000, 1]
+
+
+def test_sync_vec_env_info_with_mixed_int_float():
+    class _Env(StubEnv):
+        def reset(self, *, mask=None, seed=None, **kwargs):
+            self.seed_ = seed
+            return super().reset(mask=mask, seed=seed, **kwargs)
+
+        def step(self, action):
+            obs, reward, terminated, truncated, info = super().step(action)
+            info["dist"] = 0 if self.seed_ == 0 else 0.75
+            return obs, reward, terminated, truncated, info
+
+    env = SyncVecEnv([_Env, _Env])
+    env.reset(seed=0)
+    info = env.step(np.zeros((2, 2), np.float32))[-1]
+    np.testing.assert_allclose(info["dist"], [0.0, 0.75])
+
+
 def test_data_stack_scalars_and_arrays():
     out = data_stack([1, 2, 3], B)
     assert isinstance(out, np.ndarray) and out.tolist() == [1, 2, 3]
