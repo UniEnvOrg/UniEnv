@@ -347,10 +347,15 @@ class FuncEnvBasedEnv(Env[
         return image
     
     def close(self) -> None:
-        if self.render_state is not None:
-            self.state = self.func_env.render_close(
-                self.state, self.render_state
-            )
+        # ``render_state`` may legitimately be None (e.g. node-based world envs): whether the
+        # renderer was started is tracked by ``_render_inited``.
+        if self._render_inited:
+            try:
+                self.state = self.func_env.render_close(
+                    self.state, self.render_state
+                )
+            except NotImplementedError:
+                pass  # no ``render_close``: nothing to release
             self._render_inited = False
             self.render_state = None
         self.func_env.close(self.state)

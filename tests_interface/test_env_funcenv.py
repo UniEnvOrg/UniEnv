@@ -106,3 +106,41 @@ def test_wrapper_attrs_reach_through_func_env_wrappers():
     # attributes of the adapter itself are still found / set there
     env.set_wrapper_attr("metadata", {"render_modes": []})
     assert env.metadata == {"render_modes": []} and inner.metadata != env.metadata
+
+
+# ---------------------------------------------------------------------------
+# Regression: close() releases a renderer whose render_state is None
+# ---------------------------------------------------------------------------
+
+class _NoneRenderStateFuncEnv(StubFuncEnv):
+    def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+        self.calls.append(("render_init",))
+        return state, None, FuncEnvCommonRenderInfo(render_mode="rgb_array", render_fps=10)
+
+    def render_image(self, state, render_state):
+        return None, state, render_state
+
+
+def test_close_calls_render_close_when_render_state_is_none():
+    func_env = _NoneRenderStateFuncEnv()
+    env = FuncEnvBasedEnv(func_env)
+    env.reset(seed=0)
+    env.render()
+    env.close()
+    names = [call[0] for call in func_env.calls]
+    assert names == ["initial", "render_init", "render_close", "close"]
+    assert env._render_inited is False
+    env.reset(seed=1)
+    env.render()  # the renderer is started again for the new state
+    assert [call[0] for call in func_env.calls].count("render_init") == 2
+
+
+def test_close_without_render_close_implementation():
+    class _NoRenderClose(_NoneRenderStateFuncEnv):
+        render_close = FuncEnv.render_close
+
+    env = FuncEnvBasedEnv(_NoRenderClose())
+    env.reset(seed=0)
+    env.render()
+    env.close()  # render_close is not implemented: nothing to release, no error
+    assert env._render_inited is False
