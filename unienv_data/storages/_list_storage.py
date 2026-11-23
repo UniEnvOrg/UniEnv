@@ -66,7 +66,10 @@ class ListStorageBase(SpaceStorage[
 
     @property
     def is_multiprocessing_safe(self) -> bool:
-        return True
+        # Each file is written independently, but the length of an unbounded storage is per-process state:
+        # a process would not see rows another process appended (and would drop its own writes past the
+        # length it knows), so only fixed-capacity or read-only storages can be shared between processes.
+        return self.capacity is not None or not self.is_mutable
     
     def extend_length(self, length):
         assert self.capacity is None, "Cannot extend length of a fixed-capacity storage"
@@ -129,6 +132,13 @@ class ListStorageBase(SpaceStorage[
             self.set_single(index, value)
         else:
             indexes = batched_index_to_list(self.backend, index, len(self))
+            batch_size = sbu.batch_size_data(value)
+            if batch_size is not None and len(indexes) != batch_size:
+                # e.g. a slice past the length: writing nothing would silently drop the samples
+                raise ValueError(
+                    f"Index {index} selects {len(indexes)} rows of a storage of length {len(self)}, "
+                    f"but the value holds {batch_size} rows"
+                )
             # Encode the files on the shared IO pool; with duplicated indices the last value wins, as in a serial loop
             last_position = {int(ind): i for i, ind in enumerate(indexes)}
             jobs = [(ind, sbu.get_at(self._batched_single_space, value, i)) for ind, i in last_position.items()]

@@ -255,7 +255,8 @@ def test_replay_buffer_create_with_multiprocessing_defaults_to_no_segment_metada
         NPZStorage,
         space,
         cache_path=str(cache_path),
-        capacity=None,
+        # Bounded: an unbounded NPZStorage keeps its length per process and is not multiprocessing-safe
+        capacity=4,
         compressed=False,
         multiprocessing=True,
     )

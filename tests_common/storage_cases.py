@@ -52,6 +52,8 @@ class StorageCase:
     check_dtype: bool = True
     # create(..., multiprocessing=True) is supported for a mutable storage.
     multiprocessing_create: bool = True
+    # ... also for an unbounded storage (List storages keep their length per process, so only bounded ones are safe).
+    multiprocessing_create_unbounded: bool = True
     # load_from(..., read_only=True, multiprocessing=True) yields a multiprocessing-safe storage.
     multiprocessing_load: bool = True
     # get_segments() reports (start, end) segments instead of None.
@@ -246,6 +248,7 @@ STORAGE_CASES: List[StorageCase] = [
         create_kwargs={"compressed": True},
         dumps_only_to_own_path=True,
         negative_indices=False,
+        multiprocessing_create_unbounded=False,
     ),
     StorageCase(
         id="hdf5-box",
@@ -283,6 +286,7 @@ STORAGE_CASES: List[StorageCase] = [
         create_kwargs={"format": "PNG"},
         dumps_only_to_own_path=True,
         negative_indices=False,
+        multiprocessing_create_unbounded=False,
     ),
     StorageCase(
         id="video-ffv1",

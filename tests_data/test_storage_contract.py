@@ -366,6 +366,11 @@ def _assert_pickle_round_trip(case, storage, data):
 def test_create_with_multiprocessing(case, capacity, tmp_path, cleanup):
     if not case.multiprocessing_create:
         pytest.skip(f"{case.id} does not support multiprocessing-safe mutable creation")
+    if capacity is None and not case.multiprocessing_create_unbounded:
+        storage = case.create(tmp_path, capacity, multiprocessing=True)
+        cleanup(storage)
+        assert not storage.is_multiprocessing_safe
+        return
     storage = case.create(tmp_path, capacity, multiprocessing=True)
     cleanup(storage)
     if capacity is None:
