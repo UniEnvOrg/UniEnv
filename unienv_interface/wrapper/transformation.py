@@ -7,6 +7,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
 from unienv_interface.env_base.wrapper import *
+from unienv_interface.env_base._utils import masked_space
 from unienv_interface.space import Space
 from unienv_interface.transformations.transformation import DataTransformation
 from collections import deque
@@ -89,8 +90,9 @@ class TransformWrapper(
         **kwargs
     ) -> Tuple[ContextType, ObsType, DictT[str, Any]]:
         context, obs, info = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
-        transformed_context = self.context_transformation.transform(self.env.context_space, context) if self.context_transformation is not None else context
-        transformed_obs = self.observation_transformation.transform(self.env.observation_space, obs) if self.observation_transformation is not None else obs
+        # A masked reset returns only the selected rows: transform them with the matching sub-space
+        transformed_context = self.context_transformation.transform(masked_space(self.env.context_space, mask), context) if self.context_transformation is not None else context
+        transformed_obs = self.observation_transformation.transform(masked_space(self.env.observation_space, mask), obs) if self.observation_transformation is not None else obs
         return transformed_context, transformed_obs, info
 
 class ContextObservationTransformWrapper(
@@ -131,6 +133,21 @@ class ContextObservationTransformWrapper(
         self._observation_space = None if value is None else value.get_target_space_from_source(self.env.observation_space)
         self._observation_transformation = value
         self._observation_transformation_inv = None if value is None or not value.has_inverse else value.direction_inverse(self.env.observation_space)
+
+    def reset(
+        self,
+        *args,
+        mask : Optional[BArrayType] = None,
+        seed : Optional[int] = None,
+        **kwargs
+    ) -> Tuple[WrapperContextT, WrapperObsT, DictT[str, Any]]:
+        context, observation, info = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
+        # A masked reset returns only the selected rows: transform them with the matching sub-space
+        if self.context_transformation is not None:
+            context = self.context_transformation.transform(masked_space(self.env.context_space, mask), context)
+        if self.observation_transformation is not None:
+            observation = self.observation_transformation.transform(masked_space(self.env.observation_space, mask), observation)
+        return context, observation, info
 
     def map_context(self, context : ContextType) -> WrapperContextT:
         return context if self.context_transformation is None else self.context_transformation.transform(self.env.context_space, context)
