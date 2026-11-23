@@ -66,8 +66,9 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
         Raises:
             ValueError: If node spaces have overlapping keys or non-DictSpace types
         """
-        # Always set direct_return=False for flat combination
-        # We'll handle the flattening ourselves
+        # Always set direct_return=False for flat combination.
+        # We'll handle the flattening ourselves; _init_spaces() is overridden below
+        # and called by super().__init__().
         super().__init__(
             name=name,
             nodes=nodes,
@@ -75,12 +76,19 @@ class FlatCombinedFuncWorldNode(CombinedFuncWorldNode[WorldStateT, BArrayType, B
             render_mode=render_mode,
             root_node=root_node,
         )
-        
-        # Validate and flatten spaces (the optional root node takes part in the
-        # flattening exactly like a child node)
+
+    def _init_spaces(self) -> None:
+        """Override to flatten child (and optional root node) spaces into a single merged DictSpace.
+
+        The nested aggregation of the base class is not run: its rules (e.g. root
+        keys must not equal child node names) do not apply to flat keys. The root
+        node takes part in the flattening exactly like a child node.
+        """
         self.context_space = self._flatten_channel_spaces('context_space')
         self.observation_space = self._flatten_channel_spaces('observation_space')
         self.action_space = self._flatten_channel_spaces('action_space')
+        # _action_node_name_direct is not used in the flat variant (routing is key-based).
+        self._action_node_name_direct = None
 
     def _flatten_channel_spaces(
         self,

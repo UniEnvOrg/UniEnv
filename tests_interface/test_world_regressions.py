@@ -170,3 +170,53 @@ def test_nested_combined_funcnode_keeps_state_of_all_reload_priorities():
     state, _, obs, _ = env.reset(state, reload=True)
     assert {"a", "b"} <= set(state.node_state["inner"])
     assert set(obs["inner"]) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# Flat combined func node: no nested-style root/child-name collision check
+# ---------------------------------------------------------------------------
+
+class _DictObsFuncNode(FuncWorldNode):
+    def __init__(self, world, name, keys):
+        self.world = world
+        self.name = name
+        self.observation_space = DictSpace(B, {k: _box() for k in keys})
+        self.initial_priorities = {0}
+
+    def initial(self, world_state, *, priority=0, seed=None, **kwargs):
+        return world_state, {}
+
+    def reset(self, world_state, node_state, **kwargs):
+        return world_state, node_state
+
+    def get_observation(self, world_state, node_state):
+        return {k: np.zeros(1, np.float32) for k in self.observation_space.spaces}
+
+
+class _DictObsNode(WorldNode):
+    def __init__(self, world, name, keys):
+        self.world = world
+        self.name = name
+        self.observation_space = DictSpace(B, {k: _box() for k in keys})
+
+
+def test_flat_combined_funcnode_root_key_may_equal_child_name():
+    world = SimFuncWorld()
+    node = FlatCombinedFuncWorldNode(
+        "flat", [_DictObsFuncNode(world, "arm", ["arm_pos"])],
+        root_node=_DictObsFuncNode(world, "root", ["arm"]),
+    )
+    assert set(node.observation_space.spaces) == {"arm", "arm_pos"}
+    assert node.action_space is None
+    env = FuncWorldEnv(world, node)
+    _, _, obs, _ = env.initial()
+    assert set(obs) == {"arm", "arm_pos"}
+
+
+def test_flat_combined_funcnode_still_rejects_overlapping_flat_keys():
+    world = SimFuncWorld()
+    with pytest.raises(ValueError, match="Overlapping key"):
+        FlatCombinedFuncWorldNode(
+            "flat", [_DictObsFuncNode(world, "arm", ["pos"])],
+            root_node=_DictObsFuncNode(world, "root", ["pos"]),
+        )

@@ -139,9 +139,7 @@ class CombinedFuncWorldNode(FuncWorldNode[
 
 		# Aggregate spaces. For FuncWorldNodes, spaces are static interface metadata
 		# declared at construction; they are not refreshed after after_reload.
-		_, self.context_space = self._aggregate_channel_spaces('context_space', 'context')
-		_, self.observation_space = self._aggregate_channel_spaces('observation_space', 'observation')
-		self._action_node_name_direct, self.action_space = self._aggregate_channel_spaces('action_space', 'action')
+		self._init_spaces()
 
 		self.has_reward = any(node.has_reward for node in self._all_nodes)
 		self.has_termination_signal = any(node.has_termination_signal for node in self._all_nodes)
@@ -210,6 +208,18 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		self._action_period = lcm(*self._action_ratios.values()) if self._action_ratios else 1
 
 	# ========== Helper aggregation methods ==========
+	def _init_spaces(self) -> None:
+		"""Aggregate the child (and optional root node) spaces into
+		``context_space`` / ``observation_space`` / ``action_space``.
+
+		Called once from ``__init__``. Subclasses may override this to implement a
+		different aggregation strategy (e.g. :class:`FlatCombinedFuncWorldNode`
+		merges keys instead of nesting them).
+		"""
+		_, self.context_space = self._aggregate_channel_spaces('context_space', 'context')
+		_, self.observation_space = self._aggregate_channel_spaces('observation_space', 'observation')
+		self._action_node_name_direct, self.action_space = self._aggregate_channel_spaces('action_space', 'action')
+
 	def _node_key(self, node: FuncWorldNode) -> str:
 		"""Internal dispatch / state key for ``node``.
 
