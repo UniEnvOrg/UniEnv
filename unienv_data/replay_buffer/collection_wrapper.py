@@ -255,17 +255,10 @@ class ReplayBufferCollectionWrapper(
         if self._replay_mode == "per_env" and self._initialized:
             self._mark_reset_boundaries(mask)
 
-        # Handle reset-boundary dumping for shared mode (unbatched or B=1).
-        # For per_env mode, dumping is handled in _mark_reset_boundaries.
-        if (
-            self._replay_mode == "shared"
-            and self._dump_on_reset_boundary
-            and self._initialized
-        ):
-            self._dump_shared_on_reset_boundary()
-        elif self._replay_mode == "shared" and self._initialized:
-            # A reset starts a new episode: close the one a segment-aware buffer has open
-            self._close_open_shared_episode()
+        # Handle the reset boundary (episode close, dumping) for shared mode.
+        # For per_env mode, this is handled in _mark_reset_boundaries.
+        if self._replay_mode == "shared" and self._initialized:
+            self._handle_shared_reset_boundary(mask)
 
         # Merge compact reset results for masked batched resets.
         if mask is not None and self._initialized:
@@ -358,17 +351,10 @@ class ReplayBufferCollectionWrapper(
         if self._replay_mode == "per_env" and self._initialized:
             self._mark_reset_boundaries(mask)
 
-        # Handle reset-boundary dumping for shared mode (unbatched or B=1).
-        # For per_env mode, dumping is handled in _mark_reset_boundaries.
-        if (
-            self._replay_mode == "shared"
-            and self._dump_on_reset_boundary
-            and self._initialized
-        ):
-            self._dump_shared_on_reset_boundary()
-        elif self._replay_mode == "shared" and self._initialized:
-            # A reset starts a new episode: close the one a segment-aware buffer has open
-            self._close_open_shared_episode()
+        # Handle the reset boundary (episode close, dumping) for shared mode.
+        # For per_env mode, this is handled in _mark_reset_boundaries.
+        if self._replay_mode == "shared" and self._initialized:
+            self._handle_shared_reset_boundary(mask)
 
         if mask is not None and self._initialized:
             context, obs = self._merge_masked_reset(context, obs, mask)
@@ -546,7 +532,7 @@ class ReplayBufferCollectionWrapper(
             # (B,) so that downstream builders / transforms can record which
             # env slot each transition came from.
             env_index_batched: Any = self.backend.arange(
-                B, dtype=self.backend.default_integer_dtype,
+                B, dtype=self.backend.default_integer_dtype, device=self.device,
             )
             transition = self._build_transition(
                 cached_obs=prev_obs,
@@ -964,8 +950,9 @@ class ReplayBufferCollectionWrapper(
 
         target_dtype = space.dtype
 
-        # Python scalar or numpy scalar – cast to target dtype
-        return space.backend.asarray(value, dtype=target_dtype)
+        # Python scalar or numpy scalar – cast to target dtype, on the space's device (a Python
+        # scalar would otherwise land on the backend's default device, e.g. the CPU for a CUDA space)
+        return space.backend.asarray(value, dtype=target_dtype, device=space.device)
 
     # ===================================================================
     # Internal – helpers
@@ -980,19 +967,24 @@ class ReplayBufferCollectionWrapper(
         return list(replay_buffers)
 
     def _resolve_replay_mode(
-        self, mode: Literal["auto", "shared", "per_env"]
+        self,
+        mode: Literal["auto", "shared", "per_env"],
+        buffers: Optional[List[ReplayBuffer]] = None,
     ) -> Literal["shared", "per_env"]:
+        """Resolve ``mode`` for ``buffers`` (default: the current replay buffers)."""
         if mode != "auto":
             return mode
+        if buffers is None:
+            buffers = self._replay_buffers
 
         B = self.batch_size
-        K = len(self._replay_buffers)
+        K = len(buffers)
 
         if K == 1:
             if B is None or B == 1:
                 return "shared"
             if B > 1:
-                if self._has_segment_metadata(self._replay_buffers[0]):
+                if self._has_segment_metadata(buffers[0]):
                     raise ValueError(
                         f"Cannot auto-resolve replay mode: batch_size={B}, "
                         f"K=1 but the replay buffer is segment-aware. "
@@ -1066,9 +1058,10 @@ class ReplayBufferCollectionWrapper(
                 # Close any open segment before starting a new episode.
                 if rb.storage is not None and rb.storage.has_open_segment:
                     self._close_episode(rb, i, cut=True)
-                    # Dump on reset boundary if enabled (per_env mode).
-                    if self._dump_on_reset_boundary:
-                        self._dump_buffer(rb)
+                # Dump on reset boundary if enabled (per_env mode), as shared mode does: also
+                # after an episode that already ended with terminated / truncated
+                if self._dump_on_reset_boundary and rb.storage is not None and len(rb) > 0:
+                    self._dump_buffer(rb)
 
     def _done(
         self,
@@ -1220,6 +1213,22 @@ class ReplayBufferCollectionWrapper(
         )
         rb.mark_segment_end(episode_data=self._build_episode_record(rb, summary))
 
+    def _handle_shared_reset_boundary(self, mask: Optional[BArrayType]) -> None:
+        """A reset in shared mode: close the open episode and dump if enabled, unless ``mask``
+        resets no env slot (e.g. ``reset(mask=done)`` while nothing is done)."""
+        if mask is not None:
+            any_reset = (
+                bool(self.backend.any(mask)) if self.backend.is_backendarray(mask)
+                else bool(np.any(np.asarray(mask)))
+            )
+            if not any_reset:
+                return
+        if self._dump_on_reset_boundary:
+            self._dump_shared_on_reset_boundary()
+        else:
+            # A reset starts a new episode: close the one a segment-aware buffer has open
+            self._close_open_shared_episode()
+
     def _close_open_shared_episode(self) -> None:
         rb = self._replay_buffers[0]
         if rb.storage is not None and rb.storage.has_open_segment:
@@ -1366,7 +1375,11 @@ class ReplayBufferCollectionWrapper(
             ``finalize_old_segments`` are both ``False``.
         """
         new_buffers = self._normalize_replay_buffers(replay_buffers)
-        new_mode = self._resolve_replay_mode(replay_mode) if replay_mode is not None else self._replay_mode
+        new_mode = (
+            self._resolve_replay_mode(replay_mode, new_buffers)
+            if replay_mode is not None
+            else self._replay_mode
+        )
         old_buffers = self._replay_buffers
 
         # Validate the new layout
@@ -1389,22 +1402,13 @@ class ReplayBufferCollectionWrapper(
                     "dump_old=True to dump before swapping."
                 )
 
-            # Dump old buffers if requested (before finalization)
-            if dump_old:
-                # Need to finalize first if there are open segments
-                if has_open_segments and not finalize_old_segments:
-                    # Temporarily finalize for dumping
-                    self._finalize_all_segments(old_buffers, new_mode)
-                    self._dump_all_buffers(old_buffers)
-                    # Note: we've already finalized, so don't finalize again
-                    finalize_old_segments = False
-                else:
-                    if finalize_old_segments:
-                        self._finalize_all_segments(old_buffers, new_mode)
-                        finalize_old_segments = False  # Already done
-                    self._dump_all_buffers(old_buffers)
-            elif finalize_old_segments:
+            # Open segments are closed before dumping (a buffer cannot be dumped mid-segment)
+            if dump_old or finalize_old_segments:
                 self._finalize_all_segments(old_buffers, new_mode)
+
+        # Dump old buffers if requested, whether or not they had an open segment
+        if dump_old:
+            self._dump_all_buffers(old_buffers)
 
         # Perform the swap; episodes of the new buffers start from their next step
         self._replay_buffers = new_buffers
