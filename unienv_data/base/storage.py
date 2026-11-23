@@ -307,7 +307,8 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         For storages with fixed capacity, this should reset the storage to its initial state.
         """
         self.abort_segment()
-        if self.capacity is None:
+        # Storages may reject `shrink_length(0)`, so an already empty storage has nothing to shrink
+        if self.capacity is None and len(self) > 0:
             self.shrink_length(len(self))
 
     @abc.abstractmethod
