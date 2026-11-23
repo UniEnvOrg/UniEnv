@@ -14,6 +14,7 @@ from unienv_utils.calibration.board import (  # noqa: E402
     render_board,
     resolve_aruco_dict,
 )
+from unienv_utils.calibration.detect import detect_charuco  # noqa: E402
 
 
 def test_defaults_match_tianji_board() -> None:
@@ -77,19 +78,42 @@ def test_render_board_has_expected_geometry() -> None:
     pixels_per_meter = 5000.0
     image = render_board(cfg, pixels_per_meter)
     width_m, height_m = cfg.board_size_m
+    margin = 20  # default margin_px, added on every side
     assert image.dtype == np.uint8
     assert image.ndim == 2
     assert image.shape == (
-        int(round(height_m * pixels_per_meter)),
-        int(round(width_m * pixels_per_meter)),
+        int(round(height_m * pixels_per_meter)) + 2 * margin,
+        int(round(width_m * pixels_per_meter)) + 2 * margin,
     )
     # The board itself must be dark-on-white ink, not a blank canvas.
     assert image.min() == 0
     assert image.max() == 255
+    # The margins are white
+    assert image[:margin].min() == 255 and image[-margin:].min() == 255
+    assert image[:, :margin].min() == 255 and image[:, -margin:].min() == 255
 
-    half = render_board(cfg, pixels_per_meter / 2.0)
-    assert half.shape[0] == image.shape[0] // 2
-    assert half.shape[1] == image.shape[1] // 2
+    half = render_board(cfg, pixels_per_meter / 2.0, margin_px=0)
+    assert half.shape == (int(round(height_m * pixels_per_meter / 2)), int(round(width_m * pixels_per_meter / 2)))
+
+
+@pytest.mark.parametrize("margin_px", [0, 20, 57])
+def test_rendered_checkers_have_the_physical_size(margin_px) -> None:
+    # Regression: the margins were carved out of the board-sized image, so with the default
+    # 20 px margin a 20 mm checker rendered at 5000 px/m was 95.5 px (19.1 mm printed), not 100 px.
+    cfg = CharucoBoardConfig()
+    pixels_per_meter = 5000.0
+    image = render_board(cfg, pixels_per_meter, margin_px=margin_px)
+    detection = detect_charuco(image, cfg)
+    assert detection is not None
+    corners = {int(i): c for i, c in zip(detection.ids.reshape(-1), detection.corners.reshape(-1, 2))}
+    inner_cols = cfg.col_count - 1
+    pitches = [np.linalg.norm(corners[i + 1] - corners[i]) for i in corners
+               if i + 1 in corners and (i + 1) % inner_cols != 0]
+    pitches += [np.linalg.norm(corners[i + inner_cols] - corners[i]) for i in corners if i + inner_cols in corners]
+    expected_px = cfg.checker_size_m * pixels_per_meter
+    np.testing.assert_allclose(pitches, expected_px, atol=0.5)
+    # The first inner corner sits one checker inside the margin
+    np.testing.assert_allclose(corners[0], [margin_px + expected_px] * 2, atol=1.0)
 
 
 def test_render_board_validates_inputs() -> None:
