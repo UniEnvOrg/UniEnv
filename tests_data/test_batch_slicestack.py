@@ -201,3 +201,24 @@ def test_flattened_framestack_over_wrapped_replay_buffer():
     fs = FrameStackedBatch(rb, prefetch_horizon=1)
     idx = torch.tensor([0, 3])
     assert_tree_equal(fs.get_flattened_at(idx), sfu.flatten_data(fs._batched_space, fs.get_at(idx), start_dim=2))
+
+
+@pytest.mark.parametrize("mask_fn", [EPISODE_ID_MASK, EPISODE_END_MASK], ids=["episode_id", "episode_end"])
+def test_frames_clamped_at_the_batch_edges_are_invalid(mask_fn):
+    # Regression: frames past either end of the batch are clamped to the first / last
+    # sample; the episode-id mask reported them valid (they repeat the anchor's episode
+    # id), unlike the episode-end mask at an episode's last step.
+    rb = make_rb(8)  # episodes [0..3], [4..7]; step 7 ends episode 1
+    fs = FrameStackedBatch(rb, prefetch_horizon=2, postfetch_horizon=2, get_valid_mask_function=mask_fn)
+    out, meta = fs.get_at_with_metadata(torch.tensor([3, 7, 0, 1]))
+    assert_tree_equal(meta["slice_valid_mask"], torch.tensor([
+        [True, True, True, False, False],   # interior episode end
+        [True, True, True, False, False],   # episode end at the end of the batch
+        [False, False, True, True, True],   # start of the batch
+        [False, True, True, True, True],
+    ]))
+    assert_tree_equal(out["obs"][1], _obs_rows([5, 6, 7, 7, 7]))
+    assert_tree_equal(out["obs"][2], _obs_rows([0, 0, 0, 1, 2]))
+    # Same through the column view, which computes the mask from the episode column
+    _, column_meta = fs.get_column(["obs"]).get_at_with_metadata(torch.tensor([3, 7, 0, 1]))
+    assert_tree_equal(column_meta["slice_valid_mask"], meta["slice_valid_mask"])

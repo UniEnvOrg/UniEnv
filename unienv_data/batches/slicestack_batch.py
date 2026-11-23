@@ -436,6 +436,20 @@ class SliceStackedBatch(BatchBase[
         pass
 
     # ========== Valid Mask Utilities ==========
+    def _in_range_mask(self, expanded_idx : BArrayType) -> BArrayType:
+        """
+        (B, T) mask of the frames whose offset stays inside the wrapped batch. ``expand_index``
+        clamps the others to the first / last sample, so their data repeats an edge frame.
+        The anchor frame (offset 0) is never clamped, so the unclamped index of every frame is
+        the anchor's index plus its offset.
+        """
+        anchor = expanded_idx[:, self._idx_zero:self._idx_zero + 1]
+        offset = self.fixed_offset[None, :]
+        if self.backend.device(anchor) != self.backend.device(offset):
+            offset = self.backend.to_device(offset, self.backend.device(anchor))
+        raw_idx = anchor + offset
+        return self.backend.logical_and(raw_idx >= 0, raw_idx < len(self.batch))
+
     @staticmethod
     def _valid_mask_function_episodeid_key(
         batch : "SliceStackedBatch",
@@ -451,7 +465,12 @@ class SliceStackedBatch(BatchBase[
         else:
             episode_ids = data[episode_id_key]
         episode_id_at = episode_ids[:, batch._idx_zero]
-        return episode_ids == episode_id_at[:, None]
+        # Frames clamped to the first / last sample hold the anchor's episode id but are not
+        # part of its window: invalid, as with the episode-end mask at an episode's end
+        return batch.backend.logical_and(
+            episode_ids == episode_id_at[:, None],
+            batch._in_range_mask(expanded_idx),
+        )
 
     @staticmethod
     def get_valid_mask_function_with_episodeid_key(
@@ -488,7 +507,12 @@ class SliceStackedBatch(BatchBase[
         episode_ends_cs_before = batch.backend.at(episode_ends_cs_before)[:, 0].set(0)  # First element should be 0
 
         episode_ends_at = episode_ends_cs_before[:, batch._idx_zero]
-        return episode_ends_cs_before == episode_ends_at[:, None]
+        # Frames clamped to the first / last sample are outside the batch: invalid, as with
+        # the episode-id mask
+        return batch.backend.logical_and(
+            episode_ends_cs_before == episode_ends_at[:, None],
+            batch._in_range_mask(expanded_idx),
+        )
     
     @staticmethod
     def get_valid_mask_function_with_episode_end_key(
