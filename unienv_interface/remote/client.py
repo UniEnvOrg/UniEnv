@@ -157,7 +157,8 @@ class RemoteClient:
         self._reader.start()
         try:
             hello = self._request("", "hello", [], {"version": PROTOCOL_VERSION, "compress": compress,
-                                                    "factories": True},
+                                                    "factories": True,
+                                                    "max_frame_size": transport.max_frame_size},
                                   timeout=30.0 if timeout is None else timeout, lenient_spaces=True)
         except BaseException:
             self.close()

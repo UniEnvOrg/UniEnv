@@ -172,6 +172,9 @@ class _Connection:
 
     def __init__(self, server: RemoteServer, transport: Transport) -> None:
         self.server, self.transport = server, transport
+        # Largest frame sent to this client: the transport's limit, lowered by the client's own
+        # limit if it sends one in ``hello`` (older clients do not).
+        self.max_frame_size: int = transport.max_frame_size
         self.compress: Dict[str, Any] = {}
         self.compress_key: Any = None
         self.seen: Dict[_Group, int] = {}
@@ -409,7 +412,7 @@ class RemoteServer:
                 resource = record.resource
             group = record.group
             descriptor = dict(resource.static, **self._links(resource), spaces=resource.space_update(), factory=True)
-            frame = wire.encode([request_id, OK, descriptor])
+            frame = wire.encode([request_id, OK, descriptor], max_size=connection.max_frame_size)
             connection.seen[group] = group.version
         except BaseException as exc:  # e.g. SystemExit from the factory: still answer, keep the worker
             frame = _error(request_id, exc)
@@ -589,7 +592,7 @@ class RemoteServer:
         if target == "":
             try:
                 value = self._protocol_call(connection, method, *_restore(message, buffers))
-                connection.send(wire.encode([request_id, OK, value]))
+                connection.send(wire.encode([request_id, OK, value], max_size=connection.max_frame_size))
             except wire.WireError:
                 raise
             except Exception as exc:
@@ -626,6 +629,9 @@ class RemoteServer:
             version = kwargs.get("version")
             if version != PROTOCOL_VERSION:
                 raise ValueError(f"Protocol version {version!r} is not supported (server: {PROTOCOL_VERSION})")
+            limit = kwargs.get("max_frame_size")
+            if type(limit) is int and limit > 0:
+                connection.max_frame_size = min(limit, connection.transport.max_frame_size)
             if kwargs.get("compress"):
                 from .compression import parse_spec
                 connection.compress = parse_spec(kwargs["compress"])
@@ -681,7 +687,7 @@ class RemoteServer:
             seen = connection.seen.get(group, 0)
             if group.version > seen:
                 message.append({r.name: r.space_update() for r in group.resources if r.version > seen})
-            frame = wire.encode(message, max_size=connection.transport.max_frame_size)
+            frame = wire.encode(message, max_size=connection.max_frame_size)
             connection.seen[group] = group.version
         except BaseException as exc:  # e.g. SystemExit from the hosted object: still answer, keep the worker
             frame = _error(request_id, exc)
@@ -710,18 +716,23 @@ class RemoteServer:
 
     def _publish(self, resource: _Resource, method: str, value: Any) -> None:
         resource.sequence += 1
-        frames: Dict[Any, Tuple[List[Any], int]] = {}
+        frames: Dict[Any, Optional[Tuple[List[Any], int]]] = {}  # by compression: None if it failed
         for connection in resource.subscribers:
-            frame = frames.get(connection.compress_key)
-            if frame is None:
+            key = connection.compress_key
+            if key not in frames:
                 try:
                     payload = self._compress(connection, resource, method, value)
-                    frame = wire.encode([resource.name, EVENT, [method, resource.sequence, payload]], copy=True,
-                                        max_size=connection.transport.max_frame_size)
-                except (TypeError, ValueError) as exc:
+                    frames[key] = wire.encode([resource.name, EVENT, [method, resource.sequence, payload]], copy=True)
+                except Exception as exc:  # never fails the call that produced the result
                     _log.warning("Cannot publish %s of %r: %s", method, resource.name, exc)
-                    return
-                frames[connection.compress_key] = frame
+                    frames[key] = None
+            frame = frames[key]
+            if frame is None:
+                continue
+            if frame[1] > connection.max_frame_size:
+                _log.warning("Cannot publish %s of %r to a client: the %d-byte frame exceeds its %d-byte limit",
+                             method, resource.name, frame[1], connection.max_frame_size)
+                continue
             connection.post(resource.name, frame)
 
     # ------------------------------------------------------------------ shutdown

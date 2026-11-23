@@ -382,3 +382,57 @@ def test_system_exit_in_a_factory_is_reported():
             for _ in range(2):  # the worker is still there for the second attempt
                 with pytest.raises(Exception, match="SystemExit: cannot start"):
                     client.env("sim")
+
+
+# ---------------------------------------------------------------------------- 10 / 11: frame size limits
+
+class _Camera(ProbeEnv):
+    """Observations of one ``side`` x ``side`` RGB image (marked as an image, so it can be compressed)."""
+
+    def __init__(self, side):
+        super().__init__()
+        self.observation_space = BoxSpace(B, 0, 255, np.uint8, shape=(side, side, 3), metadata={"kind": "image"})
+
+    def step(self, action):
+        super().step(action)
+        return np.full(self.observation_space.shape, 100, np.uint8), 0.0, False, False, {}
+
+
+def test_an_event_too_large_for_one_subscriber_still_reaches_the_others():
+    with RemoteServer(max_frame_size=200_000) as server:
+        server.register("cam", _Camera(260))  # a raw observation (~203 KB) exceeds the limit, a JPEG one not
+        with server.connect() as raw, server.connect(compress={"image": "jpeg:90"}) as jpeg:
+            raw_events = raw.subscribe("cam")  # subscribed first
+            jpeg_events = jpeg.subscribe("cam")
+            jpeg.env("cam").step(ACTION)
+            assert jpeg_events.next(timeout=5).kind == "step"  # used to get nothing
+            with pytest.raises(TimeoutError):
+                raw_events.next(timeout=0.2)
+
+
+def test_replies_respect_the_client_frame_size_limit():
+    with RemoteServer() as server:
+        server.register("cam", _Camera(1024))  # ~3 MB observations
+        server.register("sim", ProbeEnv())
+        address = server.listen("tcp://127.0.0.1:0")
+        with RemoteClient.connect(address, max_frame_size=1 << 20, timeout=5) as small, \
+                RemoteClient.connect(address, timeout=5) as large:
+            small_events, large_events = small.subscribe("cam"), large.subscribe("cam")
+            with pytest.raises(Exception, match="exceeds the 1048576-byte limit"):  # an error for this call only
+                small.env("cam").step(ACTION)
+            assert large_events.next(timeout=5).kind == "step"
+            with pytest.raises(TimeoutError):  # the event is too large for the small client: skipped
+                small_events.next(timeout=0.2)
+            assert not small.closed  # used to drop the whole connection ("malformed frame")
+            assert small.env("sim").step(ACTION)[1] == 1.0
+
+
+def test_clients_that_send_no_frame_limit_keep_the_server_limit():
+    with RemoteServer(max_frame_size=1 << 22) as server:
+        client_side, server_side = MemoryTransport.pair(1 << 22)
+        server._accept(server_side)
+        from unienv_interface.remote import PROTOCOL_VERSION
+        client_side.send(*wire.encode([1, "", "hello", [], {"version": PROTOCOL_VERSION}]))
+        client_side.recv()
+        assert server._connections[0].max_frame_size == 1 << 22
+        client_side.close()
