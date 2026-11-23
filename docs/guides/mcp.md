@@ -35,10 +35,11 @@ Each environment `E` gets:
 
 | Tool | |
 |---|---|
-| `E.describe` | the observation, action and context as JSON Schemas, the step duration, the policies that run on it |
+| `E.describe` | the action as a JSON Schema, the observation and context as results show them, the camera names, the step duration, the policies that run on it, and the open instances |
 | `E.open` | an instance id (a new env for factories; the shared instance for objects) |
 | `E.reset` | start an episode: the context (e.g. the task) and the first observation |
 | `E.step` | apply an action, `repeat` times (stopping when the episode ends): rewards, `terminated` / `truncated`, the last observation |
+| `E.observe` | the current state again without acting: the context, the latest observation, the episode's progress, any run in progress |
 | `E.render` | the env's render as an image |
 | `E.close` | close an instance |
 
@@ -57,6 +58,10 @@ Each policy `P` gets `P.run` and `P.suggest`, and with any policy registered the
 
 The step duration passed to policies (`observe_transition`'s `dt`) is `add_env`'s `dt`, or the env's
 `control_timestep`.
+
+An agent whose context was compacted recovers with `E.describe`, which lists the open instances (with their episode
+progress and any running policy), and `E.observe`, which shows an instance's latest observation again. `observe`
+does not call the environment, so it is safe on a real robot and during a policy run.
 
 ## Instances
 
@@ -90,7 +95,20 @@ Observations come back as structured JSON plus images:
   side; the JSON refers to them by number;
 - `kind="depth"` leaves are gray images, with the depth range in the JSON;
 - arrays with more than 256 entries are summarized (shape, min, max, mean); other values are listed, floats
-  rounded to 4 decimals (`ContentOptions` changes these limits).
+  rounded to 4 decimals.
+
+Images are what fills a model's context fastest, so their number is bounded:
+
+- `reset`, `step`, `observe` and `run` take `images`: `"all"`, `"none"`, or a list of camera paths
+  (`["front", "cameras/wrist"]`; `describe` lists them). Images not shown are still listed in the JSON, with their
+  size and why they were omitted;
+- `ContentOptions` sets the defaults: `cameras` (shown when a call doesn't say; default all), `max_images` per
+  result (default 8; a run's keyframes count too), `batch_images` (`"first"`: only the first env of a batched
+  environment, the default; `"all"`), `max_image_side`, `max_values` and `digits`:
+
+```python
+UniEnvMCPServer("lab", content=ContentOptions(cameras=["front"], max_images=4))
+```
 
 ## Real systems
 

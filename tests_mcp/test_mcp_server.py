@@ -54,8 +54,9 @@ def test_tools_and_schemas(server):
         async with Client(server.mcp_server) as client:
             return {tool.name: tool for tool in (await client.list_tools()).tools}
     tools = anyio.run(main)
-    assert set(tools) == {"grid.describe", "grid.open", "grid.reset", "grid.step", "grid.render", "grid.close",
-                          "goto.run", "goto.suggest", "runs.status", "runs.cancel"}
+    assert set(tools) == {"grid.describe", "grid.open", "grid.reset", "grid.step", "grid.observe", "grid.render",
+                          "grid.close", "goto.run", "goto.suggest", "runs.status", "runs.cancel"}
+    assert tools["grid.observe"].annotations.read_only_hint and tools["grid.observe"].annotations.idempotent_hint
     action = tools["grid.step"].input_schema["properties"]["action"]
     assert action["type"] == "object" and action["required"] == ["dx", "dy"]
     assert action["properties"]["dx"] == {"type": "number", "minimum": -1.0, "maximum": 1.0, "description": "units: m"}
@@ -64,7 +65,10 @@ def test_tools_and_schemas(server):
     (described,) = call(server, ("grid.describe", {}))
     about = structured(described)
     assert about["step_seconds"] == 0.05 and about["policies"] == ["goto"] and not about["shared"]
-    assert about["observation"]["properties"]["camera"]["description"].startswith("kind: image")
+    camera = about["observation"]["properties"]["camera"]  # as results show it: an image reference
+    assert camera["properties"]["image"] == {"type": ["integer", "null"]} and "image content" in camera["description"]
+    assert about["observation"]["properties"]["pos"]["required"] == ["x", "y"]
+    assert about["cameras"] == ["camera"] and about["instances"] == [] and about["images"]["max_per_result"] == 8
 
 
 def test_open_reset_step_with_images_and_errors(server):
@@ -309,3 +313,97 @@ def test_progress_polling_starts_no_threads(server):
     call(server, ("grid.open", {}), ("grid.reset", {"instance": "grid-1"}),
          ("goto.run", {"instance": "grid-1", "task": "go to (-1, 30)", "max_steps": 50}))
     assert threading.active_count() <= before + 3  # the instance worker and the sweeper, not one per poll
+
+
+def test_observe_shows_the_state_again_without_acting(server):
+    results = call(server, ("grid.open", {}), ("grid.observe", {"instance": "grid-1"}),
+                   ("grid.reset", {"instance": "grid-1"}),
+                   ("grid.step", {"instance": "grid-1", "action": {"dx": 0.5, "dy": 0.25}}),
+                   ("grid.observe", {"instance": "grid-1"}), ("grid.observe", {"instance": "grid-1", "images": "none"}),
+                   ("grid.describe", {}))
+    before = structured(results[1])
+    assert not before["episode_started"] and "reset" in before["next"]
+    step, seen, blind, described = (structured(r) for r in results[3:])
+    assert seen["observation"] == step["observation"] and seen["context"] == "reach the goal at (2, 0)"
+    assert seen["episode_steps"] == 1 and seen["last_rewards"] == step["rewards"] and not seen["terminated"]
+    assert len(images(results[4])) == 1 and images(results[4]) == images(results[3])
+    assert server._instances["grid-1"].env.steps == 1  # observing did not step the env
+    assert images(results[5]) == [] and blind["observation"]["camera"]["omitted"].startswith("not requested")
+    assert described["instances"] == [{"instance": "grid-1", "episode_steps": 1, "episode_ended": False, "run": None}]
+
+
+def test_observe_during_a_background_run():
+    with UniEnvMCPServer() as server:
+        server.add_env("slow", lambda: GridEnv(step_delay=0.02), dt=0.05)
+        server.add_policy("goto", make_goal_policy, max_steps=500)
+
+        async def main():
+            async with Client(server.mcp_server) as client:
+                await client.list_tools()
+                await client.call_tool("slow.open", {})
+                await client.call_tool("slow.reset", {"instance": "slow-1"})
+                run = (await client.call_tool("goto.run", {"instance": "slow-1", "task": "go to (-1, 100)",
+                                                           "wait": False})).structured_content["run"]
+                await anyio.sleep(0.3)
+                seen = await client.call_tool("slow.observe", {"instance": "slow-1"})
+                described = await client.call_tool("slow.describe", {})
+                await client.call_tool("runs.cancel", {"run": run})
+                return run, seen, described
+        run, seen, described = anyio.run(main)
+        state = structured(seen)
+        assert state["run"] == run and state["episode_steps"] > 0 and state["observation"]["pos"]["y"] > 0
+        assert structured(described)["instances"][0]["run"] == run
+
+
+def test_choosing_and_limiting_images():
+    from unienv_mcp import ContentOptions
+
+    with UniEnvMCPServer(content=ContentOptions(max_images=1)) as server:
+        server.add_env("grid", lambda: GridEnv(wrist=True), dt=0.05)
+        results = call(server, ("grid.open", {}), ("grid.reset", {"instance": "grid-1"}),
+                       ("grid.observe", {"instance": "grid-1", "images": ["wrist"]}),
+                       ("grid.observe", {"instance": "grid-1", "images": "bogus"}), ("grid.describe", {}))
+        capped, wrist_only, bad, described = results[1], structured(results[2]), results[3], structured(results[4])
+        assert len(images(capped)) == 1 and structured(capped)["observation"]["wrist"]["omitted"].startswith("image limit")
+        assert wrist_only["observation"]["wrist"]["image"] == 1
+        assert wrist_only["observation"]["camera"]["omitted"].startswith("not requested")
+        assert bad.is_error and "images must be" in bad.content[0].text
+        assert described["cameras"] == ["camera", "wrist"]
+
+    with UniEnvMCPServer(content=ContentOptions(cameras=["wrist"])) as server:
+        server.add_env("grid", lambda: GridEnv(wrist=True), dt=0.05)
+        _, default, everything = call(server, ("grid.open", {}), ("grid.reset", {"instance": "grid-1"}),
+                                      ("grid.observe", {"instance": "grid-1", "images": "all"}))
+        assert len(images(default)) == 1 and len(images(everything)) == 2
+
+
+class BatchedCameras(GridEnv):
+    """Three cameras' worth of envs in one batch (only the observation matters here)."""
+
+    batch_size = 3
+
+    def __init__(self):
+        super().__init__()
+        from unienv_interface.space import BoxSpace, DictSpace
+        from unienv_interface.backends.numpy import NumpyComputeBackend as NB
+        self.observation_space = DictSpace(NB, {"camera": BoxSpace(NB, 0, 255, np.uint8, shape=(3, 16, 16, 3),
+                                                                   metadata={"kind": "image"})})
+        self.action_space = BoxSpace(NB, -1.0, 1.0, np.float32, shape=(3, 2))
+
+    def reset(self, **kwargs):
+        return "batched", {"camera": np.zeros((3, 16, 16, 3), np.uint8)}, {}
+
+
+def test_batched_envs_show_the_first_env_images():
+    from unienv_mcp import ContentOptions
+
+    with UniEnvMCPServer() as server:
+        server.add_env("many", BatchedCameras)
+        _, reset = call(server, ("many.open", {}), ("many.reset", {"instance": "many-1"}))
+        refs = structured(reset)["observation"]["camera"]
+        assert len(images(reset)) == 1 and refs[0]["image"] == 1
+        assert [r["omitted"] for r in refs[1:]] == ["only the first env's images are shown"] * 2
+    with UniEnvMCPServer(content=ContentOptions(batch_images="all")) as server:
+        server.add_env("many", BatchedCameras)
+        _, reset = call(server, ("many.open", {}), ("many.reset", {"instance": "many-1"}))
+        assert len(images(reset)) == 3

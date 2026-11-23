@@ -33,13 +33,16 @@ class GridEnv(Env):
     render_mode = "rgb_array"
     metadata = {"render_modes": ["rgb_array"]}
 
-    def __init__(self, step_delay: float = 0.0) -> None:
+    def __init__(self, step_delay: float = 0.0, wrist: bool = False) -> None:
         self.step_delay = step_delay
+        self.wrist = wrist
+        self.steps = 0
         self.action_space = _action_space()
         self.observation_space = DictSpace(B, {
             "pos": BoxSpace(B, -10.0, 10.0, np.float32, shape=(2,), metadata={"names": ["x", "y"], "units": ["m", "m"]}),
             "camera": BoxSpace(B, 0, 255, np.uint8, shape=(16, 16, 3), metadata={"kind": "image", "format": "rgb",
                                                                                "layout": "HWC"}),
+            **({"wrist": BoxSpace(B, 0, 255, np.uint8, shape=(8, 8, 3), metadata={"kind": "image"})} if wrist else {}),
         })
         self.context_space = TextSpace(B, 64)
         self.rng = B.random.random_number_generator(0)
@@ -50,7 +53,10 @@ class GridEnv(Env):
     def _obs(self) -> Dict[str, np.ndarray]:
         camera = np.zeros((16, 16, 3), np.uint8)
         camera[..., 0] = int(np.clip((self.pos[0] + 5) * 25, 0, 255))
-        return {"pos": self.pos.copy(), "camera": camera}
+        obs = {"pos": self.pos.copy(), "camera": camera}
+        if self.wrist:
+            obs["wrist"] = np.full((8, 8, 3), 200, np.uint8)
+        return obs
 
     def reset(self, *, mask=None, seed: Optional[int] = None, **kwargs: Any):
         self.threads.add(threading.current_thread().name)
@@ -61,6 +67,7 @@ class GridEnv(Env):
         self.threads.add(threading.current_thread().name)
         if self.step_delay:
             time.sleep(self.step_delay)
+        self.steps += 1
         self.pos = self.pos + np.asarray(action, np.float32)
         distance = float(np.linalg.norm(self.pos - GOAL))
         success = distance < 0.25

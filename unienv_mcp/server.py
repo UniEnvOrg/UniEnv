@@ -22,7 +22,8 @@ from unienv_interface.policy import Policy
 from unienv_interface.space.space_utils.json_utils import (bound_violations, describe_metadata, from_json,
                                                           space_to_json_schema, to_json)
 
-from .content import ContentOptions, Rendered, error_result, json_safe, render_image, render_observation, to_result
+from .content import (ContentOptions, Rendered, error_result, image_paths, json_safe, render_image, render_observation,
+                      result_schema, to_result, with_images)
 
 __all__ = ["UniEnvMCPServer"]
 
@@ -79,6 +80,10 @@ class _Instance:
         self.last_used = time.monotonic()
         self.busy = 0  # calls and runs in flight; idle closing waits for 0
         self.active_run: Optional[str] = None  # the policy run in progress, if any
+        # The outcome of the last reset / step / run, for observe
+        self.last_rewards: List[Any] = []
+        self.terminated = self.truncated = False
+        self.info: Any = None
         self.closed = False
 
     def submit(self, fn: Callable[..., Any], *args: Any) -> Future:
@@ -238,7 +243,10 @@ class UniEnvMCPServer:
 
     def _tools(self) -> List[types.Tool]:
         tools: List[types.Tool] = []
-        instance = {"type": "string", "description": "the instance id returned by open"}
+        instance = {"type": "string", "description": "the instance id returned by open (describe lists them)"}
+        images = {"description": 'which observation images to return: "all", "none", or a list of camera paths '
+                                 '(describe lists them); default: the server\'s choice',
+                  "anyOf": [{"type": "string", "enum": ["all", "none"]}, {"type": "array", "items": {"type": "string"}}]}
         for name, entry in self._envs.items():
             acting = types.ToolAnnotations(read_only_hint=False, destructive_hint=entry.physical,
                                            idempotent_hint=False, open_world_hint=entry.physical)
@@ -248,7 +256,8 @@ class UniEnvMCPServer:
             shared = entry.factory is None
             tools += [
                 types.Tool(name=f"{name}.describe", description=f"Describe {name} ({about}): its observation, "
-                           "action and context, as JSON Schemas, and its timing.",
+                           "action and context as JSON Schemas, its cameras, its timing, the policies that run on "
+                           "it, and its open instances.",
                            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
                            annotations=types.ToolAnnotations(read_only_hint=True, idempotent_hint=True)),
                 types.Tool(name=f"{name}.open", description=(
@@ -260,7 +269,7 @@ class UniEnvMCPServer:
                            "Returns the context (e.g. the task) and the first observation; images follow as image "
                            "content, referenced from the JSON by number.",
                            input_schema={"type": "object", "properties": {
-                               "instance": instance, "seed": {"type": "integer", "minimum": 0}},
+                               "instance": instance, "seed": {"type": "integer", "minimum": 0}, "images": images},
                                "required": ["instance"], "additionalProperties": False},
                            annotations=acting),
                 types.Tool(name=f"{name}.step", description=(
@@ -269,9 +278,16 @@ class UniEnvMCPServer:
                     "observation."), input_schema={"type": "object", "properties": {
                         "instance": instance, "action": action_schema,
                         "repeat": {"type": "integer", "minimum": 1, "maximum": entry.max_steps_per_call,
-                                   "default": 1}},
+                                   "default": 1}, "images": images},
                         "required": ["instance", "action"], "additionalProperties": False},
                     annotations=acting),
+                types.Tool(name=f"{name}.observe", description=(
+                    f"The current state of a {name} instance without acting: the context (task), the latest "
+                    "observation, the episode's progress and whether it ended, and any policy run in progress. "
+                    "Use it to look again, e.g. after your context was compacted."),
+                    input_schema={"type": "object", "properties": {"instance": instance, "images": images},
+                                  "required": ["instance"], "additionalProperties": False},
+                    annotations=types.ToolAnnotations(read_only_hint=True, idempotent_hint=True)),
                 types.Tool(name=f"{name}.render", description=f"Render a {name} instance as an image.",
                            input_schema={"type": "object", "properties": {"instance": instance},
                                          "required": ["instance"], "additionalProperties": False},
@@ -297,7 +313,7 @@ class UniEnvMCPServer:
                         "instance": instance, "task": {"type": "string"},
                         "max_steps": {"type": "integer", "minimum": 1, "maximum": entry.max_steps},
                         "keyframes": {"type": "integer", "minimum": 0, "maximum": 8, "default": 3},
-                        "wait": {"type": "boolean", "default": True}},
+                        "wait": {"type": "boolean", "default": True}, "images": images},
                         "required": ["instance"], "additionalProperties": False},
                     annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=physical,
                                                       idempotent_hint=False, open_world_hint=physical)),
@@ -325,13 +341,14 @@ class UniEnvMCPServer:
     def _server_instructions(self) -> str:
         if self._instructions:
             return self._instructions
-        lines = ["UniEnv environments and policies. For an environment E: E.describe explains it, E.open gives an "
-                 "instance id, E.reset starts an episode, E.step acts, E.close frees the instance."]
+        lines = ["UniEnv environments and policies. For an environment E: E.describe explains it (and lists open "
+                 "instances), E.open gives an instance id, E.reset starts an episode, E.step acts, E.observe shows "
+                 "the current state again without acting, E.close frees the instance."]
         if self._policies:
             lines.append("Policies are skills: P.run executes one on an env instance from its current state, "
                          "optionally with a task (instruction) for the policy; chain runs to follow a plan.")
         lines.append("Observation images are returned as image content after the JSON, which refers to them by "
-                     "number.")
+                     "number; pass images=\"none\" or a list of cameras to get fewer.")
         return " ".join(lines)
 
     # ------------------------------------------------------------------ MCP plumbing
@@ -419,6 +436,9 @@ class UniEnvMCPServer:
         if verb == "close":
             return await self._close_instance(self._instance(arguments, entry))
         instance = self._instance(arguments, entry)
+        options = self._options(arguments)
+        if verb == "observe":
+            return self._observe(instance, options)
         if verb in ("reset", "step") and instance.active_run is not None:
             raise _ToolError(f"{instance.id} is running {instance.active_run}; wait for it or cancel it (runs.cancel)")
         if verb == "reset":
@@ -426,11 +446,13 @@ class UniEnvMCPServer:
             context, observation, info = await self._call(instance, lambda: instance.env.reset(seed=seed))
             instance.context, instance.observation = context, observation
             instance.reset_done, instance.episode_steps = True, 0
+            instance.last_rewards, instance.terminated, instance.truncated = [], False, False
+            instance.info = json_safe(info, self.content.digits)
             out = Rendered({"instance": instance.id})
-            render_observation(entry.spaces["context"], context, out, "context", batched=False, options=self.content)
+            render_observation(entry.spaces["context"], context, out, "context", batched=False, options=options)
             render_observation(entry.spaces["observation"], observation, out, "observation",
-                               batched=entry.batch_size is not None, options=self.content)
-            out.structured["info"] = json_safe(info, self.content.digits)
+                               batched=entry.batch_size is not None, options=options)
+            out.structured["info"] = instance.info
             return to_result(out)
         if verb == "step":
             if not instance.reset_done:
@@ -439,7 +461,7 @@ class UniEnvMCPServer:
             repeat = arguments.get("repeat", 1)
             if not isinstance(repeat, int) or not 1 <= repeat <= entry.max_steps_per_call:
                 raise _ToolError(f"repeat must be an integer in [1, {entry.max_steps_per_call}]")
-            return await self._call(instance, self._step, instance, action, repeat)
+            return await self._call(instance, self._step, instance, action, repeat, options)
         if verb == "render":
             frame = await self._call(instance, instance.env.render)
             out = Rendered({"instance": instance.id})
@@ -449,22 +471,52 @@ class UniEnvMCPServer:
             return to_result(out)
         raise _ToolError(f"Unknown tool {entry.name}.{verb}")
 
+    def _options(self, arguments: Dict[str, Any]) -> ContentOptions:
+        try:
+            return with_images(self.content, arguments.get("images"))
+        except ValueError as exc:
+            raise _ToolError(str(exc)) from None
+
     def _describe(self, entry: _EnvEntry) -> types.CallToolResult:
         spaces = entry.spaces
+        batched = entry.batch_size is not None
         about: Dict[str, Any] = {
             "name": entry.name, "description": entry.description,
             "shared": entry.factory is None, "physical": entry.physical,
             "batch_size": entry.batch_size, "step_seconds": entry.dt,
             "action": space_to_json_schema(spaces["action"]),
+            # As results show them: image leaves are image references, large arrays summaries
+            "observation": result_schema(spaces["observation"], batched, self.content),
+            "context": result_schema(spaces["context"], False, self.content),
+            "cameras": image_paths(spaces["observation"], batched),
+            "images": {"shown_by_default": "all" if self.content.cameras is None else list(self.content.cameras),
+                       "max_per_result": self.content.max_images,
+                       "batched_envs": self.content.batch_images if batched else None},
         }
-        for key in ("observation", "context"):
-            space = spaces[key]
-            try:
-                about[key] = None if space is None else space_to_json_schema(space)
-            except TypeError as exc:
-                about[key] = {"note": str(exc)}
         about["policies"] = [name for name, p in self._policies.items() if p.envs is None or entry.name in p.envs]
+        with self._lock:
+            instances = [i for i in self._instances.values() if i.entry is entry and not i.closed]
+        about["instances"] = [{"instance": i.id, "episode_steps": i.episode_steps if i.reset_done else None,
+                               "episode_ended": i.terminated or i.truncated, "run": i.active_run} for i in instances]
         return to_result(Rendered(about))
+
+    def _observe(self, instance: _Instance, options: ContentOptions) -> types.CallToolResult:
+        """The instance's state as the last reset / step / run left it; the env is not called."""
+        entry = instance.entry
+        out = Rendered({"instance": instance.id, "episode_started": instance.reset_done,
+                        "episode_steps": instance.episode_steps if instance.reset_done else None,
+                        "terminated": instance.terminated, "truncated": instance.truncated,
+                        "last_rewards": instance.last_rewards, "run": instance.active_run})
+        if not instance.reset_done:
+            out.structured["next"] = f"{entry.name}.reset to start an episode"
+            return to_result(out)
+        render_observation(entry.spaces["context"], instance.context, out, "context", batched=False, options=options)
+        render_observation(entry.spaces["observation"], instance.observation, out, "observation",
+                           batched=entry.batch_size is not None, options=options)
+        out.structured["info"] = instance.info
+        if instance.terminated or instance.truncated:
+            out.structured["next"] = f"the episode ended: {entry.name}.reset to start another"
+        return to_result(out)
 
     async def _open(self, entry: _EnvEntry) -> types.CallToolResult:
         if entry.factory is None:
@@ -523,7 +575,7 @@ class UniEnvMCPServer:
             raise _ToolError("Action out of bounds: " + "; ".join(violations))
         return action
 
-    def _step(self, instance: _Instance, action: Any, repeat: int) -> types.CallToolResult:
+    def _step(self, instance: _Instance, action: Any, repeat: int, options: ContentOptions) -> types.CallToolResult:
         """``repeat`` steps on the instance's thread."""
         entry = instance.entry
         rewards, info, terminated, truncated, observation = [], {}, False, False, instance.observation
@@ -535,11 +587,13 @@ class UniEnvMCPServer:
             if terminated or truncated:
                 break
         instance.observation = observation
+        instance.last_rewards, instance.terminated, instance.truncated = rewards, terminated, truncated
+        instance.info = json_safe(info, self.content.digits)
         out = Rendered({"instance": instance.id, "steps": len(rewards), "episode_steps": instance.episode_steps,
                         "rewards": rewards, "terminated": terminated, "truncated": truncated})
         render_observation(entry.spaces["observation"], observation, out, "observation",
-                           batched=entry.batch_size is not None, options=self.content)
-        out.structured["info"] = json_safe(info, self.content.digits)
+                           batched=entry.batch_size is not None, options=options)
+        out.structured["info"] = instance.info
         if terminated or truncated:
             out.structured["next"] = f"the episode ended: {entry.name}.reset to start another"
         return to_result(out)
@@ -571,6 +625,9 @@ class UniEnvMCPServer:
             raise _ToolError(f"max_steps must be an integer in [1, {entry.max_steps}]")
         if not isinstance(keyframes, int) or not 0 <= keyframes <= 8:
             raise _ToolError("keyframes must be an integer in [0, 8]")
+        options = self._options(arguments)
+        if options.cameras is not None and len(options.cameras) == 0:
+            keyframes = 0  # images="none"
         if entry.shared is not None and not entry.lock.acquire(blocking=False):
             raise _ToolError(f"{entry.name} is a shared policy and already running; wait for that run or cancel it")
         run = _Run(f"run-{next(self._counter)}", entry.name, instance.id, max_steps)
@@ -582,7 +639,7 @@ class UniEnvMCPServer:
             self._runs[run.id] = run
             instance.busy += 1
             instance.active_run = run.id
-        run.future = instance.submit(self._run, entry, instance, run, task, dt, keyframes)
+        run.future = instance.submit(self._run, entry, instance, run, task, dt, keyframes, options)
         run.future.add_done_callback(lambda _: self._run_done(entry, instance))
         if not arguments.get("wait", True):
             return to_result(Rendered({"run": run.id, "status": "running",
@@ -630,7 +687,7 @@ class UniEnvMCPServer:
                                    "next": f"{instance.entry.name}.step to apply it"}))
 
     def _run(self, entry: _PolicyEntry, instance: _Instance, run: _Run, task: Optional[str], dt: float,
-             keyframes: int) -> None:
+             keyframes: int, options: ContentOptions) -> None:
         """A closed-loop run on the instance's thread."""
         env_entry = instance.entry
         out = Rendered()
@@ -639,6 +696,7 @@ class UniEnvMCPServer:
         total_reward = 0.0
         terminated = truncated = success = False
         info: Any = {}
+        rewards: List[Any] = []
         try:
             policy = self._policy_for(entry, instance)
             policy.reset(task if task is not None else instance.context, instance.observation)
@@ -652,6 +710,7 @@ class UniEnvMCPServer:
                 instance.observation = observation
                 instance.episode_steps += 1
                 run.steps = step + 1
+                rewards = [json_safe(reward, self.content.digits)]
                 total_reward += float(np.sum(np.asarray(json_safe(reward), dtype=float)))
                 terminated, truncated = _any(term), _any(trunc)
                 success = success or _any(info.get("success", False)) if isinstance(info, dict) else success
@@ -677,13 +736,16 @@ class UniEnvMCPServer:
                                "info": json_safe(info, self.content.digits)})
         if run.error:
             out.structured["error"] = run.error
+        if run.steps:
+            instance.last_rewards, instance.terminated, instance.truncated = rewards, terminated, truncated
+            instance.info = json_safe(info, self.content.digits)
         if keyframes and run.steps and (not frames or frames[-1][0] != run.steps):
             frames.append((run.steps, self._keyframe(instance, instance.observation)))
         for step, frame in _spread(frames, keyframes):
-            number = render_image(frame, f"keyframe at step {step}", out, self.content) if frame is not None else None
+            number = render_image(frame, f"keyframe at step {step}", out, options) if frame is not None else None
             out.structured.setdefault("keyframes", []).append({"step": step, "image": number})
         render_observation(env_entry.spaces["observation"], instance.observation, out, "observation",
-                           batched=env_entry.batch_size is not None, options=self.content)
+                           batched=env_entry.batch_size is not None, options=options)
         if terminated or truncated:
             out.structured["next"] = f"the episode ended: {env_entry.name}.reset to start another"
         run.result, run.finished_at = out, time.monotonic()
