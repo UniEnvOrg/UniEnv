@@ -99,6 +99,27 @@ else:
 
 IndexType = Union[None, int, slice, str, Tensor, List[Any], Tuple[Any, ...]]
 
+class _ChainedIndex(tuple):
+    """unienv: indices applied one after the other (a view of a view of a mapped file)."""
+
+
+def _chain_index(parent_index, item):
+    """The index of ``parent[item]`` from the mapped file, given the index of ``parent``."""
+    if parent_index is None:
+        return item
+    if isinstance(parent_index, _ChainedIndex):
+        return _ChainedIndex((*parent_index, item))
+    return _ChainedIndex((parent_index, item))
+
+
+def _apply_index(tensor, index):
+    if isinstance(index, _ChainedIndex):
+        for item in index:
+            tensor = tensor[item]
+        return tensor
+    return tensor[index]
+
+
 class MemoryMappedTensor(torch.Tensor):
     """A Memory-mapped Tensor.
 
@@ -839,7 +860,7 @@ class MemoryMappedTensor(torch.Tensor):
             tensor = tensor.view(shape)
 
         if index is not None:
-            tensor = tensor[index]
+            tensor = _apply_index(tensor, index)
         out = cls(tensor)
         out.filename = filename
         out._handler = None
@@ -886,7 +907,7 @@ class MemoryMappedTensor(torch.Tensor):
             out = torch.reshape(out, shape)
 
         if index is not None:
-            out = out[index]
+            out = _apply_index(out, index)
         out = cls(out)
         out.filename = None
         out._handler = handler
@@ -987,7 +1008,9 @@ class MemoryMappedTensor(torch.Tensor):
         tensor._handler = getattr(self, "_handler", None)
         tensor.filename = getattr(self, "_filename", None)
         tensor._readonly = getattr(self, "_readonly", False)
-        tensor.index = item
+        # unienv: a view of a view must remember every index from the mapped file, not only the
+        # last one; pickling rebuilds it as `parent[index_0][index_1]...` (see `_apply_index`).
+        tensor.index = _chain_index(getattr(self, "index", None), item)
         tensor.parent_shape = getattr(self, "parent_shape", None)
         return tensor
 

@@ -36,6 +36,28 @@ def test_pickled_view_keeps_its_index(memmap_file, index):
     torch.testing.assert_close(torch.as_tensor(clone), torch.as_tensor(view))
 
 
+def test_pickled_view_of_a_view_keeps_every_index(memmap_file):
+    # Regression: a view of a view only remembered its last index, so pickling rebuilt
+    # full[1] (= [2, 3]) instead of full[2:5][1] (= [6, 7]).
+    full = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2))
+    chunk = full[2:5]
+    for view in (chunk[1], list(chunk)[1], chunk.unbind(0)[1], chunk[1:][0], chunk.split(2)[0][1], chunk.chunk(3)[1][0]):
+        assert isinstance(view, MemoryMappedTensor)
+        torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(view))), torch.tensor([6.0, 7.0]))
+    deeper = full[1:][1:][1:][0]  # three levels: full[3]
+    torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(deeper))), torch.tensor([6.0, 7.0]))
+    # The view still maps the file (it is not a copy).
+    clone = pickle.loads(pickle.dumps(chunk[1]))
+    clone[0] = -5.0
+    assert float(full[3, 0]) == -5.0
+
+
+def test_pickled_view_of_a_loaded_view_keeps_both_indices(memmap_file):
+    loaded = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2), index=slice(2, 6))
+    view = loaded[1]  # full[3]
+    torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(view))), torch.tensor([6.0, 7.0]))
+
+
 def test_pickled_read_only_tensor_stays_read_only(memmap_file):
     read_only = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2), readonly=True)
     clone = pickle.loads(pickle.dumps(read_only))
