@@ -220,3 +220,60 @@ def test_flat_combined_funcnode_still_rejects_overlapping_flat_keys():
             "flat", [_DictObsFuncNode(world, "arm", ["pos"])],
             root_node=_DictObsFuncNode(world, "root", ["pos"]),
         )
+
+
+# ---------------------------------------------------------------------------
+# Extra reset kwargs reach the children of combined nodes
+# ---------------------------------------------------------------------------
+
+class _KwargsNode(CounterNode):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kwargs_log = []
+
+    def reset(self, *, priority=0, seed=None, mask=None, **kwargs):
+        self.kwargs_log.append(("reset", kwargs))
+        super().reset(priority=priority, seed=seed, mask=mask)
+
+    def reload(self, *, priority=0, seed=None, mask=None, **kwargs):
+        self.kwargs_log.append(("reload", kwargs))
+        super().reload(priority=priority, seed=seed, mask=mask)
+
+
+def test_combined_node_forwards_extra_reset_kwargs():
+    world = SimWorld()
+    a, b = _KwargsNode(world, "a"), _KwargsNode(world, "b")
+    env = WorldEnv(world, [a, b])
+    env.reset(options={"x": 1})
+    env.reset(options={"x": 2}, pernode_kwargs={"b": {"options": {"x": 3}}})
+    assert a.kwargs_log == [("reload", {"options": {"x": 1}}), ("reset", {"options": {"x": 2}})]
+    assert b.kwargs_log == [("reload", {"options": {"x": 1}}), ("reset", {"options": {"x": 3}})]
+
+
+class _KwargsFuncNode(CounterFuncNode):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kwargs_log = []
+
+    def initial(self, world_state, *, priority=0, seed=None, **kwargs):
+        self.kwargs_log.append(("initial", kwargs))
+        return super().initial(world_state, priority=priority, seed=seed)
+
+    def reload(self, world_state, *, priority=0, seed=None, **kwargs):
+        self.kwargs_log.append(("reload", kwargs))
+        return super().initial(world_state, priority=priority, seed=seed)
+
+    def reset(self, world_state, node_state, *, priority=0, seed=None, mask=None, **kwargs):
+        self.kwargs_log.append(("reset", kwargs))
+        return super().reset(world_state, node_state, priority=priority, seed=seed, mask=mask)
+
+
+def test_combined_funcnode_forwards_extra_reset_kwargs():
+    world = SimFuncWorld()
+    a, b = _KwargsFuncNode(world, "a"), _KwargsFuncNode(world, "b")
+    env = FuncWorldEnv(world, [a, b])
+    state, *_ = env.initial(options=1)
+    state, *_ = env.reset(state, options=2)
+    state, *_ = env.reset(state, reload=True, options=3)
+    assert a.kwargs_log == [("initial", {"options": 1}), ("reset", {"options": 2}), ("reload", {"options": 3})]
+    assert b.kwargs_log == a.kwargs_log

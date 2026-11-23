@@ -698,7 +698,7 @@ class CombinedWorldNode(WorldNode[
         # consistent (there is only one counter), so no equality assert is
         # needed here.
     
-    def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+    def reset(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}, **kwargs):
         """Forward reset calls to the nodes (children and the optional root node)
         that participate at ``priority``."""
         for node in self._cached_participants.get(('reset', priority), ()):
@@ -706,10 +706,11 @@ class CombinedWorldNode(WorldNode[
                 priority=priority,
                 seed=seed,
                 mask=mask,
-                **pernode_kwargs.get(node.name, {})
+                # Shared extra kwargs go to every node; per-node kwargs override them.
+                **{**kwargs, **pernode_kwargs.get(node.name, {})}
             )
 
-    def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}):
+    def reload(self, *, priority : int = 0, seed = None, mask = None, pernode_kwargs : Dict[str, Any] = {}, **kwargs):
         """Forward reload calls to the nodes (children and the optional root node)
         that participate at ``priority``."""
         for node in self._cached_participants.get(('reload', priority), ()):
@@ -717,7 +718,8 @@ class CombinedWorldNode(WorldNode[
                 priority=priority,
                 seed=seed,
                 mask=mask,
-                **pernode_kwargs.get(node.name, {})
+                # Shared extra kwargs go to every node; per-node kwargs override them.
+                **{**kwargs, **pernode_kwargs.get(node.name, {})}
             )
 
     def after_reset(self, *, priority : int = 0, mask = None):

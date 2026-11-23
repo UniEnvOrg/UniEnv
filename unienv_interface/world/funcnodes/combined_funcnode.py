@@ -436,13 +436,14 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 		seed: Optional[int] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
+		**kwargs,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		"""Create node states (children and the optional root node, whose state is
 		stored under the reserved key) for the current initialization priority."""
 		node_states: CombinedNodeStateT = {}
 		for node in self._all_nodes:
 			if priority in node.initial_priorities:
-				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				world_state, node_state = node.initial(world_state, priority=priority, seed=seed, **{**kwargs, **pernode_kwargs.get(node.name, {})})
 				node_states[self._node_key(node)] = node_state
 		node_states[self._COUNTER_PRE] = 0
 		node_states[self._COUNTER_ACTION] = 0
@@ -484,12 +485,13 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		priority: int = 0,
 		seed: Optional[int] = None,
 		pernode_kwargs: Dict[str, Dict[str, Any]] = {},
+		**kwargs,
 	) -> Tuple[WorldStateT, CombinedNodeStateT]:
 		"""Recreate node states (children and the optional root node) for the current reload priority."""
 		node_states: CombinedNodeStateT = {}
 		for node in self._all_nodes:
 			if priority in node.reload_priorities:
-				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **pernode_kwargs.get(node.name, {}))
+				world_state, node_state = node.reload(world_state, priority=priority, seed=seed, **{**kwargs, **pernode_kwargs.get(node.name, {})})
 				node_states[self._node_key(node)] = node_state
 		node_states[self._COUNTER_PRE] = 0
 		node_states[self._COUNTER_ACTION] = 0
@@ -520,7 +522,8 @@ class CombinedFuncWorldNode(FuncWorldNode[
 					priority=priority,
 					seed=seed,
 					mask=mask,
-					**pernode_kwargs.get(node.name, {}),
+					# Shared extra kwargs go to every node; per-node kwargs override them.
+					**{**kwargs, **pernode_kwargs.get(node.name, {})},
 				)
 				node_state[key] = ns
 		return world_state, node_state
