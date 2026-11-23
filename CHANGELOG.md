@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 1.0.0 (2026-11-23)
+
+First stable release. Requires `xbarray>=1.0.0`.
+
+- The wheel no longer installs the repository's `docs` and `benchmarks` folders as top-level packages (earlier wheels did).
 
 - Added `unienv_mcp` (extra `unienv[mcp]`, command `unienv-mcp`): environments and policies as MCP servers for LLM agents. `UniEnvMCPServer.add_env` exposes an environment as tools `E.describe` / `open` / `reset` / `step` / `render` / `close`, with state in instances addressed by id (a factory builds one per `open`, closed after `idle_timeout`; an object is one shared instance), each on its own thread. `E.observe` shows an instance's state again without acting (e.g. after the model's context was compacted), and `E.describe` lists the open instances and the camera names. `add_policy` exposes `P.run`, a closed-loop run on an env instance from its current state (policies as skills; `task` replaces the context for the policy; progress, cancellation, keyframes, or `wait=false` with `runs.status` / `runs.cancel`), and `P.suggest`. Action tool schemas come from the action spaces, out-of-bounds actions are tool errors listing the violations (or clipped), and image leaves of observations are returned as images: tools take `images` (`"all"`, `"none"` or camera paths), and `ContentOptions` sets the default cameras, a per-result image limit and first-env-only images for batched environments. `physical=True` annotates acting tools as destructive for real systems. `E.host` serves an open instance with UniEnv remote execution for other processes (any `tcp://`, `unix://` or `ws://` address; on by default, `hosting=False` removes it), with every reset and step, the model's and policy runs' included, published to remote subscribers in order; `P.host` serves the policy paired with an instance; `E.unhost` stops. `unienv-mcp serve module:attr` serves from code, `unienv-mcp bridge <address>` serves what a `RemoteServer` hosts; stdio or Streamable HTTP. No nodes and no access control.
 - Added `RemoteServer.publish(name, method, value)`: publish a `reset` / `reload` / `step` result the server did not produce itself (e.g. an env driven on the server's side) to the env's subscribers; `register(..., publish_results=False)` for objects that publish all their own events.

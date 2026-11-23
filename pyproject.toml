@@ -3,11 +3,11 @@ name = "unienv"
 description = "Unified robot environment framework supporting multiple tensor and simulation backends"
 readme = "README.md"
 license = "Apache-2.0"
-version = "0.0.1b16"
+version = "1.0.0"
 requires-python = ">= 3.10"
 dependencies = [
     "numpy",
-    "xbarray>=0.0.1a20",
+    "xbarray>=1.0.0",
     "pillow",
     "cloudpickle",
     "pyvers",
@@ -77,7 +77,7 @@ Changelog = "https://github.com/UniEnvOrg/UniEnv/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["*"]
-exclude = ["training*", "tests*", "examples*"]
+exclude = ["training*", "tests*", "examples*", "benchmarks*", "docs*", "scripts*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_interface", "tests_data", "tests_utils", "tests_mcp"]
