@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 import numpy as np
 
 from unienv_interface.backends import get_backend_from_tensor
+from unienv_interface.space import DictSpace, TupleSpace
+from unienv_interface.space.spaces.union import UnionSpace
 
 from .wire import ArrayCodec, CodecArray, WireError, _CODECS, register_codec
 
@@ -90,11 +92,14 @@ class JpegCodec(ArrayCodec):
         layout = options.get("layout")
         if dtype != np.uint8 or layout not in ("HWC", "CHW") or len(shape) < 3:
             raise WireError("Invalid JPEG array")
+        # Validate the shape against the blobs before allocating anything.
+        height, width, channels = shape[-3:] if layout == "HWC" else (shape[-2], shape[-1], shape[-3])
+        if channels not in (1, 3) or not 0 < height <= _MAX_SIDE or not 0 < width <= _MAX_SIDE:
+            raise WireError("Invalid JPEG array shape")
+        if math.prod(shape[:-3]) != len(blobs):
+            raise WireError("JPEG array has the wrong number of images")
         result = np.empty(shape, np.uint8)
         images = self._images(result, layout)
-        if len(blobs) != len(images):
-            raise WireError("JPEG array has the wrong number of images")
-        height, width, channels = images.shape[1:]
         bgr = options.get("format") == "bgr"
         if cv2 is not None:
             flag = cv2.IMREAD_GRAYSCALE if channels == 1 else (
@@ -173,11 +178,24 @@ def _leaf(value: Any, space: Any, spec: Dict[str, Tuple[str, Dict[str, Any]]]) -
 def _walk(value: Any, space: Any, spec: Dict[str, Tuple[str, Dict[str, Any]]]) -> Any:
     if space is None:
         return value
-    children = getattr(space, "spaces", None)
-    if isinstance(children, dict) and isinstance(value, dict):
-        return {key: _walk(item, children.get(key), spec) for key, item in value.items()}
-    if isinstance(children, (tuple, list)) and isinstance(value, (tuple, list)) and len(value) == len(children):
-        return type(value)(_walk(item, child, spec) for item, child in zip(value, children))
+    if isinstance(space, DictSpace):
+        if not isinstance(value, dict):
+            return value
+        return {key: _walk(item, space.spaces.get(key), spec) for key, item in value.items()}
+    if isinstance(space, TupleSpace):
+        if not isinstance(value, (tuple, list)) or len(value) != len(space.spaces):
+            return value
+        items = [_walk(item, child, spec) for item, child in zip(value, space.spaces)]
+        if isinstance(value, list):
+            return items
+        return type(value)._make(items) if hasattr(type(value), "_make") else tuple(items)  # namedtuples too
+    if isinstance(space, UnionSpace):  # values are ``(index, value of spaces[index])``
+        if (not isinstance(value, tuple) or len(value) != 2 or not isinstance(value[0], (int, np.integer))
+                or not 0 <= value[0] < len(space.spaces)):
+            return value
+        return (value[0], _walk(value[1], space.spaces[value[0]], spec))
+    if getattr(space, "spaces", None) is not None:  # another container space: leave it alone
+        return value
     return _leaf(value, space, spec)
 
 

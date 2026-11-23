@@ -8,10 +8,13 @@ frame per :meth:`Transport.send` (thread-safe) and returns
 
 from __future__ import annotations
 
+import logging
 import os
+import select
 import socket
 import stat
 import struct
+import time
 from queue import SimpleQueue
 from threading import Lock, Thread
 from typing import Any, Callable, List, Optional, Sequence, Tuple
@@ -25,6 +28,9 @@ __all__ = ["Transport", "StreamTransport", "MemoryTransport", "WebSocketTranspor
            "parse_address"]
 
 _MAX_IOV = 512
+_ACCEPT_RETRY_DELAY = 0.05  # seconds between retries after a failed accept()
+_log = logging.getLogger(__name__)
+_NONBLOCKING_SEND = hasattr(socket, "MSG_DONTWAIT") and hasattr(select, "poll")
 Frame = Tuple[Any, List[Any]]
 
 
@@ -32,6 +38,10 @@ class Transport:
     """A reliable, ordered connection carrying whole frames."""
 
     max_frame_size: int = DEFAULT_MAX_FRAME_SIZE
+    #: Seconds a :meth:`send` may make no progress (the peer reads nothing) before it raises
+    #: ``TimeoutError``; ``None`` waits forever. Honoured by :class:`StreamTransport` on
+    #: platforms with ``MSG_DONTWAIT`` and ``poll`` (Linux, macOS).
+    send_timeout: Optional[float] = None
 
     def send(self, parts: Sequence[Any], size: int) -> None:
         """Send the frame ``parts`` (``size`` bytes in total). Thread-safe."""
@@ -63,6 +73,9 @@ class StreamTransport(Transport):
         with self._send_lock:
             if self._closed:
                 raise ConnectionError("Connection closed")
+            if self.send_timeout is not None and _NONBLOCKING_SEND:
+                self._send_with_timeout(parts, self.send_timeout)
+                return
             sent = self.sock.sendmsg(parts)
             if sent < size:  # partial write: send the rest part by part
                 for part in parts:
@@ -72,6 +85,28 @@ class StreamTransport(Transport):
                         continue
                     self.sock.sendall(view[sent:])
                     sent = 0
+
+    def _send_with_timeout(self, parts: Sequence[Any], timeout: float) -> None:
+        """Send without blocking for more than ``timeout`` seconds without progress."""
+        views = [view for view in (memoryview(part).cast("B") for part in parts) if len(view)]
+        poller = None
+        while views:
+            try:
+                sent = self.sock.sendmsg(views, (), socket.MSG_DONTWAIT)
+            except (BlockingIOError, InterruptedError):
+                sent = 0
+            if sent:
+                while sent:
+                    if sent >= len(views[0]):
+                        sent -= len(views.pop(0))
+                    else:
+                        views[0], sent = views[0][sent:], 0
+                continue
+            if poller is None:
+                poller = select.poll()
+                poller.register(self.sock, select.POLLOUT)
+            if not poller.poll(timeout * 1000):
+                raise TimeoutError(f"The peer has read nothing for {timeout} s")
 
     def _read_into(self, buffer: Any) -> None:
         view = memoryview(buffer).cast("B")
@@ -247,12 +282,21 @@ class _SocketListener(Listener):
         while True:
             try:
                 connection, _ = self.sock.accept()
-            except OSError:
-                return
+            except OSError as exc:
+                if self._closed:
+                    return
+                # A transient failure (EMFILE, ENOBUFS, ECONNABORTED, ...) must not stop the listener.
+                _log.warning("Accepting a connection on %s failed: %s", self.address, exc)
+                time.sleep(_ACCEPT_RETRY_DELAY)
+                continue
             if self._closed:
                 connection.close()
                 return
-            self._on_connect(StreamTransport(connection, self._max_frame_size))
+            try:
+                self._on_connect(StreamTransport(connection, self._max_frame_size))
+            except Exception:
+                _log.exception("Setting up a connection on %s failed", self.address)
+                connection.close()
 
     def close(self) -> None:
         if self._closed:
@@ -301,7 +345,8 @@ def listen(address: str, *, on_connect: Callable[[Transport], None], serve_conne
     if scheme == "ws":
         return _WebSocketListener(host, port, serve_connection, max_frame_size)
     if scheme == "tcp":
-        sock = socket.create_server((host, port))
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET  # an IPv6 literal, e.g. tcp://[::1]:7000
+        sock = socket.create_server((host, port), family=family)
         return _SocketListener(sock, _format("tcp", host, sock.getsockname()[1]), on_connect, max_frame_size)
     if os.path.exists(host) and stat.S_ISSOCK(os.stat(host).st_mode):
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

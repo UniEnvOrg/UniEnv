@@ -23,7 +23,8 @@ tag         fields                                                       decodes
 ``graph``   ``v``: dict of the ``GraphInstance`` fields                  ``GraphInstance``
 ==========  ===========================================================  ======================
 
-NumPy scalars travel as 0-d arrays; torch / JAX arrays are sent as NumPy arrays.
+NumPy scalars travel as 0-d arrays (``np.str_`` / ``np.bytes_`` as ``str`` / ``bytes``); torch / JAX
+arrays are sent as NumPy arrays.
 Anything else raises ``TypeError``: no arbitrary objects are ever reconstructed.
 Decoding validates every frame (sizes, buffer references, dtype allowlist,
 shape x itemsize == length, nesting depth) and raises ``WireError`` otherwise.
@@ -35,6 +36,7 @@ import json
 import math
 import re
 import struct
+import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -48,7 +50,7 @@ if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
 
 __all__ = [
-    "WireError", "SpaceJSON", "CodecArray", "ArrayCodec", "register_codec", "get_codec",
+    "WireError", "SpaceJSON", "SpaceError", "CodecArray", "ArrayCodec", "register_codec", "get_codec",
     "encode", "split", "parse", "restore", "dumps", "loads", "DEFAULT_MAX_FRAME_SIZE",
 ]
 
@@ -129,9 +131,11 @@ def _dtype(text: Any) -> np.dtype:
     return dtype
 
 
-def _shape(shape: Any) -> Tuple[int, ...]:
+def _shape(shape: Any, itemsize: int) -> Tuple[int, ...]:
     if type(shape) is not list or len(shape) > MAX_NDIM or any(type(n) is not int or n < 0 for n in shape):
         raise WireError(f"Invalid array shape {shape!r}")
+    if math.prod(max(n, 1) for n in shape) * itemsize > sys.maxsize:  # numpy rejects these, even when empty
+        raise WireError(f"Array shape {shape!r} is too large")
     return tuple(shape)
 
 
@@ -182,14 +186,14 @@ class _Encoder:
             return [self.value(item, depth) for item in value]
         if isinstance(value, tuple):
             return {TAG: "tuple", "v": [self.value(item, depth) for item in value]}
-        if isinstance(value, np.generic):
+        if isinstance(value, np.generic) and not isinstance(value, (str, bytes)):  # np.str_ / np.bytes_: below
             return self.array(np.asarray(value))
         if isinstance(value, (bool, int, str)):  # subclasses, e.g. IntEnum
             return self.value((bool if isinstance(value, bool) else int if isinstance(value, int) else str)(value), depth)
         if isinstance(value, float):
             return self.value(float(value), depth)
         if isinstance(value, (bytes, bytearray, memoryview)):
-            data = bytes(value) if self.copy or not isinstance(value, bytes) else value
+            data = value if type(value) is bytes and not self.copy else bytes(value)
             return {TAG: "bytes", "b": self.attach(data, len(data))}
         if isinstance(value, Space):
             try:
@@ -283,23 +287,71 @@ def parse(document: Any) -> Any:
         raise WireError(f"Invalid frame JSON: {exc}") from None
 
 
+#: Dtypes used, in order, when the receiving backend lacks one: wider (lossless) ones first,
+#: then narrower ones, as JAX itself does for 64-bit types without ``jax_enable_x64``.
+_FALLBACKS: Dict[str, Tuple[str, ...]] = {
+    "int8": ("int16", "int32", "int64"), "int16": ("int32", "int64"), "int32": ("int64",), "int64": ("int32",),
+    "uint8": ("int16", "int32", "int64"), "uint16": ("int32", "int64", "uint32"),
+    "uint32": ("int64", "uint64", "int32"), "uint64": ("int64", "uint32"),
+    "float16": ("float32", "float64"), "float32": ("float64",), "float64": ("float32",),
+    "complex64": ("complex128",), "complex128": ("complex64",),
+}
+
+
+def _backend_dtype_name(name: str, backend: ComputeBackend) -> Optional[str]:
+    """The dtype name ``backend`` stores ``name`` data as (``None`` if it has no suitable one)."""
+    dtypes = backend.__array_namespace_info__().dtypes()
+    if name in dtypes:
+        return name
+    return next((alternative for alternative in _FALLBACKS.get(name, ()) if alternative in dtypes), None)
+
+
 def _to_backend(array: np.ndarray, backend: ComputeBackend, device: Optional[object]) -> Any:
     if not array.dtype.isnative:
         array = array.astype(array.dtype.newbyteorder("="))
-    dtype = backend.__array_namespace_info__().dtypes().get(array.dtype.name)
-    if dtype is None:
+    name = _backend_dtype_name(array.dtype.name, backend)
+    if name is None:
         raise TypeError(f"{backend.simplified_name} cannot represent dtype {array.dtype.name}")
-    return backend.from_numpy(array, dtype=dtype, device=device)
+    if name != array.dtype.name:
+        array = array.astype(name)
+    return backend.from_numpy(array, dtype=backend.__array_namespace_info__().dtypes()[name], device=device)
+
+
+def _space_document_for(document: Any, backend: ComputeBackend) -> Any:
+    """``document`` with the dtypes ``backend`` lacks replaced like :func:`_to_backend` does for arrays."""
+    if isinstance(document, list):
+        return [_space_document_for(item, backend) for item in document]
+    if not isinstance(document, dict):
+        return document
+    result = {key: _space_document_for(item, backend) for key, item in document.items()}
+    dtype = result.get("dtype")
+    if isinstance(dtype, str):
+        result["dtype"] = _backend_dtype_name(dtype, backend) or dtype
+    return result
+
+
+class SpaceError:
+    """Stands in for a space the receiver cannot rebuild (see ``restore(space_errors=...)``)."""
+
+    __slots__ = ("message",)
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def __repr__(self) -> str:
+        return f"SpaceError({self.message!r})"
 
 
 class _Decoder:
-    __slots__ = ("buffers", "used", "backend", "device", "convert")
+    __slots__ = ("buffers", "used", "backend", "device", "convert", "allow_codecs", "lenient_spaces")
 
-    def __init__(self, buffers: Sequence[Any], backend: Optional[ComputeBackend], device: Optional[object]) -> None:
+    def __init__(self, buffers: Sequence[Any], backend: Optional[ComputeBackend], device: Optional[object],
+                 allow_codecs: bool = True, lenient_spaces: bool = False) -> None:
         self.buffers = buffers
         self.used = [False] * len(buffers)
         self.backend, self.device = backend, device
         self.convert = backend is not None and backend.simplified_name != "numpy"
+        self.allow_codecs, self.lenient_spaces = allow_codecs, lenient_spaces
 
     def take(self, index: Any) -> Any:
         if type(index) is not int or not 0 <= index < len(self.buffers) or self.used[index]:
@@ -308,7 +360,8 @@ class _Decoder:
         return self.buffers[index]
 
     def array(self, node: Dict[str, Any]) -> Any:
-        dtype, shape = _dtype(node.get("d")), _shape(node.get("s"))
+        dtype = _dtype(node.get("d"))
+        shape = _shape(node.get("s"), dtype.itemsize)
         codec = node.get("c")
         if codec is None:
             data = self.take(node.get("b"))
@@ -316,11 +369,19 @@ class _Decoder:
                 raise WireError("Array shape and dtype do not match the buffer length")
             array = np.frombuffer(data, dtype=dtype).reshape(shape)
         else:
+            if not self.allow_codecs:
+                raise WireError("Compressed arrays are not accepted here")
             indices, options = node.get("b"), node.get("o", {})
             if type(indices) is not list or type(options) is not dict:
                 raise WireError("Invalid codec array")
             blobs = [self.take(index) for index in indices]
-            array = get_codec(codec).decode(blobs, dtype, shape, options)
+            decoder = get_codec(codec)
+            try:
+                array = decoder.decode(blobs, dtype, shape, options)
+            except WireError:
+                raise
+            except Exception as exc:
+                raise WireError(f"Codec {codec!r} cannot decode the array: {type(exc).__name__}: {exc}") from None
             if array.dtype != dtype or array.shape != shape:
                 raise WireError(f"Codec {codec!r} returned a mismatched array")
         return _to_backend(array, self.backend, self.device) if self.convert else array
@@ -352,7 +413,7 @@ class _Decoder:
                     raise WireError(f"Invalid dict key: {exc}") from None
             return result
         if tag == "float":
-            if node.get("v") not in _NONFINITE:
+            if not isinstance(node.get("v"), str) or node["v"] not in _NONFINITE:
                 raise WireError("Invalid non-finite float")
             return _NONFINITE[node["v"]]
         if tag == "bytes":
@@ -361,8 +422,12 @@ class _Decoder:
             document = self.value(node.get("v"), depth)
             from unienv_interface.backends.numpy import NumpyComputeBackend
             try:
+                if self.convert:
+                    document = _space_document_for(document, self.backend)
                 return json_to_space(document, self.backend or NumpyComputeBackend, self.device)
             except Exception as exc:
+                if self.lenient_spaces:
+                    return SpaceError(f"{type(exc).__name__}: {exc}")
                 raise WireError(f"Invalid space: {exc}") from None
         if tag == "graph":
             fields = node.get("v")
@@ -380,13 +445,21 @@ class _Decoder:
 
 
 def restore(node: Any, buffers: Sequence[Any], backend: Optional[ComputeBackend] = None,
-            device: Optional[object] = None) -> Any:
+            device: Optional[object] = None, *, allow_codecs: bool = True, lenient_spaces: bool = False) -> Any:
     """Resolve the tags of a parsed frame; arrays become ``backend`` arrays on ``device``.
 
     Every buffer must be referenced exactly once. Arrays share memory with the
-    (writable) buffers when no backend conversion is needed.
+    (writable) buffers when no backend conversion is needed. With ``allow_codecs=False``
+    compressed (codec) arrays are rejected: the server decodes requests that way, since
+    only server-to-client data is ever compressed and a small compressed array can
+    decode to far more than the frame size limit.
+
+    Data of a dtype ``backend`` lacks is converted to the closest one it has (e.g.
+    float64 -> float32 for JAX without x64), spaces included. With ``lenient_spaces``
+    a space that still cannot be rebuilt decodes to a :class:`SpaceError` instead of
+    failing the whole frame.
     """
-    decoder = _Decoder(buffers, backend, device)
+    decoder = _Decoder(buffers, backend, device, allow_codecs, lenient_spaces)
     value = decoder.value(node, 0)
     if not all(decoder.used):
         raise WireError("Frame has unreferenced buffers")

@@ -48,7 +48,10 @@ class _Group:
             item = self.queue.get()
             if item is None:
                 return
-            item[0](*item[1])
+            try:
+                item[0](*item[1])
+            except BaseException:  # the worker must outlive any failure (calls report theirs themselves)
+                _log.exception("A remote worker task failed")
 
 
 class _Resource:
@@ -153,6 +156,12 @@ def _not_open(name: str) -> Exception:
                            "get it through RemoteClient.resource / env / ... first")
 
 
+def _restore(message: List[Any], buffers: List[Any], backend: Optional[ComputeBackend] = None,
+             device: Optional[Any] = None) -> Any:
+    """Decode the ``[args, kwargs]`` of a request (clients never send compressed arrays)."""
+    return wire.restore(message[3:], buffers, backend, device, allow_codecs=False)
+
+
 def _error(request_id: Any, exc: BaseException) -> Tuple[List[Any], int]:
     text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
     return wire.encode([request_id, ERROR, [type(exc).__name__, str(exc), text]])
@@ -163,6 +172,9 @@ class _Connection:
 
     def __init__(self, server: RemoteServer, transport: Transport) -> None:
         self.server, self.transport = server, transport
+        # Largest frame sent to this client: the transport's limit, lowered by the client's own
+        # limit if it sends one in ``hello`` (older clients do not).
+        self.max_frame_size: int = transport.max_frame_size
         self.compress: Dict[str, Any] = {}
         self.compress_key: Any = None
         self.seen: Dict[_Group, int] = {}
@@ -176,6 +188,9 @@ class _Connection:
     def send(self, frame: Tuple[List[Any], int]) -> None:
         try:
             self.transport.send(*frame)
+        except TimeoutError as exc:
+            _log.warning("Closing a connection that stopped reading: %s", exc)
+            self.close()
         except (ConnectionError, OSError):
             self.close()
 
@@ -214,9 +229,13 @@ class _Connection:
             self._events.clear()
             self._condition.notify_all()
         self.transport.close()
-        for name in list(self.subscriptions):
+        # ``subscribe`` and ``_open`` check ``closed`` and register this connection under the
+        # server lock, so this snapshot cannot miss one that saw the connection still open.
+        with self.server._lock:
+            names, factories = list(self.subscriptions), list(self.factories)
+        for name in names:
             self.unsubscribe(name)
-        for factory in list(self.factories):
+        for factory in factories:
             self.server._release_use(self, factory)
 
 
@@ -234,10 +253,17 @@ class RemoteServer:
     order, whichever client sent them. Only the methods in ``protocol.METHODS`` can be
     called. :meth:`register_factory` hosts an object that is built when a client first
     opens it and closed once no client uses it.
+
+    Replies are sent from the worker, so a client that stops reading would stall every
+    client of that worker: a connection whose send makes no progress for ``send_timeout``
+    seconds is closed (TCP and Unix sockets; ``None`` waits forever).
     """
 
-    def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> None:
-        self.max_frame_size = max_frame_size
+    def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE,
+                 send_timeout: Optional[float] = 60.0) -> None:
+        if send_timeout is not None and not send_timeout > 0:
+            raise ValueError(f"send_timeout must be > 0 seconds or None, got {send_timeout!r}")
+        self.max_frame_size, self.send_timeout = max_frame_size, send_timeout
         self._resources: Dict[str, _Resource] = {}
         self._factories: Dict[str, _Factory] = {}
         self._names: Dict[int, str] = {}  # id(object) -> resource name
@@ -386,9 +412,9 @@ class RemoteServer:
                 resource = record.resource
             group = record.group
             descriptor = dict(resource.static, **self._links(resource), spaces=resource.space_update(), factory=True)
-            frame = wire.encode([request_id, OK, descriptor])
+            frame = wire.encode([request_id, OK, descriptor], max_size=connection.max_frame_size)
             connection.seen[group] = group.version
-        except Exception as exc:
+        except BaseException as exc:  # e.g. SystemExit from the factory: still answer, keep the worker
             frame = _error(request_id, exc)
         connection.send(frame)
 
@@ -423,6 +449,7 @@ class RemoteServer:
                 record.users.discard(connection)
                 if not record.users:
                     self._schedule_release(record)
+        connection.unsubscribe(record.name)  # a connection only follows what it has open
 
     def _schedule_release(self, record: _Factory) -> None:
         """Queue closing the object in ``release_after`` seconds, unless it is opened again (holds the lock)."""
@@ -525,6 +552,7 @@ class RemoteServer:
 
     def _serve(self, transport: Transport) -> None:
         """Read requests from one connection until it closes."""
+        transport.send_timeout = self.send_timeout
         connection = _Connection(self, transport)
         with self._lock:
             if self._closed.is_set():
@@ -539,6 +567,8 @@ class RemoteServer:
             _log.warning("Closing a connection that sent a malformed frame: %s", exc)
         except (ConnectionError, OSError):
             pass
+        except Exception:  # never let a bad request kill the reader thread uncleanly
+            _log.exception("Closing a connection after an unexpected error")
         finally:
             connection.close()
             with self._lock:
@@ -551,8 +581,9 @@ class RemoteServer:
             raise wire.WireError("Requests must be [id, target, method, args, kwargs]")
         request_id, target, method = message[:3]
         if target == "" and method in ("open", "release"):
-            args = wire.restore(message[3:], buffers)[0]
-            record = self._factories.get(args[0]) if type(args) is list and len(args) == 1 else None
+            args = _restore(message, buffers)[0]
+            valid = type(args) is list and len(args) == 1 and type(args[0]) is str
+            record = self._factories.get(args[0]) if valid else None
             if record is None:
                 connection.send(_error(request_id, KeyError(f"No factory-hosted resource named {args!r}")))
             elif method == "open":
@@ -563,8 +594,8 @@ class RemoteServer:
             return
         if target == "":
             try:
-                value = self._protocol_call(connection, method, *wire.restore(message[3:], buffers))
-                connection.send(wire.encode([request_id, OK, value]))
+                value = self._protocol_call(connection, method, *_restore(message, buffers))
+                connection.send(wire.encode([request_id, OK, value], max_size=connection.max_frame_size))
             except wire.WireError:
                 raise
             except Exception as exc:
@@ -572,21 +603,21 @@ class RemoteServer:
             return
         resource = self._resources.get(target)
         if resource is not None and resource.factory is not None and connection not in resource.factory.users:
-            wire.restore(message[3:], buffers)
+            _restore(message, buffers)
             connection.send(_error(request_id, _not_open(target)))
             return
         if resource is None and target in self._factories:
-            wire.restore(message[3:], buffers)
+            _restore(message, buffers)
             connection.send(_error(request_id, _not_open(target)))
             return
         if resource is None or method not in resource.methods:
             exc: Exception = (KeyError(f"No resource named {target!r}") if resource is None else
                               AttributeError(f"{resource.kind} {target!r} does not expose {method!r}"))
-            wire.restore(message[3:], buffers)  # still validate the frame
+            _restore(message, buffers)  # still validate the frame
             connection.send(_error(request_id, exc))
             return
         try:
-            args, kwargs = wire.restore(message[3:], buffers, resource.backend, resource.device)
+            args, kwargs = _restore(message, buffers, resource.backend, resource.device)
         except wire.WireError:
             raise
         except Exception as exc:  # e.g. the hosted backend cannot represent a dtype
@@ -601,6 +632,9 @@ class RemoteServer:
             version = kwargs.get("version")
             if version != PROTOCOL_VERSION:
                 raise ValueError(f"Protocol version {version!r} is not supported (server: {PROTOCOL_VERSION})")
+            limit = kwargs.get("max_frame_size")
+            if type(limit) is int and limit > 0:
+                connection.max_frame_size = min(limit, connection.transport.max_frame_size)
             if kwargs.get("compress"):
                 from .compression import parse_spec
                 connection.compress = parse_spec(kwargs["compress"])
@@ -618,16 +652,22 @@ class RemoteServer:
             return {"version": PROTOCOL_VERSION, "resources": resources}
         if method in ("subscribe", "unsubscribe"):
             name = args[0]
+            if method == "unsubscribe" and (name in connection.subscriptions or name in self._factories):
+                connection.unsubscribe(name)  # allowed after the factory object was released
+                return None
             resource = self._resources.get(name)
             if resource is None and name in self._factories or (
                     resource is not None and resource.factory is not None and connection not in resource.factory.users):
                 raise _not_open(name)
             if resource is None or resource.kind != "env":
                 raise KeyError(f"No environment named {name!r}")
-            if method == "subscribe" and name not in connection.subscriptions:
-                connection.subscriptions[name] = resource
-                with self._lock:
-                    resource.subscribers += (connection,)
+            if method == "subscribe":
+                with self._lock:  # see _Connection.close
+                    if connection.closed:
+                        raise ConnectionError("Connection closed")
+                    if name not in connection.subscriptions:
+                        connection.subscriptions[name] = resource
+                        resource.subscribers += (connection,)
             elif method == "unsubscribe":
                 connection.unsubscribe(name)
             return None
@@ -650,9 +690,9 @@ class RemoteServer:
             seen = connection.seen.get(group, 0)
             if group.version > seen:
                 message.append({r.name: r.space_update() for r in group.resources if r.version > seen})
-            frame = wire.encode(message, max_size=connection.transport.max_frame_size)
+            frame = wire.encode(message, max_size=connection.max_frame_size)
             connection.seen[group] = group.version
-        except Exception as exc:
+        except BaseException as exc:  # e.g. SystemExit from the hosted object: still answer, keep the worker
             frame = _error(request_id, exc)
         connection.send(frame)
 
@@ -679,18 +719,23 @@ class RemoteServer:
 
     def _publish(self, resource: _Resource, method: str, value: Any) -> None:
         resource.sequence += 1
-        frames: Dict[Any, Tuple[List[Any], int]] = {}
+        frames: Dict[Any, Optional[Tuple[List[Any], int]]] = {}  # by compression: None if it failed
         for connection in resource.subscribers:
-            frame = frames.get(connection.compress_key)
-            if frame is None:
+            key = connection.compress_key
+            if key not in frames:
                 try:
                     payload = self._compress(connection, resource, method, value)
-                    frame = wire.encode([resource.name, EVENT, [method, resource.sequence, payload]], copy=True,
-                                        max_size=connection.transport.max_frame_size)
-                except (TypeError, ValueError) as exc:
+                    frames[key] = wire.encode([resource.name, EVENT, [method, resource.sequence, payload]], copy=True)
+                except Exception as exc:  # never fails the call that produced the result
                     _log.warning("Cannot publish %s of %r: %s", method, resource.name, exc)
-                    return
-                frames[connection.compress_key] = frame
+                    frames[key] = None
+            frame = frames[key]
+            if frame is None:
+                continue
+            if frame[1] > connection.max_frame_size:
+                _log.warning("Cannot publish %s of %r to a client: the %d-byte frame exceeds its %d-byte limit",
+                             method, resource.name, frame[1], connection.max_frame_size)
+                continue
             connection.post(resource.name, frame)
 
     # ------------------------------------------------------------------ shutdown

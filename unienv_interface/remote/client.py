@@ -22,6 +22,21 @@ __all__ = ["RemoteClient", "Subscription", "SubscriptionEvent"]
 _LOST = ("Connection to the server was lost; a call in flight may or may not have run on the server")
 
 
+def _unpack_spaces(descriptor: Dict[str, Any]) -> Dict[str, Any]:
+    """Unpack the ``[version, spaces]`` of a descriptor; note the spaces that could not be rebuilt."""
+    version, spaces = descriptor.pop("spaces")
+    descriptor.update(version=version, spaces=spaces)
+    errors = [f"{attr}: {space.message}" for attr, space in spaces.items() if isinstance(space, wire.SpaceError)]
+    if errors:
+        descriptor["unavailable"] = "; ".join(errors)
+    return descriptor
+
+
+def _unavailable(name: str, descriptor: Dict[str, Any], backend: Any) -> TypeError:
+    return TypeError(f"{name!r} cannot be used with the {backend.simplified_name} backend: its spaces cannot be "
+                     f"represented ({descriptor['unavailable']})")
+
+
 class _Pending:
     __slots__ = ("lock", "message", "buffers", "error")
 
@@ -87,12 +102,17 @@ class Subscription:
         return self.next()
 
     def close(self) -> None:
+        if self._end():
+            self.client._unsubscribe(self)
+
+    def _end(self) -> bool:
+        """Stop the iteration (``next`` raises ``StopIteration``); ``False`` if it had already stopped."""
         with self._condition:
             if self.closed:
-                return
+                return False
             self.closed = True
             self._condition.notify_all()
-        self.client._unsubscribe(self)
+        return True
 
     def __enter__(self) -> Subscription:
         return self
@@ -137,17 +157,21 @@ class RemoteClient:
         self._reader.start()
         try:
             hello = self._request("", "hello", [], {"version": PROTOCOL_VERSION, "compress": compress,
-                                                    "factories": True},
-                                  timeout=30.0 if timeout is None else timeout)
+                                                    "factories": True,
+                                                    "max_frame_size": transport.max_frame_size},
+                                  timeout=30.0 if timeout is None else timeout, lenient_spaces=True)
         except BaseException:
             self.close()
             raise
         self.resources: Dict[str, Dict[str, Any]] = hello["resources"]
-        """Descriptor of every hosted resource, by name (``kind`` is ``None`` for a factory not opened yet)."""
+        """Descriptor of every hosted resource, by name (``kind`` is ``None`` for a factory not opened yet).
+
+        A resource whose spaces this client's backend cannot represent has an ``unavailable``
+        entry (the reason); getting its proxy raises ``TypeError``.
+        """
         for descriptor in self.resources.values():
             if "spaces" in descriptor:
-                version, spaces = descriptor.pop("spaces")
-                descriptor.update(version=version, spaces=spaces)
+                _unpack_spaces(descriptor)
 
     @classmethod
     def connect(cls, address: str, *, timeout: Optional[float] = None, connect_timeout: float = 10.0,
@@ -200,7 +224,7 @@ class RemoteClient:
         self.transport.close()
 
     def _request(self, target: str, method: str, args: List[Any], kwargs: Dict[str, Any],
-                 timeout: Union[float, None, str] = "default") -> Any:
+                 timeout: Union[float, None, str] = "default", lenient_spaces: bool = False) -> Any:
         request_id = next(self._ids)
         parts, size = wire.encode([request_id, target, method, args, kwargs], max_size=self.transport.max_frame_size)
         pending = _Pending()
@@ -225,7 +249,7 @@ class RemoteClient:
             if type(error) is not list or len(error) != 3 or not all(type(e) is str for e in error):
                 raise ConnectionError("Malformed error response")
             raise RemoteError(*error)
-        result = wire.restore(message[2:], pending.buffers, self.backend, self.device)
+        result = wire.restore(message[2:], pending.buffers, self.backend, self.device, lenient_spaces=lenient_spaces)
         if len(result) > 1:
             self._apply_updates(result[1])
         return result[0]
@@ -234,8 +258,8 @@ class RemoteClient:
         with self._lock:
             for name, (version, spaces) in updates.items():
                 descriptor = self.resources.get(name)
-                if descriptor is None or version <= descriptor["version"]:
-                    continue  # unknown, or an older update than one applied already
+                if descriptor is None or "version" not in descriptor or version <= descriptor["version"]:
+                    continue  # unknown, released meanwhile, or older than one applied already
                 descriptor.update(version=version, spaces=spaces)
                 proxy = self._proxies.get(name)
                 if proxy is not None:
@@ -256,17 +280,23 @@ class RemoteClient:
         with self._open_lock:
             if self.resources[name].get("open"):
                 return
-            opened = self._request("", "open", [name], {})
-            version, spaces = opened.pop("spaces")
-            opened.update(version=version, spaces=spaces, open=True)
+            opened = _unpack_spaces(self._request("", "open", [name], {}, lenient_spaces=True))
+            if "unavailable" in opened:
+                try:
+                    self._request("", "release", [name], {})
+                except ConnectionError:
+                    pass
+                raise _unavailable(name, opened, self.backend)
+            opened["open"] = True
             with self._lock:
                 self.resources[name] = opened
 
     def release(self, name: str) -> None:
         """Stop using factory-hosted ``name``: the server closes it once no client uses it.
 
-        Its proxy stops working; getting the proxy again opens it again (possibly a newly
-        built object). A no-op for resources registered with ``register``.
+        Its proxy stops working and its subscriptions end (``next`` raises ``StopIteration``);
+        getting the proxy again opens it again (possibly a newly built object). A no-op for
+        resources registered with ``register``.
         """
         descriptor = self.resources.get(name)
         if descriptor is None or not descriptor.get("factory"):
@@ -274,9 +304,13 @@ class RemoteClient:
         with self._open_lock:
             if not self.resources[name].get("open"):
                 return
-            with self._lock:
-                self._proxies.pop(name, None)
-                self.resources[name] = dict(self._FACTORY_STUB)
+            with self._subscribe_lock:
+                with self._lock:
+                    self._proxies.pop(name, None)
+                    self.resources[name] = dict(self._FACTORY_STUB)
+                    subscriptions = self._subscriptions.pop(name, [])
+                for subscription in subscriptions:
+                    subscription._end()  # the server drops them with the release
             if not self.closed:
                 try:
                     self._request("", "release", [name], {})
@@ -294,6 +328,8 @@ class RemoteClient:
             if name not in self.resources:
                 raise KeyError(f"The server hosts no resource named {name!r}; it has {sorted(self.resources)}")
             self._open(name)
+            if "unavailable" in self.resources[name]:
+                raise _unavailable(name, self.resources[name], self.backend)
             kind = self.resources[name]["kind"]
             proxy = {"env": RemoteEnv, "world": RemoteWorld, "node": RemoteWorldNode,
                      "transformation": RemoteDataTransformation, "policy": RemotePolicy}[kind](self, name)
