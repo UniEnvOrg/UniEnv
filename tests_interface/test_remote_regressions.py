@@ -15,6 +15,7 @@ from unienv_interface.remote import RemoteClient, RemoteServer, wire
 from unienv_interface.remote.compression import JpegCodec
 from unienv_interface.remote.transport import MemoryTransport
 from unienv_interface.remote.wire import WireError
+from unienv_interface.space import BoxSpace
 
 from tests_common.remote_envs import ProbeEnv, ScaleTransformation
 
@@ -235,3 +236,63 @@ def test_send_timeout_validation():
         RemoteServer(send_timeout=0)
     with RemoteServer(send_timeout=None) as server:
         assert server.send_timeout is None
+
+
+# ---------------------------------------------------------------------------- 6: dtypes the client backend lacks
+
+class _Float64Env(ProbeEnv):
+    """A numpy env with float64 observations and int64 info, as numpy simulators often have."""
+
+    def __init__(self):
+        super().__init__()
+        self.observation_space = BoxSpace(B, -1.0, 1.0, np.float64, shape=(2,))
+
+    def step(self, action):
+        return np.full(2, 0.5), 1.0, False, False, {"count": np.int64(7), "half": np.float16(0.5)}
+
+
+class _HugeIntEnv(ProbeEnv):
+    """int64 bounds no 32-bit dtype can hold."""
+
+    def __init__(self):
+        super().__init__()
+        self.observation_space = BoxSpace(B, 0, np.iinfo(np.int64).max, np.int64, shape=(1,))
+
+
+def test_jax_client_receives_64_bit_data_and_skips_unrepresentable_resources():
+    jax = pytest.importorskip("jax")
+    if jax.config.jax_enable_x64:
+        pytest.skip("needs JAX without x64")
+    from unienv_interface.backends.jax import JaxComputeBackend as J
+
+    with RemoteServer() as server:
+        server.register("f32", ProbeEnv())
+        server.register("f64", _Float64Env())
+        server.register("huge", _HugeIntEnv())
+        server.register_factory("huge_factory", _HugeIntEnv)
+        with server.connect(backend=J) as client:  # used to fail: WireError: Unknown dtype string: float64
+            env = client.env("f64")
+            assert env.observation_space.dtype == J.__array_namespace_info__().dtypes()["float32"]
+            observation, _, _, _, info = env.step(ACTION)
+            assert str(observation.dtype) == "float32" and np.allclose(np.asarray(observation), 0.5)
+            assert str(info["count"].dtype) == "int32" and int(info["count"]) == 7
+            assert str(info["half"].dtype) == "float32"
+            assert observation in env.observation_space
+            with pytest.raises(TypeError, match="cannot be used with the jax backend"):
+                client.env("huge")
+            with pytest.raises(TypeError, match="cannot be used with the jax backend"):
+                client.env("huge_factory")
+            assert not server._factories["huge_factory"].users  # released again
+            assert client.env("f32").step(ACTION)[1] == 1.0  # other resources are unaffected
+
+
+def test_torch_client_receives_float16_and_unsigned_data():
+    pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
+
+    value = {"half": np.arange(3, dtype=np.float16), "u16": np.arange(3, dtype=np.uint16),
+             "u32": np.array([2 ** 32 - 1], np.uint32)}
+    restored = wire.loads(wire.dumps(value), T)
+    assert str(restored["half"].dtype) == "torch.float32" and restored["half"].tolist() == [0.0, 1.0, 2.0]
+    assert str(restored["u16"].dtype) == "torch.int32"
+    assert str(restored["u32"].dtype) == "torch.int64" and restored["u32"].tolist() == [2 ** 32 - 1]

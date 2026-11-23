@@ -141,7 +141,7 @@ def test_descriptor_attributes_methods_and_lookup(server, transport):
         assert repr(client.env("probe")) == "<RemoteEnv 'probe'>"
 
 
-def test_backend_and_device_conversion(server, transport):
+def test_backend_and_device_conversion(server, transport, monkeypatch):
     torch = pytest.importorskip("torch")
     from unienv_interface.backends.pytorch import PyTorchComputeBackend as T
     hosted = StubEnv()
@@ -162,6 +162,10 @@ def test_backend_and_device_conversion(server, transport):
     with connect(server, transport) as client:
         client.env("torch_probe").step(np.ones(1, np.float32))
         assert isinstance(received[0], torch.Tensor)  # arguments use the hosted backend
+        client.env("torch_probe").step(np.ones(1, np.uint16))
+        assert received[-1].dtype == torch.int32  # the closest dtype the hosted backend has
+        from unienv_interface.remote import wire
+        monkeypatch.setitem(wire._FALLBACKS, "uint16", ())  # a dtype with no counterpart at all
         with pytest.raises(RemoteError, match="cannot represent dtype uint16"):
             client.env("torch_probe").step(np.ones(1, np.uint16))
         client.env("torch_probe").step(np.ones(1, np.float32))  # still connected

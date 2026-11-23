@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from unienv_interface.backends import ComputeBackend
 
 __all__ = [
-    "WireError", "SpaceJSON", "CodecArray", "ArrayCodec", "register_codec", "get_codec",
+    "WireError", "SpaceJSON", "SpaceError", "CodecArray", "ArrayCodec", "register_codec", "get_codec",
     "encode", "split", "parse", "restore", "dumps", "loads", "DEFAULT_MAX_FRAME_SIZE",
 ]
 
@@ -283,25 +283,71 @@ def parse(document: Any) -> Any:
         raise WireError(f"Invalid frame JSON: {exc}") from None
 
 
+#: Dtypes used, in order, when the receiving backend lacks one: wider (lossless) ones first,
+#: then narrower ones, as JAX itself does for 64-bit types without ``jax_enable_x64``.
+_FALLBACKS: Dict[str, Tuple[str, ...]] = {
+    "int8": ("int16", "int32", "int64"), "int16": ("int32", "int64"), "int32": ("int64",), "int64": ("int32",),
+    "uint8": ("int16", "int32", "int64"), "uint16": ("int32", "int64", "uint32"),
+    "uint32": ("int64", "uint64", "int32"), "uint64": ("int64", "uint32"),
+    "float16": ("float32", "float64"), "float32": ("float64",), "float64": ("float32",),
+    "complex64": ("complex128",), "complex128": ("complex64",),
+}
+
+
+def _backend_dtype_name(name: str, backend: ComputeBackend) -> Optional[str]:
+    """The dtype name ``backend`` stores ``name`` data as (``None`` if it has no suitable one)."""
+    dtypes = backend.__array_namespace_info__().dtypes()
+    if name in dtypes:
+        return name
+    return next((alternative for alternative in _FALLBACKS.get(name, ()) if alternative in dtypes), None)
+
+
 def _to_backend(array: np.ndarray, backend: ComputeBackend, device: Optional[object]) -> Any:
     if not array.dtype.isnative:
         array = array.astype(array.dtype.newbyteorder("="))
-    dtype = backend.__array_namespace_info__().dtypes().get(array.dtype.name)
-    if dtype is None:
+    name = _backend_dtype_name(array.dtype.name, backend)
+    if name is None:
         raise TypeError(f"{backend.simplified_name} cannot represent dtype {array.dtype.name}")
-    return backend.from_numpy(array, dtype=dtype, device=device)
+    if name != array.dtype.name:
+        array = array.astype(name)
+    return backend.from_numpy(array, dtype=backend.__array_namespace_info__().dtypes()[name], device=device)
+
+
+def _space_document_for(document: Any, backend: ComputeBackend) -> Any:
+    """``document`` with the dtypes ``backend`` lacks replaced like :func:`_to_backend` does for arrays."""
+    if isinstance(document, list):
+        return [_space_document_for(item, backend) for item in document]
+    if not isinstance(document, dict):
+        return document
+    result = {key: _space_document_for(item, backend) for key, item in document.items()}
+    dtype = result.get("dtype")
+    if isinstance(dtype, str):
+        result["dtype"] = _backend_dtype_name(dtype, backend) or dtype
+    return result
+
+
+class SpaceError:
+    """Stands in for a space the receiver cannot rebuild (see ``restore(space_errors=...)``)."""
+
+    __slots__ = ("message",)
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def __repr__(self) -> str:
+        return f"SpaceError({self.message!r})"
 
 
 class _Decoder:
-    __slots__ = ("buffers", "used", "backend", "device", "convert", "allow_codecs")
+    __slots__ = ("buffers", "used", "backend", "device", "convert", "allow_codecs", "lenient_spaces")
 
     def __init__(self, buffers: Sequence[Any], backend: Optional[ComputeBackend], device: Optional[object],
-                 allow_codecs: bool = True) -> None:
+                 allow_codecs: bool = True, lenient_spaces: bool = False) -> None:
         self.buffers = buffers
         self.used = [False] * len(buffers)
         self.backend, self.device = backend, device
         self.convert = backend is not None and backend.simplified_name != "numpy"
-        self.allow_codecs = allow_codecs
+        self.allow_codecs, self.lenient_spaces = allow_codecs, lenient_spaces
 
     def take(self, index: Any) -> Any:
         if type(index) is not int or not 0 <= index < len(self.buffers) or self.used[index]:
@@ -365,8 +411,12 @@ class _Decoder:
             document = self.value(node.get("v"), depth)
             from unienv_interface.backends.numpy import NumpyComputeBackend
             try:
+                if self.convert:
+                    document = _space_document_for(document, self.backend)
                 return json_to_space(document, self.backend or NumpyComputeBackend, self.device)
             except Exception as exc:
+                if self.lenient_spaces:
+                    return SpaceError(f"{type(exc).__name__}: {exc}")
                 raise WireError(f"Invalid space: {exc}") from None
         if tag == "graph":
             fields = node.get("v")
@@ -384,7 +434,7 @@ class _Decoder:
 
 
 def restore(node: Any, buffers: Sequence[Any], backend: Optional[ComputeBackend] = None,
-            device: Optional[object] = None, *, allow_codecs: bool = True) -> Any:
+            device: Optional[object] = None, *, allow_codecs: bool = True, lenient_spaces: bool = False) -> Any:
     """Resolve the tags of a parsed frame; arrays become ``backend`` arrays on ``device``.
 
     Every buffer must be referenced exactly once. Arrays share memory with the
@@ -392,8 +442,13 @@ def restore(node: Any, buffers: Sequence[Any], backend: Optional[ComputeBackend]
     compressed (codec) arrays are rejected: the server decodes requests that way, since
     only server-to-client data is ever compressed and a small compressed array can
     decode to far more than the frame size limit.
+
+    Data of a dtype ``backend`` lacks is converted to the closest one it has (e.g.
+    float64 -> float32 for JAX without x64), spaces included. With ``lenient_spaces``
+    a space that still cannot be rebuilt decodes to a :class:`SpaceError` instead of
+    failing the whole frame.
     """
-    decoder = _Decoder(buffers, backend, device, allow_codecs)
+    decoder = _Decoder(buffers, backend, device, allow_codecs, lenient_spaces)
     value = decoder.value(node, 0)
     if not all(decoder.used):
         raise WireError("Frame has unreferenced buffers")
