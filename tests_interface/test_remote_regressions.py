@@ -487,3 +487,36 @@ def test_malformed_requests_close_only_their_connection_cleanly(monkeypatch):
         assert crashes == []  # reader threads used to die with unhandled TypeError / ValueError
         with RemoteClient.connect(address) as client:
             assert client.env("sim").step(ACTION)[1] == 1.0
+
+
+# ---------------------------------------------------------------------------- 13: release vs a call in flight
+
+def test_space_update_of_a_resource_released_meanwhile_is_ignored():
+    entered, gate = threading.Event(), threading.Event()
+
+    class SlowReset(ProbeEnv):
+        def reset(self, **kwargs):
+            entered.set()
+            gate.wait(5)
+            return super().reset(**kwargs)
+
+    with RemoteServer() as server:
+        server.register_factory("sim", SlowReset, release_after=0)
+        with server.connect(timeout=10) as client:
+            env = client.env("sim")
+            outcome = {}
+
+            def reset():
+                try:
+                    outcome["value"] = env.reset(size=5)  # changes the observation space: carries an update
+                except Exception as exc:
+                    outcome["value"] = exc
+
+            thread = threading.Thread(target=reset)
+            thread.start()
+            assert entered.wait(5)
+            client.release("sim")  # the descriptor goes back to the factory stub
+            gate.set()
+            thread.join(10)
+            assert not isinstance(outcome["value"], Exception), outcome["value"]  # used to be KeyError('version')
+            assert outcome["value"][1].shape == (5,)

@@ -258,8 +258,8 @@ class RemoteClient:
         with self._lock:
             for name, (version, spaces) in updates.items():
                 descriptor = self.resources.get(name)
-                if descriptor is None or version <= descriptor["version"]:
-                    continue  # unknown, or an older update than one applied already
+                if descriptor is None or "version" not in descriptor or version <= descriptor["version"]:
+                    continue  # unknown, released meanwhile, or older than one applied already
                 descriptor.update(version=version, spaces=spaces)
                 proxy = self._proxies.get(name)
                 if proxy is not None:
