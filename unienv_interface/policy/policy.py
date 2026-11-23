@@ -39,7 +39,7 @@ class Policy(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderF
         while running:
             action = policy.get_action()
             observation, reward, terminated, truncated, info = env.step(action)
-            policy.observe_transition(action, observation)
+            policy.observe_transition(action, observation, dt)   # dt: seconds the step took, e.g. the control timestep
             # batched env, some sub-environments done:
             #   merge env.reset(mask=done) into the full batch (env.update_*_post_reset), then
             #   policy.reset(full_context, full_observation, mask=done)
@@ -92,8 +92,15 @@ class Policy(abc.ABC, Generic[BArrayType, ContextType, ObsType, ActType, RenderF
         self,
         action_taken : ActType,
         new_observation : ObsType,
+        dt : float,
     ) -> None:
-        """Update the policy's state with the action the environment executed and the observation it returned."""
+        """Update the policy's state with the action the environment executed and the observation it returned.
+
+        ``dt`` is the env time in seconds between the previous observation and
+        ``new_observation``, i.e. how long ``action_taken`` was applied (sim time in simulation,
+        elapsed time on a robot; one value for a batch). Policies that schedule work in time
+        (e.g. asynchronous action chunking) rely on it; others may ignore it.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -259,8 +266,8 @@ class PolicyWrapper(
     def reset(self, context, observation, *, seed = None, mask = None, **kwargs):
         return self.policy.reset(context, observation, seed=seed, mask=mask, **kwargs)
 
-    def observe_transition(self, action_taken, new_observation):
-        return self.policy.observe_transition(action_taken, new_observation)
+    def observe_transition(self, action_taken, new_observation, dt):
+        return self.policy.observe_transition(action_taken, new_observation, dt)
 
     def get_action(self, **kwargs):
         return self.policy.get_action(**kwargs)

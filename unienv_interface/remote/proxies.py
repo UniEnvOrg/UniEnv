@@ -247,8 +247,8 @@ class RemotePolicy(_Remote, Policy):
               **kwargs: Any) -> None:
         return self._call("reset", context, observation, seed=seed, mask=mask, **kwargs)
 
-    def observe_transition(self, action_taken: Any, new_observation: Any) -> None:
-        return self._call("observe_transition", action_taken, new_observation)
+    def observe_transition(self, action_taken: Any, new_observation: Any, dt: float) -> None:
+        return self._call("observe_transition", action_taken, new_observation, float(dt))
 
     def get_action(self, **kwargs: Any) -> Any:
         return self._call("get_action", **kwargs)

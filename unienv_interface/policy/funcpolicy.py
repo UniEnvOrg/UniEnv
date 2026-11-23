@@ -45,7 +45,7 @@ class FuncPolicy(
         while running:
             state, action = policy.get_action(state)
             observation, ... = env.step(action)
-            state = policy.observe_transition(state, action, observation)
+            state = policy.observe_transition(state, action, observation, dt)   # dt: seconds the step took
             # some sub-environments done: state = policy.reset(state, full_context, full_observation, mask=done)
 
     The policy state takes in observations only through :meth:`initial`, :meth:`reset` and
@@ -102,8 +102,15 @@ class FuncPolicy(
         state : StateType,
         action_taken : ActType,
         new_observation : ObsType,
+        dt : float,
     ) -> StateType:
-        """The state after the environment executed ``action_taken`` and returned ``new_observation``."""
+        """The state after the environment executed ``action_taken`` and returned ``new_observation``.
+
+        ``dt`` is the env time in seconds between the previous observation and
+        ``new_observation``, i.e. how long ``action_taken`` was applied (sim time in simulation,
+        elapsed time on a robot; one value for a batch). Policies that schedule work in time
+        (e.g. asynchronous action chunking) rely on it; others may ignore it.
+        """
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -230,8 +237,8 @@ class FuncPolicyWrapper(
     def reset(self, state, context, observation, *, seed = None, mask = None, **kwargs):
         return self.policy.reset(state, context, observation, seed=seed, mask=mask, **kwargs)
 
-    def observe_transition(self, state, action_taken, new_observation):
-        return self.policy.observe_transition(state, action_taken, new_observation)
+    def observe_transition(self, state, action_taken, new_observation, dt):
+        return self.policy.observe_transition(state, action_taken, new_observation, dt)
 
     def get_action(self, state, **kwargs):
         return self.policy.get_action(state, **kwargs)
@@ -369,12 +376,13 @@ class FuncPolicyBasedPolicy(
                 **kwargs
             )
     
-    def observe_transition(self, action_taken, new_observation):
+    def observe_transition(self, action_taken, new_observation, dt):
         assert self._inited, "Policy must be reset before observing transitions"
         self.state = self.func_policy.observe_transition(
             self.state,
             action_taken,
-            new_observation
+            new_observation,
+            dt,
         )
 
     def get_action(self, **kwargs):

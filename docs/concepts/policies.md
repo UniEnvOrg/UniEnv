@@ -9,17 +9,19 @@ A policy declares its own spaces, the same kind an environment does (`observatio
 
 ## `Policy`
 
-A policy's state changes only when it is told what happened: `reset` starts episodes, and `observe_transition` feeds it each executed action and the observation that followed. `get_action` reads that state and does not change it, so it takes no observation. Subclass `Policy` and implement the three of them:
+A policy's state changes only when it is told what happened: `reset` starts episodes, and `observe_transition` feeds it each executed action, the observation that followed and how much time passed. `get_action` reads that state and does not change it, so it takes no observation. Subclass `Policy` and implement the three of them:
 
 | Method | Called | Default |
 | --- | --- | --- |
 | `reset(context, observation, *, seed=None, mask=None)` | after `env.reset`; with `mask`, only the masked batch entries start over | **required** |
 | `get_action()` | whenever an action is needed; reads the state | **required** |
-| `observe_transition(action_taken, new_observation)` | after `env.step` | **required** |
+| `observe_transition(action_taken, new_observation, dt)` | after `env.step`; `dt` is the step's duration in seconds | **required** |
 | `visualize_action(environment_render, observation, action)` | to draw the action on a render frame | returns the frame |
 | `close()` | when done | no-op |
 
 The context, as for environments, only comes with `reset`: it is fixed for an episode, so a policy that needs it keeps it from there.
+
+`dt` is the env time between the previous observation and the new one, i.e. how long the action was applied: sim time in simulation (usually the control timestep, `env.control_timestep` for a `WorldEnv`), elapsed time on a real robot, one value for a whole batch. Most policies ignore it; policies that schedule work in time, such as computing the next action chunk in the background while the current one runs, need it.
 
 `sample_action()`, `sample_observation()` and `sample_context()` draw from the declared spaces and advance `policy.rng`.
 
@@ -45,7 +47,7 @@ class RandomPolicy(Policy):
     def reset(self, context, observation, *, seed=None, mask=None, **kwargs):
         pass  # nothing to remember
 
-    def observe_transition(self, action_taken, new_observation):
+    def observe_transition(self, action_taken, new_observation, dt):
         pass
 
     def get_action(self, **kwargs):
@@ -69,7 +71,7 @@ policy.reset(context, obs, seed=0)
 for _ in range(100):
     action = policy.get_action()
     obs, reward, terminated, truncated, info = env.step(action)
-    policy.observe_transition(action, obs)
+    policy.observe_transition(action, obs, dt)   # dt: seconds per step, e.g. env.control_timestep
 ```
 
 Batching follows the environment's convention: with `batch_size` set, the spaces include the leading batch dimension and every context, observation and action is a full batch. To restart only the finished entries of a batched environment, merge what `env.reset(mask=done)` returns back into the full batch and give the policy that full batch with the same mask; it starts over only the masked entries and keeps its state for the others:
@@ -89,7 +91,7 @@ A `FuncPolicy` keeps no state on the object. Each method takes the state and ret
 
 - `initial(context, observation, *, seed=None) -> state` (**required**)
 - `get_action(state) -> (state, action)` (**required**): the returned state may only differ in bookkeeping, such as an advanced RNG key
-- `observe_transition(state, action_taken, new_observation) -> state` (**required**)
+- `observe_transition(state, action_taken, new_observation, dt) -> state` (**required**)
 - `reset(state, context, observation, *, seed=None, mask=None) -> state` (**required**): full batch in, as for `Policy`
 - `close(state)`
 
@@ -114,7 +116,7 @@ class SmoothedPolicy(FuncPolicy):
     def reset(self, state, context, observation, *, seed=None, mask=None, **kwargs):
         return self.initial(context, observation)  # unbatched: no mask
 
-    def observe_transition(self, state, action_taken, new_observation):
+    def observe_transition(self, state, action_taken, new_observation, dt):
         return {"last": action_taken, "target": np.clip(new_observation[:2], -1.0, 1.0)}
 
     def get_action(self, state, **kwargs):
@@ -125,7 +127,7 @@ func_policy = SmoothedPolicy()
 obs = np.array([1.0, -1.0, 0.0], np.float32)
 state = func_policy.initial(None, obs)
 state, action = func_policy.get_action(state)  # [0.5, -0.5]
-state = func_policy.observe_transition(state, action, obs)
+state = func_policy.observe_transition(state, action, obs, 0.05)
 state, action = func_policy.get_action(state)  # [0.75, -0.75]
 ```
 

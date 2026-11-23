@@ -81,7 +81,7 @@ with RemoteClient.connect("tcp://gpu-box:7001") as client:
     for _ in range(1000):
         action = policy.get_action()
         obs, reward, terminated, truncated, info = env.step(action)
-        policy.observe_transition(action, obs)
+        policy.observe_transition(action, obs, dt)   # dt: the step's duration in seconds
 ```
 
 Only `reset`, `observe_transition`, `get_action` and `visualize_action` are

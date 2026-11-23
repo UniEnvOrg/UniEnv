@@ -37,6 +37,7 @@ class LatestObservationPolicy(Policy):
         self.observation: Any = None
         self.resets: List[Any] = []
         self.transitions: List[Any] = []
+        self.dts: List[float] = []
         self.closed = False
 
     def reset(self, context, observation, *, seed=None, mask=None, **kwargs):
@@ -46,8 +47,10 @@ class LatestObservationPolicy(Policy):
             self.observation = np.where(mask[:, None], observation, self.observation)
         self.resets.append((seed, mask, kwargs))
 
-    def observe_transition(self, action_taken, new_observation):
+    def observe_transition(self, action_taken, new_observation, dt):
+        assert type(dt) is float
         self.transitions.append(action_taken)
+        self.dts.append(dt)
         self.observation = new_observation
 
     def get_action(self, scale: float = 1.0, **kwargs):
@@ -74,7 +77,7 @@ class CountingFuncPolicy(FuncPolicy):
     def reset(self, state, context, observation, *, seed=None, mask=None, **kwargs):
         return self.initial(context, observation, seed=seed)
 
-    def observe_transition(self, state, action_taken, new_observation):
+    def observe_transition(self, state, action_taken, new_observation, dt):
         return {**state, "steps": state["steps"] + 1}
 
     def get_action(self, state, **kwargs):
@@ -118,8 +121,9 @@ def test_policy_round_trip(server, transport):
         np.testing.assert_array_equal(policy.get_action(scale=2.0), [2.0, -4.0])  # kwargs pass through
         np.testing.assert_array_equal(policy.get_action(), action)  # no new transition, same state
 
-        policy.observe_transition(action, np.array([4.0, 5.0, 6.0], np.float32))
+        policy.observe_transition(action, np.array([4.0, 5.0, 6.0], np.float32), 0.05)
         np.testing.assert_array_equal(hosted.transitions[0], action)
+        assert hosted.dts == [0.05]
         np.testing.assert_array_equal(policy.get_action(), [4.0, 5.0])
 
         frame = np.zeros((4, 4, 3), np.uint8)
@@ -143,7 +147,7 @@ def test_policy_drives_an_env(server, transport):
         for _ in range(3):
             action = policy.get_action()
             assert policy.action_space.contains(action)
-            policy.observe_transition(action, np.array([0.3, 0.2, 0.1], np.float32))
+            policy.observe_transition(action, np.array([0.3, 0.2, 0.1], np.float32), 0.05)
         np.testing.assert_allclose(policy.get_action(), [0.3, 0.2])
 
 
@@ -171,8 +175,8 @@ def test_func_policy_is_hosted_through_func_policy_based_policy(server):
         obs = np.array([5.0, 0.0, 0.0], np.float32)
         policy.reset(None, obs)
         np.testing.assert_array_equal(policy.get_action(), [0.0, 5.0])
-        policy.observe_transition(np.zeros(2, np.float32), obs)
-        policy.observe_transition(np.zeros(2, np.float32), obs)
+        policy.observe_transition(np.zeros(2, np.float32), obs, 0.05)
+        policy.observe_transition(np.zeros(2, np.float32), obs, 0.05)
         np.testing.assert_array_equal(policy.get_action(), [2.0, 5.0])
 
 

@@ -33,6 +33,7 @@ class ReactivePolicy(Policy):
         self.rng = B.random.random_number_generator(0)
         self.resets = []
         self.transitions = 0
+        self.dts = []
         self.latest = None
         self.closed = False
 
@@ -41,8 +42,9 @@ class ReactivePolicy(Policy):
         self.context = context
         self.latest = observation
 
-    def observe_transition(self, action_taken, new_observation):
+    def observe_transition(self, action_taken, new_observation, dt):
         self.transitions += 1
+        self.dts.append(dt)
         self.latest = new_observation
 
     def get_action(self, **kwargs):
@@ -64,7 +66,7 @@ def test_lifecycle_methods_are_abstract():
         def initial(self, context, observation, *, seed=None, **kwargs):
             return None
 
-        def observe_transition(self, state, action_taken, new_observation):
+        def observe_transition(self, state, action_taken, new_observation, dt):
             return state
 
         def get_action(self, state, **kwargs):
@@ -81,9 +83,9 @@ def test_state_comes_from_reset_and_observe_transition():
     first = policy.get_action()
     np.testing.assert_array_equal(first, [0.5, -1.0])
     np.testing.assert_array_equal(policy.get_action(), first)  # reading the state does not change it
-    policy.observe_transition(first, np.array([-0.25, 0.75, 0.0], np.float32))
+    policy.observe_transition(first, np.array([-0.25, 0.75, 0.0], np.float32), 0.05)
     np.testing.assert_array_equal(policy.get_action(), [-0.25, 0.75])
-    assert policy.transitions == 1
+    assert policy.transitions == 1 and policy.dts == [0.05]
 
 
 def test_policy_helpers():
@@ -110,8 +112,8 @@ def test_policy_wrapper_delegates_and_overrides():
     wrapper.reset(np.zeros(1, np.float32), obs, seed=3)
     assert inner.resets[-1][2] == 3
     np.testing.assert_array_equal(wrapper.get_action(), [0.5, -1.0])
-    wrapper.observe_transition(np.zeros(2, np.float32), np.zeros(3, np.float32))
-    assert inner.transitions == 1
+    wrapper.observe_transition(np.zeros(2, np.float32), np.zeros(3, np.float32), 0.05)
+    assert inner.transitions == 1 and inner.dts == [0.05]  # the wrapper passes dt on
     np.testing.assert_array_equal(wrapper.get_action(), [0.0, 0.0])
 
     other = BoxSpace(B, -2.0, 2.0, np.float32, shape=(2,))
@@ -164,8 +166,8 @@ class RunningSumFuncPolicy(FuncPolicy):
             total = np.where(mask[:, None], total, state["sum"])  # full batch in; keep the other envs
         return {**state, "sum": total}
 
-    def observe_transition(self, state, action_taken, new_observation):
-        return {**state, "sum": state["sum"] + new_observation}
+    def observe_transition(self, state, action_taken, new_observation, dt):
+        return {**state, "sum": state["sum"] + new_observation, "time": state.get("time", 0.0) + dt}
 
     def get_action(self, state, **kwargs):
         # bookkeeping only (like an RNG key): the sum is unchanged
@@ -184,7 +186,7 @@ def test_func_policy_based_policy_runs_the_functional_policy():
     with pytest.raises(AssertionError):
         policy.get_action()  # not reset yet
     with pytest.raises(AssertionError):
-        policy.observe_transition(np.zeros((N, 2), np.float32), np.zeros((N, 3), np.float32))
+        policy.observe_transition(np.zeros((N, 2), np.float32), np.zeros((N, 3), np.float32), 0.05)
 
     obs = np.array([[0.25, 0.0, 0.0], [0.5, 0.5, 0.0]], np.float32)
     with pytest.raises(AssertionError):
@@ -192,9 +194,10 @@ def test_func_policy_based_policy_runs_the_functional_policy():
     policy.reset(None, obs)
     assert policy.state["seed"] == 5  # the constructor's seed
     np.testing.assert_allclose(policy.get_action(), [[0.25, 0.0], [0.5, 0.5]])
-    policy.observe_transition(np.zeros((N, 2), np.float32), obs)
+    policy.observe_transition(np.zeros((N, 2), np.float32), obs, 0.05)
     np.testing.assert_allclose(policy.get_action(), [[0.5, 0.0], [1.0, 1.0]])
     assert policy.state["draws"] == 2
+    assert policy.state["time"] == 0.05  # dt reaches the functional policy
 
     # masked reset: the full batch comes in, only env 1 starts over
     fresh = np.array([[9.0, 9.0, 9.0], [0.125, 0.125, 0.0]], np.float32)
@@ -216,7 +219,7 @@ def test_func_policy_wrapper_and_attr_lookup():
     assert wrapper.observation_space is BATCHED_OBS and wrapper.backend is B and wrapper.batch_size == N
     obs = np.array([[0.5, 0.25, 0.0], [0.0, 0.0, 0.0]], np.float32)
     state = wrapper.initial(None, obs, seed=1)
-    state = wrapper.observe_transition(state, np.zeros((N, 2), np.float32), obs)
+    state = wrapper.observe_transition(state, np.zeros((N, 2), np.float32), obs, 0.05)
     state = wrapper.reset(state, None, np.zeros((N, 3), np.float32), mask=np.array([False, True]))
     state, action = wrapper.get_action(state)
     np.testing.assert_allclose(action, [[1.0, 0.5], [0.0, 0.0]])
