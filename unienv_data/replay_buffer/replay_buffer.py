@@ -15,11 +15,31 @@ from unienv_interface.utils.symbol_util import get_class_from_full_name, get_ful
 
 from unienv_data.base import BatchBase, BatchT, IndexableType, SpaceStorage, SegmentWriter
 import json
+import operator
 import numpy as np
 
 #: Directory (inside a saved buffer) holding the episode records, and the file mapping storage slots to episodes
 _EPISODES_DIR = "episodes"
 _STEP_EPISODE_IDS_FILE = "episode_ids.npy"
+
+def _scalar_index_to_int(
+    backend : ComputeBackend,
+    index : Any,
+) -> Any:
+    """A 0-d integer index (NumPy integer, 0-d NumPy / torch / JAX array) as a Python ``int``,
+    so that it selects one sample as an ``int`` does; any other index is returned unchanged."""
+    if isinstance(index, (int, slice)) or index is Ellipsis:
+        return index
+    if isinstance(index, np.integer):
+        return int(index)
+    shape = getattr(index, "shape", None)
+    # Any array library (an index from another backend than the buffer's included), but not booleans
+    if shape is not None and len(shape) == 0 and "bool" not in str(getattr(index, "dtype", "")):
+        try:
+            return operator.index(index)  # integer dtypes only
+        except TypeError:
+            pass
+    return index
 
 def index_with_offset(
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -33,6 +53,7 @@ def index_with_offset(
     Returns:
         - data_index: The index in the storage that corresponds to the given index with the specified offset.
     """
+    index = _scalar_index_to_int(backend, index)
     if index is Ellipsis:
         nonzero_index = backend.arange(len_transitions, device=device)
         data_index = (nonzero_index + offset) % len_transitions
@@ -734,6 +755,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_flattened_at_with_metadata(idx)[0]
 
     def get_flattened_at_with_metadata(self, idx: Union[IndexableType, BArrayType]) -> BArrayType:
+        idx = _scalar_index_to_int(self.backend, idx)
         if hasattr(self.storage, "get_flattened"):
             data = self.storage.get_flattened(self._logical_to_physical_index(idx))
             return data, None
@@ -749,11 +771,12 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         return self.get_at_with_metadata(idx)[0]
 
     def get_at_with_metadata(self, idx):
-        data_index = self._logical_to_physical_index(idx)
+        data_index = self._logical_to_physical_index(_scalar_index_to_int(self.backend, idx))
         data = self.storage.get(data_index)
         return data, None
     
     def set_flattened_at(self, idx: Union[IndexableType, BArrayType], value: BArrayType) -> None:
+        idx = _scalar_index_to_int(self.backend, idx)
         if hasattr(self.storage, "set_flattened"):
             self.storage.set_flattened(
                 self._logical_to_physical_index(idx), 
@@ -768,7 +791,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         self.set_at(idx, value)
 
     def set_at(self, idx, value):
-        self.storage.set(self._logical_to_physical_index(idx), value)
+        self.storage.set(self._logical_to_physical_index(_scalar_index_to_int(self.backend, idx)), value)
 
     def extend_flattened(
         self,
@@ -1162,7 +1185,7 @@ class ReplayBuffer(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGTy
         owner = self._episode_owner()
         if owner._step_episode_ids is None:
             raise RuntimeError("this replay buffer has no episode_space")
-        physical = self._logical_to_physical_index(idx)
+        physical = self._logical_to_physical_index(_scalar_index_to_int(self.backend, idx))
         if isinstance(physical, (int, np.integer)):
             return int(owner._step_episode_ids[int(physical)])
         physical = np.asarray(self.backend.to_numpy(physical), dtype=np.int64)
@@ -1313,7 +1336,14 @@ class ReplayBufferEpisodeView(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeT
     def get_at(self, idx):
         return self.buffer.get_at(idx)
 
+    def get_flattened_at(self, idx):
+        return super().get_flattened_at(_scalar_index_to_int(self.backend, idx))
+
+    def get_flattened_at_with_metadata(self, idx):
+        return super().get_flattened_at_with_metadata(_scalar_index_to_int(self.backend, idx))
+
     def get_at_with_metadata(self, idx):
+        idx = _scalar_index_to_int(self.backend, idx)
         data = self.buffer.get_at(idx)
         episode_ids = self.buffer.get_episode_ids(idx)
         if np.any(np.asarray(episode_ids) < 0):
