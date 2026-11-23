@@ -72,14 +72,16 @@ def parse_info_json(dataset_dir: str) -> LeRobotSchema:
     features: Dict[str, LeRobotFeature] = {}
     for feat_name, feat_def in info.get("features", {}).items():
         video_info = None
-        if feat_def.get("dtype") == "video" and "video_info" in feat_def:
-            vi = feat_def["video_info"]
-            video_info = LeRobotVideoInfo(
-                video_codec=vi.get("video.codec"),
-                pixel_format=vi.get("video.pix_fmt"),
-                fps=vi.get("video.fps"),
-                is_depth=vi.get("video.is_depth_map", False),
-            )
+        if feat_def.get("dtype") == "video":
+            # LeRobot v2.1 / v3.0 write the video properties under "info"; v2.0 used "video_info".
+            vi = {**(feat_def.get("video_info") or {}), **(feat_def.get("info") or {})}
+            if vi:
+                video_info = LeRobotVideoInfo(
+                    video_codec=vi.get("video.codec"),
+                    pixel_format=vi.get("video.pix_fmt"),
+                    fps=vi.get("video.fps"),
+                    is_depth=bool(vi.get("is_depth_map", vi.get("video.is_depth_map", False))),
+                )
         features[feat_name] = LeRobotFeature(
             name=feat_name,
             dtype=feat_def["dtype"],
