@@ -178,6 +178,11 @@ class CombinedWorldNode(WorldNode[
             largest_ctrl = max(ctrls)
             for node in self._all_nodes:
                 if node.control_timestep is not None:
+                    # Actions are dispatched every round(ct / smallest) control steps, so
+                    # every control_timestep must be an integer multiple of the smallest.
+                    r = node.control_timestep / self._smallest_control_ts
+                    assert abs(r - round(r)) < 1e-9, \
+                        f"Node {node.name} control_timestep ({node.control_timestep}) not integer multiple of smallest ({self._smallest_control_ts})"
                     r = largest_ctrl / node.control_timestep
                     assert abs(r - round(r)) < 1e-9, \
                         f"Largest control ({largest_ctrl}) not integer multiple of {node.name}'s ({node.control_timestep})"
@@ -535,7 +540,8 @@ class CombinedWorldNode(WorldNode[
 
         for node, ratio, eff_dt in self._cached_step_entries['pre_step'].get(priority, ()):
             if (self._update_substeps - 1) % ratio == 0:
-                node.pre_environment_step(eff_dt, priority=priority)
+                # Nodes without their own update timestep run at the caller's rate.
+                node.pre_environment_step(eff_dt if eff_dt is not None else dt, priority=priority)
     
     def get_context(self):
         assert self.context_space is not None, "Context space is None, cannot get context."
@@ -685,7 +691,8 @@ class CombinedWorldNode(WorldNode[
 
         for node, ratio, eff_dt in self._cached_step_entries['post_step'].get(priority, ()):
             if (self._update_substeps - 1) % ratio == 0:
-                node.post_environment_step(eff_dt, priority=priority)
+                # Nodes without their own update timestep run at the caller's rate.
+                node.post_environment_step(eff_dt if eff_dt is not None else dt, priority=priority)
 
         # With a single shared counter the pre/post balance is trivially
         # consistent (there is only one counter), so no equality assert is

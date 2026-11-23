@@ -183,6 +183,11 @@ class CombinedFuncWorldNode(FuncWorldNode[
 			largest_ctrl = max(ctrls)
 			for node in self._all_nodes:
 				if node.control_timestep is not None:
+					# Actions are dispatched every round(ct / smallest) control steps, so
+					# every control_timestep must be an integer multiple of the smallest.
+					r = node.control_timestep / self._smallest_control_ts
+					assert abs(r - round(r)) < 1e-9, \
+						f"Node {node.name} control_timestep ({node.control_timestep}) not integer multiple of smallest ({self._smallest_control_ts})"
 					r = largest_ctrl / node.control_timestep
 					assert abs(r - round(r)) < 1e-9, \
 						f"Largest control ({largest_ctrl}) not integer multiple of {node.name}'s ({node.control_timestep})"
@@ -562,7 +567,9 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				ratio = self._update_ratios[key]
 				if (node_state[self._COUNTER_PRE] - 1) % ratio == 0:
 					ns = node_state[key]
-					world_state, ns = node.pre_environment_step(world_state, ns, node.effective_update_timestep, priority=priority)
+					# Nodes without their own update timestep run at the caller's rate.
+					node_dt = node.effective_update_timestep if node.effective_update_timestep is not None else dt
+					world_state, ns = node.pre_environment_step(world_state, ns, node_dt, priority=priority)
 					node_state[key] = ns
 		return world_state, node_state
 
@@ -670,7 +677,9 @@ class CombinedFuncWorldNode(FuncWorldNode[
 				ratio = self._update_ratios[key]
 				if (node_state[self._COUNTER_PRE] - 1) % ratio == 0:
 					ns = node_state[key]
-					world_state, ns = node.post_environment_step(world_state, ns, node.effective_update_timestep, priority=priority)
+					# Nodes without their own update timestep run at the caller's rate.
+					node_dt = node.effective_update_timestep if node.effective_update_timestep is not None else dt
+					world_state, ns = node.post_environment_step(world_state, ns, node_dt, priority=priority)
 					node_state[key] = ns
 
 		# With a single shared counter the pre/post balance is trivially
