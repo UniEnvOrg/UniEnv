@@ -1,7 +1,10 @@
 from typing import Any, Generic, Iterable, SupportsFloat, Mapping, Sequence, TypeVar, Optional, List, Type, Literal, Union, Tuple
 import numpy as np
 from ..space import Space
-from .box import _sample_integers_in_closed_interval, _build_sample_plan, _sample_from_plan
+from .box import (
+    _sample_integers_in_closed_interval, _build_sample_plan, _sample_from_plan,
+    _bounds_to_backend, _bounds_equal, _bounds_on_device_of,
+)
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
 
 class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -54,8 +57,10 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         data : BArrayType, # (..., T, ...)
         axis : int,
         fill_value : Union[int, float] = 0,
+        min_length : int = 0,
     ) -> BArrayType:
-        axis_len = __class__.get_array_axis_length(backend, data, axis, fill_value)
+        """Drop the trailing ``fill_value`` entries along ``axis``, keeping at least ``min_length`` entries."""
+        axis_len = max(__class__.get_array_axis_length(backend, data, axis, fill_value), min_length)
         return backend.take(data, backend.arange(axis_len, dtype=backend.default_integer_dtype, device=backend.device(data)), axis=axis)
 
     def __init__(
@@ -244,8 +249,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             return self
         
         if backend is not None and backend != self.backend:
-            new_low = backend.from_other_backend(self.backend, self._low)
-            new_high = backend.from_other_backend(self.backend, self._high)
+            new_low = _bounds_to_backend(self.backend, backend, self._low, self._dtype_is_float)
+            new_high = _bounds_to_backend(self.backend, backend, self._high, self._dtype_is_float)
             new_dtype = new_low.dtype
             new_device = device
         else:
@@ -404,7 +409,9 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 self.backend,
                 data,
                 axis_i,
-                fill_value=self.fill_value
+                fill_value=self.fill_value,
+                # Trailing fill values within ``shape_low`` are data, not padding
+                min_length=self.shape_low[axis_i],
             )
         return data
 
@@ -416,17 +423,49 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             device=self.device
         )
 
+    def _padding_mask(self, shape : Sequence[int]) -> Optional[BArrayType]:
+        """Boolean mask of the entries of data of ``shape`` that may hold padding, or ``None`` if none can.
+
+        Padding (``fill_value``, see ``pad_data`` and the batching utilities) only
+        occupies positions at or beyond ``shape_low`` along a dynamic axis.
+        """
+        mask = None
+        ndim = len(shape)
+        for axis in range(ndim):
+            if self.shape_low[axis] == self.shape_high[axis] or shape[axis] <= self.shape_low[axis]:
+                continue
+            axis_idx = self.backend.reshape(
+                self.backend.arange(shape[axis], device=self.backend.device(self._low)),
+                (1,) * axis + (-1,) + (1,) * (ndim - axis - 1)
+            )
+            axis_mask = axis_idx >= self.shape_low[axis]
+            mask = axis_mask if mask is None else self.backend.logical_or(mask, axis_mask)
+        return None if mask is None else self.backend.broadcast_to(mask, tuple(shape))
+
     def contains(self, x: Any) -> bool:
-        """Return boolean specifying if x is a valid member of this space."""
+        """Return boolean specifying if x is a valid member of this space.
+
+        ``x`` must have this space's dtype (or one castable to it), a shape within
+        ``[shape_low, shape_high]`` and values within ``[low, high]``. Entries equal
+        to ``fill_value`` at positions beyond ``shape_low`` on a dynamic axis are
+        padding and are accepted even if ``fill_value`` is outside the bounds, so
+        that padded data (``pad_data``, batched data built by ``concatenate``) is
+        a member.
+        """
         if not self.backend.is_backendarray(x):
             return False
-
-        return bool(
-            self.backend.can_cast(x, self.dtype)
-            and self.shape_contains(x.shape)
-            and self.backend.all(x >= self.low)
-            and self.backend.all(x <= self.high)
-        )
+        if not (self.backend.can_cast(x, self.dtype) and self.shape_contains(x.shape)):
+            return False
+        low, high = _bounds_on_device_of(self.backend, self.low, self.high, x)
+        in_bounds = self.backend.logical_and(x >= low, x <= high)
+        if bool(self.backend.all(in_bounds)):
+            return True
+        padding_mask = self._padding_mask(tuple(x.shape))
+        if padding_mask is None:
+            return False
+        padding_mask = _bounds_on_device_of(self.backend, padding_mask, padding_mask, x)[0]
+        is_padding = self.backend.logical_and(padding_mask, x == self.fill_value)
+        return bool(self.backend.all(self.backend.logical_or(in_bounds, is_padding)))
     
     def shape_contains(self, shape: Sequence[int]) -> bool:
         """Check if the shape is within the bounds of this space."""
@@ -442,8 +481,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
 
         Axes longer than ``shape_high`` are trimmed to their first
         ``shape_high[i]`` entries, then the values are clamped to the bounds
-        and cast to the space dtype. Like ``contains``, ``fill_value`` gets no
-        special treatment (padding entries are clamped like any other value).
+        and cast to the space dtype. Padding entries (``fill_value`` beyond
+        ``shape_low`` on a dynamic axis, which ``contains`` accepts) are kept.
 
         Raises ``ValueError`` if ``x`` has a different number of dimensions or
         an axis shorter than ``shape_low`` (padding would invent data).
@@ -469,6 +508,11 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         ret = backend.clip(x, self._low, self._high)
         if not backend.is_backendarray(ret):
             ret = backend.asarray(ret, dtype=dtype, device=self.device)
+        padding_mask = self._padding_mask(tuple(x.shape))
+        if padding_mask is not None:
+            # Padding entries are members (see ``contains``): keep them, so clip stays idempotent
+            keep = backend.logical_and(padding_mask, x == self.fill_value)
+            ret = backend.where(keep, x, ret)
         return ret
 
     def get_repr(
@@ -493,7 +537,7 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         return ret
 
     def __eq__(self, other: Any) -> bool:
-        """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
+        """Check whether ``other`` is an equivalent dynamic box (integer bounds compare exactly, floating ones up to rounding)."""
         try:
             return bool(
                 isinstance(other, DynamicBoxSpace)
@@ -501,8 +545,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
                 and (self.shape_low == other.shape_low)
                 and (self.shape_high == other.shape_high)
                 and (self.dtype == other.dtype)
-                and self.backend.all(self.backend.isclose(self.low, other.low))
-                and self.backend.all(self.backend.isclose(self.high, other.high))
+                and _bounds_equal(self.backend, self._dtype_is_float, self.low, other.low)
+                and _bounds_equal(self.backend, self._dtype_is_float, self.high, other.high)
             )
         except:
             return False
@@ -521,6 +565,8 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
         This covers every stored bound: ``other``'s bounds broadcast to it
         because an axis that is static in ``other`` is static with the same
         size in ``self``, and neither space's bounds vary along a dynamic axis.
+        If the fill values differ, ``self``'s fill value (its padding, see
+        ``contains``) must lie within ``other``'s bounds.
         """
         try:
             if not (isinstance(other, DynamicBoxSpace) and self.backend == other.backend):
@@ -541,10 +587,18 @@ class DynamicBoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             self_high = self.get_high(common_shape)
             other_low = other.get_low(common_shape)
             other_high = other.get_high(common_shape)
-            return bool(
+            if not bool(
                 self.backend.all(other_low <= self_low)
                 and self.backend.all(other_high >= self_high)
-            )
+            ):
+                return False
+            # ``self``'s padding (``fill_value``) must be a member of ``other`` too
+            if self.fill_value != other.fill_value:
+                return bool(
+                    self.backend.all(other_low <= self.fill_value)
+                    and self.backend.all(other_high >= self.fill_value)
+                )
+            return True
         except Exception:
             return False
     
