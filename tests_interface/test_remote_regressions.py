@@ -296,3 +296,57 @@ def test_torch_client_receives_float16_and_unsigned_data():
     assert str(restored["half"].dtype) == "torch.float32" and restored["half"].tolist() == [0.0, 1.0, 2.0]
     assert str(restored["u16"].dtype) == "torch.int32"
     assert str(restored["u32"].dtype) == "torch.int64" and restored["u32"].tolist() == [2 ** 32 - 1]
+
+
+# ---------------------------------------------------------------------------- 7 / 16: compression of nested values
+
+_LABELS = (np.arange(48 * 64 * 3).reshape(48, 64, 3) % 7).astype(np.uint8)  # a label map: must stay exact
+
+
+def _image_space(**metadata):
+    return BoxSpace(B, 0, 255, np.uint8, shape=(48, 64, 3), metadata=metadata)
+
+
+class _UnionEnv(ProbeEnv):
+    def __init__(self):
+        super().__init__()
+        from unienv_interface.space.spaces.union import UnionSpace
+        self.observation_space = UnionSpace(B, [_image_space(kind="segmentation"), _image_space(kind="image")])
+        self.index = 0
+
+    def step(self, action):
+        return (self.index, _LABELS.copy()), 0.0, False, False, {}
+
+
+def test_compression_follows_the_union_alternative():
+    hosted = _UnionEnv()
+    with RemoteServer() as server:
+        server.register("u", hosted)
+        with server.connect(compress={"image": "jpeg:90"}) as client:
+            index, labels = client.env("u").step(ACTION)[0]
+            assert index == 0 and np.array_equal(labels, _LABELS)  # used to be JPEG-compressed (lossy)
+            hosted.index = 1  # the image alternative is compressed
+            index, image = client.env("u").step(ACTION)[0]
+            assert index == 1 and image.shape == _LABELS.shape and not np.array_equal(image, _LABELS)
+
+
+def test_compression_of_namedtuple_observations():
+    from collections import namedtuple
+    from unienv_interface.space import TupleSpace
+
+    Observation = namedtuple("Observation", "image state")
+
+    class NamedTupleEnv(ProbeEnv):
+        def __init__(self):
+            super().__init__()
+            self.observation_space = TupleSpace(B, [_image_space(kind="image"),
+                                                    BoxSpace(B, -1.0, 1.0, np.float32, shape=(2,))])
+
+        def step(self, action):
+            return Observation(np.full((48, 64, 3), 100, np.uint8), np.ones(2, np.float32)), 0.0, False, False, {}
+
+    with RemoteServer() as server:
+        server.register("nt", NamedTupleEnv())
+        with server.connect(compress={"image": "jpeg:90"}) as client:
+            image, state = client.env("nt").step(ACTION)[0]  # used to fail: Observation.__new__() missing 'state'
+            assert np.abs(image.astype(int) - 100).max() <= 2 and np.array_equal(state, np.ones(2, np.float32))
