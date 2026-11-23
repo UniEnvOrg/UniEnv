@@ -3354,6 +3354,8 @@
       
         
       
+        
+      
     
     
     
@@ -3505,6 +3507,34 @@
     
   
     framestack_queue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../unienv_interface/utils/png/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    png
   
 
     
@@ -5057,6 +5087,8 @@
       
         
       
+        
+      
     
     
     
@@ -5152,6 +5184,34 @@
     
   
     lerobot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../unienv_data/integrations/lerobot_writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lerobot_writer
   
 
     
@@ -6203,6 +6263,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#unienv_mcp.images.encode_png" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;encode_png
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unienv_mcp.images.image_kind" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6218,17 +6289,6 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;prepare_image
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unienv_mcp.images.encode_png" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;encode_png
       
     </span>
   </a>
@@ -6336,6 +6396,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#unienv_mcp.images.encode_png" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;encode_png
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unienv_mcp.images.image_kind" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6351,17 +6422,6 @@
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;prepare_image
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unienv_mcp.images.encode_png" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        <code class="doc-symbol doc-symbol-toc doc-symbol-function"></code>&nbsp;encode_png
       
     </span>
   </a>
@@ -6432,6 +6492,14 @@
       </thead>
       <tbody>
             <tr class="doc-section-item">
+              <td><code><a class="autorefs autorefs-internal" title="            encode_png (unienv_mcp.images.encode_png)" href="#unienv_mcp.images.encode_png">encode_png</a></code></td>
+              <td>
+                <div class="doc-md-description">
+                  <p>PNG bytes of a <code>uint8</code> image of shape <code>(H, W)</code> or <code>(H, W, 1 | 3 | 4)</code> (gray, RGB, RGBA).</p>
+                </div>
+              </td>
+            </tr>
+            <tr class="doc-section-item">
               <td><code><a class="autorefs autorefs-internal" title="            image_kind (unienv_mcp.images.image_kind)" href="#unienv_mcp.images.image_kind">image_kind</a></code></td>
               <td>
                 <div class="doc-md-description">
@@ -6444,14 +6512,6 @@
               <td>
                 <div class="doc-md-description">
                   <p>One image as <code>uint8</code> <code>(H, W, 1|3|4)</code> in RGB order, upright, at most <code>max_side</code> pixels wide or high.</p>
-                </div>
-              </td>
-            </tr>
-            <tr class="doc-section-item">
-              <td><code><a class="autorefs autorefs-internal" title="            encode_png (unienv_mcp.images.encode_png)" href="#unienv_mcp.images.encode_png">encode_png</a></code></td>
-              <td>
-                <div class="doc-md-description">
-                  <p>PNG bytes of a <code>uint8</code> <code>(H, W, 1|3|4)</code> image (no third-party encoder needed).</p>
                 </div>
               </td>
             </tr>
@@ -6472,6 +6532,26 @@
 
 
 
+
+<div class="doc doc-object doc-function">
+
+
+<h2 id="unienv_mcp.images.encode_png" class="doc doc-heading">
+<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">encode_png</span>
+
+
+<a href="#unienv_mcp.images.encode_png" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">encode_png</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">,</span> <span class="n">compression</span><span class="p">:</span> <span class="n"><span title="int">int</span></span> <span class="o">=</span> <span class="mi">6</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="bytes">bytes</span></span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>PNG bytes of a <code>uint8</code> image of shape <code>(H, W)</code> or <code>(H, W, 1 | 3 | 4)</code> (gray, RGB, RGBA).</p>
+
+
+    </div>
+
+</div>
 
 <div class="doc doc-object doc-function">
 
@@ -6512,26 +6592,6 @@ pictures (height and width of at least 16, then 1, 3 or 4 channels).</p>
 
         <p>One image as <code>uint8</code> <code>(H, W, 1|3|4)</code> in RGB order, upright, at most <code>max_side</code> pixels wide or high.</p>
 <p>Returns the image and notes for the model (e.g. the depth range shown in gray levels).</p>
-
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-function">
-
-
-<h2 id="unienv_mcp.images.encode_png" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-function"></code>            <span class="doc doc-object-name doc-function-name">encode_png</span>
-
-
-<a href="#unienv_mcp.images.encode_png" class="headerlink" title="Permanent link">&para;</a></h2>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">encode_png</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n"><span title="numpy.ndarray">ndarray</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><span title="bytes">bytes</span></span>
-</code></pre></div>
-
-    <div class="doc doc-contents ">
-
-        <p>PNG bytes of a <code>uint8</code> <code>(H, W, 1|3|4)</code> image (no third-party encoder needed).</p>
 
 
     </div>

@@ -77,6 +77,10 @@
          <lastmod>2026-11-23</lastmod>
     </url>
     <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_data/integrations/lerobot_writer/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
          <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_data/integrations/pytorch/</loc>
          <lastmod>2026-11-23</lastmod>
     </url>
@@ -426,6 +430,10 @@
     </url>
     <url>
          <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_interface/utils/framestack_queue/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_interface/utils/png/</loc>
          <lastmod>2026-11-23</lastmod>
     </url>
     <url>

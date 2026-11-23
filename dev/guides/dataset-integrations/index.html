@@ -869,6 +869,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="LeRobot Datasets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#writing-lerobot-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing LeRobot Datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3442,6 +3459,8 @@
       
         
       
+        
+      
     
     
     
@@ -3593,6 +3612,34 @@
     
   
     framestack_queue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/unienv_interface/utils/png/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    png
   
 
     
@@ -5142,6 +5189,8 @@
       
         
       
+        
+      
     
     
     
@@ -5237,6 +5286,34 @@
     
   
     lerobot
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/unienv_data/integrations/lerobot_writer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lerobot_writer
   
 
     
@@ -6322,6 +6399,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="LeRobot Datasets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#writing-lerobot-datasets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing LeRobot Datasets
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6404,6 +6498,32 @@
 </code></pre></div>
 <p>An episode that lists several tasks records its first one; <code>task_index</code> is -1 for a task missing from <code>meta/tasks</code>.</p>
 <p>This is the most direct path for bringing LeRobot-formatted robotics datasets into UniEnv-native tooling.</p>
+<p>With <code>video_backend="auto"</code> (the default) videos decode with TorchCodec when it is installed. If TorchCodec cannot open a video that PyAV can, which happens when its build does not match the installed torch or FFmpeg, the reader warns once and uses PyAV from then on.</p>
+<h3 id="writing-lerobot-datasets">Writing LeRobot Datasets<a class="headerlink" href="#writing-lerobot-datasets" title="Permanent link">&para;</a></h3>
+<p>UniEnv also writes LeRobot datasets (format v3.0) without the <code>lerobot</code> package. The output has the same layout LeRobot itself writes: chunked data parquet files, one MP4 per camera holding consecutive episodes, and the <code>meta/</code> files (<code>info.json</code>, <code>tasks.parquet</code>, the episodes index with per-episode statistics, <code>stats.json</code>). <code>LeRobotDataset</code> and <code>LeRobotAsUniEnvDataset</code> both load it, and <code>push_to_hub</code> uploads it.</p>
+<p>Write frame by frame, for example while collecting:</p>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.integrations.lerobot</span><span class="w"> </span><span class="kn">import</span> <span class="n">LeRobotDatasetWriter</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">with</span> <span class="n">LeRobotDatasetWriter</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"out/pick_place"</span><span class="p">,</span> <span class="n">env</span><span class="o">.</span><span class="n">observation_space</span><span class="p">,</span> <span class="n">fps</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span> <span class="k">as</span> <span class="n">writer</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="k">for</span> <span class="n">episode</span> <span class="ow">in</span> <span class="n">episodes</span><span class="p">:</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>        <span class="k">for</span> <span class="n">observation</span> <span class="ow">in</span> <span class="n">episode</span><span class="p">:</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>            <span class="n">writer</span><span class="o">.</span><span class="n">add_frame</span><span class="p">(</span><span class="n">observation</span><span class="p">,</span> <span class="n">task</span><span class="o">=</span><span class="s2">"pick up the cube"</span><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">writer</span><span class="o">.</span><span class="n">save_episode</span><span class="p">()</span>          <span class="c1"># or writer.clear_episode() to drop it</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="n">writer</span><span class="o">.</span><span class="n">push_to_hub</span><span class="p">(</span><span class="s2">"me/pick_place"</span><span class="p">)</span>    <span class="c1"># after the with block has finalized the dataset</span>
+</code></pre></div>
+<p>Or write a whole replay buffer or dataset at once:</p>
+<div class="language-python highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">unienv_data.integrations.lerobot</span><span class="w"> </span><span class="kn">import</span> <span class="n">export_lerobot</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">writer</span> <span class="o">=</span> <span class="n">export_lerobot</span><span class="p">(</span><span class="n">replay_buffer</span><span class="p">,</span> <span class="s2">"out/pick_place"</span><span class="p">,</span> <span class="n">fps</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">writer</span><span class="o">.</span><span class="n">push_to_hub</span><span class="p">(</span><span class="s2">"me/pick_place"</span><span class="p">,</span> <span class="n">private</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><code>export_lerobot</code> takes its episodes from the source: a replay buffer's <a href="../replay-buffers-and-storage/#episode-records">episode records</a> (or its segments), or a LeRobot dataset's episodes. You can also pass <code>episodes=[(start, end), ...]</code>. Each episode's task is the <code>task</code> argument, which is either a string or a function of the episode record. Without it, the task is read from the record's <code>task</code>, <code>language_instruction</code> or <code>instruction</code> field.</p>
+<p>Features:</p>
+<ul>
+<li><strong>Names.</strong> By default every leaf of the space is a feature, named by its keys joined with dots (<code>{"obs": {"state": ...}}</code> becomes <code>obs.state</code>). To pick and rename features, pass <code>features={"observation.state": "obs/state", "observation.images.front": "obs/front", "action": "action"}</code>; only the mapped leaves are written. <code>lerobot_features(space, features=...)</code> shows the result without writing anything.</li>
+<li><strong>Images.</strong> Leaves with <code>kind="image"</code> <a href="../../concepts/spaces-and-backends/#space-metadata">metadata</a> are images, as are unannotated <code>uint8</code> <code>H×W×3</code> leaves. CHW layout and BGR format are converted. Images are written as videos (AV1 like LeRobot, or H.264 when no AV1 encoder is available; needs PyAV), which require an even height and width. With <code>videos=False</code> they are written as PNGs inside the parquet files.</li>
+<li><strong>Other leaves.</strong> Box leaves become <code>float32</code>/<code>int64</code>/... features, with their <code>names</code> metadata, and binary leaves become <code>bool</code>. Text and other leaves are skipped, and <code>writer.skipped</code> records why. The standard columns (<code>timestamp</code>, <code>frame_index</code>, <code>episode_index</code>, <code>index</code>, <code>task_index</code>) are always filled in by the writer, so a source that already has them, such as a LeRobot dataset, does not copy them.</li>
+</ul>
 <h2 id="pytorch-dataset-adapters">PyTorch Dataset Adapters<a class="headerlink" href="#pytorch-dataset-adapters" title="Permanent link">&para;</a></h2>
 <p>UniEnv provides both directions:</p>
 <ul>
