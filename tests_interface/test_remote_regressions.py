@@ -520,3 +520,15 @@ def test_space_update_of_a_resource_released_meanwhile_is_ignored():
             thread.join(10)
             assert not isinstance(outcome["value"], Exception), outcome["value"]  # used to be KeyError('version')
             assert outcome["value"][1].shape == (5,)
+
+
+# ---------------------------------------------------------------------------- 14: numpy strings
+
+def test_numpy_strings_and_bytes_travel_as_str_and_bytes():
+    labels = np.array(["left", "right"])
+    value = {"label": labels[0], "raw": np.bytes_(b"\x00x"), "name": np.str_("cam")}
+    restored = wire.loads(wire.dumps(value))  # used to raise TypeError: Cannot send arrays of dtype <U4
+    assert restored == {"label": "left", "raw": b"\x00x", "name": "cam"}
+    assert type(restored["label"]) is str and type(restored["raw"]) is bytes
+    parts, _ = wire.encode(np.bytes_(b"ab"))  # zero-copy path
+    assert wire.loads(b"".join(bytes(p) for p in parts)) == b"ab"

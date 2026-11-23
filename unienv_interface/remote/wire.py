@@ -23,7 +23,8 @@ tag         fields                                                       decodes
 ``graph``   ``v``: dict of the ``GraphInstance`` fields                  ``GraphInstance``
 ==========  ===========================================================  ======================
 
-NumPy scalars travel as 0-d arrays; torch / JAX arrays are sent as NumPy arrays.
+NumPy scalars travel as 0-d arrays (``np.str_`` / ``np.bytes_`` as ``str`` / ``bytes``); torch / JAX
+arrays are sent as NumPy arrays.
 Anything else raises ``TypeError``: no arbitrary objects are ever reconstructed.
 Decoding validates every frame (sizes, buffer references, dtype allowlist,
 shape x itemsize == length, nesting depth) and raises ``WireError`` otherwise.
@@ -185,14 +186,14 @@ class _Encoder:
             return [self.value(item, depth) for item in value]
         if isinstance(value, tuple):
             return {TAG: "tuple", "v": [self.value(item, depth) for item in value]}
-        if isinstance(value, np.generic):
+        if isinstance(value, np.generic) and not isinstance(value, (str, bytes)):  # np.str_ / np.bytes_: below
             return self.array(np.asarray(value))
         if isinstance(value, (bool, int, str)):  # subclasses, e.g. IntEnum
             return self.value((bool if isinstance(value, bool) else int if isinstance(value, int) else str)(value), depth)
         if isinstance(value, float):
             return self.value(float(value), depth)
         if isinstance(value, (bytes, bytearray, memoryview)):
-            data = bytes(value) if self.copy or not isinstance(value, bytes) else value
+            data = value if type(value) is bytes and not self.copy else bytes(value)
             return {TAG: "bytes", "b": self.attach(data, len(data))}
         if isinstance(value, Space):
             try:
