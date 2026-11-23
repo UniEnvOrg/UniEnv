@@ -217,6 +217,16 @@ def write_sorted_unique_rows(dataset : h5py.Dataset, index : np.ndarray, value :
         if not write_rows(dataset, first, value[start:end], end - start):
             dataset[first:first + (end - start)] = value[start:end]
 
+def _decode_utf8(raw : bytes) -> str:
+    """
+    Decode a stored text field. Files written before text fields were sized for UTF-8 may hold a string cut
+    inside a multi-byte character; drop that incomplete tail instead of failing the whole read.
+    """
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('utf-8', errors='ignore')
+
 HDF5BatchType = Union[Dict[str, Any], NumpyArrayType, str]
 HDF5SpaceType = Union[DictSpace, BoxSpace, TextSpace]
 class HDF5Storage(SpaceStorage[
@@ -248,6 +258,8 @@ class HDF5Storage(SpaceStorage[
     # ========== Class Attributes ==========
     single_file_ext : Optional[str] = ".hdf5"
     DEFAULT_KEY : str = "data"
+    #: Bytes reserved per character of a `TextSpace` (the longest UTF-8 encoding of a character).
+    TEXT_BYTES_PER_CHAR : int = 4
 
     @staticmethod
     def build_space_from_hdf5_file(
@@ -442,7 +454,9 @@ class HDF5Storage(SpaceStorage[
                 elif isinstance(space, TextSpace):
                     shape = (initial_capacity,)
                     maxshape = (capacity,) if capacity is not None else (None,)
-                    dtype = h5py.string_dtype(encoding='utf-8', length=space.max_length)
+                    # `max_length` counts characters, the fixed-length dataset bytes: UTF-8 takes up to 4 bytes
+                    # per character, so a `max_length`-byte field cut valid multi-byte strings short
+                    dtype = h5py.string_dtype(encoding='utf-8', length=__class__.TEXT_BYTES_PER_CHAR * space.max_length)
                 else:
                     raise ValueError(f"Unsupported space type: {type(space)}")
 
@@ -585,9 +599,9 @@ class HDF5Storage(SpaceStorage[
             result = np.array(result)
         if isinstance(space, TextSpace):
             if isinstance(result, bytes):
-                result = result.decode('utf-8')
+                result = _decode_utf8(result)
             elif isinstance(result, np.ndarray):
-                result = np.array([r.decode('utf-8') if isinstance(r, bytes) else r for r in result], dtype=object)
+                result = np.array([_decode_utf8(r) if isinstance(r, bytes) else r for r in result], dtype=object)
         return result
 
     @staticmethod

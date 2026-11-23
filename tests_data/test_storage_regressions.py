@@ -110,6 +110,40 @@ def test_dict_storage_child_rejecting_a_sample_keeps_children_in_step(tmp_path, 
 
 
 # ---------------------------------------------------------------------------
+# HDF5 text fields hold `max_length` characters of any UTF-8 text
+# ---------------------------------------------------------------------------
+
+def test_hdf5_text_multibyte_characters_round_trip(tmp_path):
+    space = DictSpace(NB, {"t": TextSpace(NB, max_length=4)})
+    path = str(tmp_path / "t.hdf5")
+    storage = HDF5Storage.create(space, capacity=3, cache_path=path)
+    texts = ["日ab", "日本語!", "éé"]
+    for text in texts:
+        assert space.spaces["t"].contains(text)
+    storage.set(slice(None), {"t": np.array(texts, dtype=object)})
+    assert list(storage.get(slice(None))["t"]) == texts
+    assert storage.get(1)["t"] == "日本語!"
+    storage.close()
+    loaded = HDF5Storage.load_from(path, space, capacity=3)
+    assert list(loaded.get(slice(None))["t"]) == texts
+    loaded.close()
+
+
+def test_hdf5_text_files_written_before_utf8_sizing_still_read(tmp_path):
+    # The old layout: a `max_length`-byte field, with multi-byte strings cut inside a character
+    path = str(tmp_path / "old.hdf5")
+    with h5py.File(path, "w") as f:
+        dataset = f.create_dataset("t", shape=(2,), dtype=h5py.string_dtype("utf-8", length=4))
+        dataset[0] = "abcd".encode()
+        dataset[1] = "日本".encode()[:4]
+    space = DictSpace(NB, {"t": TextSpace(NB, max_length=4)})
+    storage = HDF5Storage.load_from(path, space, capacity=2)
+    assert list(storage.get(slice(None))["t"]) == ["abcd", "日"]
+    assert storage.get(1)["t"] == "日"
+    storage.close()
+
+
+# ---------------------------------------------------------------------------
 # clear() on an empty unbounded storage
 # ---------------------------------------------------------------------------
 
