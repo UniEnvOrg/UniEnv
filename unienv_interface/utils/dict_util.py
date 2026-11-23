@@ -24,7 +24,8 @@ def flatten_keys_in_mapping(
     """
     result : Dict[str, Any] = {}
     for key, value in _items(d):
-        if isinstance(value, (DictSpace, Mapping)):
+        if isinstance(value, (DictSpace, Mapping)) and len(value) > 0:
+            # (an empty nested mapping is kept as a leaf: flattening it would drop the key)
             for sub_key, sub_value in _items(flatten_keys_in_mapping(value, nested_separator=nested_separator)):
                 result[f'{key}{nested_separator}{sub_key}'] = sub_value
         else:
