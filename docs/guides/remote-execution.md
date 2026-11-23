@@ -217,6 +217,12 @@ Delivery is latest-wins: a slow subscriber skips results (visible as gaps in
 `sequence`) and never slows the server or other clients down. Closing the
 subscription unsubscribes; a lost connection ends it with `ConnectionError`.
 
+Results the server does not produce itself can be published too: an env driven on the server's side, with remote
+viewers attached, calls `server.publish(name, "step", result)` (or `"reset"`) after each step. Register such an
+object with `register(name, env, publish_results=False)` when it publishes every event itself, including those of
+remote clients' calls, so those are not published twice and all events keep the order the steps happened in (this
+is how `unienv_mcp` hosts its instances).
+
 ## Image compression
 
 Over a slow network, a client can ask for lossy compression of camera images:
