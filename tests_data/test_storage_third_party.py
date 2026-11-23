@@ -36,6 +36,28 @@ def test_pickled_view_keeps_its_index(memmap_file, index):
     torch.testing.assert_close(torch.as_tensor(clone), torch.as_tensor(view))
 
 
+def test_pickled_view_of_a_view_keeps_every_index(memmap_file):
+    # Regression: a view of a view only remembered its last index, so pickling rebuilt
+    # full[1] (= [2, 3]) instead of full[2:5][1] (= [6, 7]).
+    full = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2))
+    chunk = full[2:5]
+    for view in (chunk[1], list(chunk)[1], chunk.unbind(0)[1], chunk[1:][0], chunk.split(2)[0][1], chunk.chunk(3)[1][0]):
+        assert isinstance(view, MemoryMappedTensor)
+        torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(view))), torch.tensor([6.0, 7.0]))
+    deeper = full[1:][1:][1:][0]  # three levels: full[3]
+    torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(deeper))), torch.tensor([6.0, 7.0]))
+    # The view still maps the file (it is not a copy).
+    clone = pickle.loads(pickle.dumps(chunk[1]))
+    clone[0] = -5.0
+    assert float(full[3, 0]) == -5.0
+
+
+def test_pickled_view_of_a_loaded_view_keeps_both_indices(memmap_file):
+    loaded = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2), index=slice(2, 6))
+    view = loaded[1]  # full[3]
+    torch.testing.assert_close(torch.as_tensor(pickle.loads(pickle.dumps(view))), torch.tensor([6.0, 7.0]))
+
+
 def test_pickled_read_only_tensor_stays_read_only(memmap_file):
     read_only = MemoryMappedTensor.from_filename(memmap_file, dtype=torch.float32, shape=(6, 2), readonly=True)
     clone = pickle.loads(pickle.dumps(read_only))
@@ -125,6 +147,24 @@ def test_parse_info_json_features(tmp_path):
     assert set(schema.tabular_features) == {"observation.state"}
     video = schema.features["observation.image"]
     assert video.video_info.video_codec == "av1" and video.shape == (4, 4, 3)
+
+
+def test_parse_info_json_reads_the_video_info_key_lerobot_writes(tmp_path):
+    # LeRobot v2.1 / v3.0 store the video properties under "info" (v2.0: "video_info"); they
+    # were ignored, so a video fps differing from the dataset fps was never used.
+    root = str(tmp_path)
+    _write_info(root, "v3.0")
+    with open(os.path.join(root, "meta", "info.json")) as f:
+        info = json.load(f)
+    info["features"]["observation.image"] = {
+        "dtype": "video", "shape": [4, 4, 3],
+        "info": {"video.fps": 15.0, "video.codec": "h264", "video.pix_fmt": "yuv420p", "is_depth_map": True},
+    }
+    with open(os.path.join(root, "meta", "info.json"), "w") as f:
+        json.dump(info, f)
+    video = parse_info_json(root).features["observation.image"].video_info
+    assert video is not None
+    assert (video.fps, video.video_codec, video.pixel_format, video.is_depth) == (15.0, "h264", "yuv420p", True)
 
 
 def test_v2_paths_and_episodes(tmp_path):

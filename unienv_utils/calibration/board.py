@@ -159,30 +159,31 @@ def render_board(
         Print resolution.  Use 5000 for a 20 mm checker to become 100 px, i.e.
         roughly 127 DPI, so the board prints at the right physical size.
     margin_px:
-        White border added around the board (ignored by OpenCV < 4.7).
+        White border added around the board, on every side.  It enlarges the
+        image; the board itself keeps the size ``pixels_per_meter`` gives it.
 
     Returns
     -------
     np.ndarray
-        ``uint8`` grayscale image of shape ``(height_px, width_px)``.
+        ``uint8`` grayscale image of shape
+        ``(board_height_px + 2 * margin_px, board_width_px + 2 * margin_px)``.
     """
     if not pixels_per_meter > 0.0:
         raise ValueError(f"pixels_per_meter must be positive, got {pixels_per_meter}.")
     if margin_px < 0:
         raise ValueError(f"margin_px must be non-negative, got {margin_px}.")
     width_m, height_m = cfg.board_size_m
-    width_px = int(round(width_m * pixels_per_meter))
-    height_px = int(round(height_m * pixels_per_meter))
+    # OpenCV fits the board inside the image minus the margins, so the margins are added
+    # to the image size: otherwise the board shrinks and prints smaller than specified.
+    margin = int(margin_px)
+    width_px = int(round(width_m * pixels_per_meter)) + 2 * margin
+    height_px = int(round(height_m * pixels_per_meter)) + 2 * margin
     board = make_board(cfg)
     if hasattr(board, "generateImage"):
         image = board.generateImage(
-            (width_px, height_px), marginSize=int(margin_px), borderBits=1
+            (width_px, height_px), marginSize=margin, borderBits=1
         )
     else:
-        # OpenCV < 4.7: no margin support, this is what tianji falls back to.
-        if margin_px != _DEFAULT_MARGIN_PX:
-            logger.warning(
-                "OpenCV < 4.7 board.draw() ignores margin_px=%d.", margin_px
-            )
-        image = board.draw((width_px, height_px))
+        # OpenCV < 4.7
+        image = board.draw((width_px, height_px), marginSize=margin, borderBits=1)
     return np.asarray(image, dtype=np.uint8)

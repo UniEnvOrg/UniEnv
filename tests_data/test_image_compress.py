@@ -123,6 +123,21 @@ def test_explicit_size_and_ratio_budgets():
         ImageCompressTransformation(format="PNG")
 
 
+@pytest.mark.parametrize("ratio", [4.0, 7.5, np.float64(10.0)], ids=["float", "fractional", "numpy-float"])
+def test_float_compression_ratio(ratio):
+    # Regression: a float ratio made the budget a float and the target space failed with
+    # "Expect all shape elements to be an integer".
+    space = _space((2, 32, 32, 3))
+    tf = ImageCompressTransformation(compression_ratio=ratio)
+    budget = int(32 * 32 * 3 // ratio) + 1 + tf.header_bytes
+    target = tf.get_target_space_from_source(space)
+    assert target.shape == (2, budget) and all(type(n) is int for n in target.shape)
+    images, decoded = _round_trip(tf, (2, 32, 32, 3))
+    assert_close_images(decoded, images)
+    again = ImageCompressTransformation.deserialize_from(tf.serialize())
+    assert again.get_target_space_from_source(space) == target
+
+
 def test_legacy_configuration_keeps_its_target_shape():
     # Datasets written before the header allowance must load with the same shape.
     space = _space((128, 128, 3))
