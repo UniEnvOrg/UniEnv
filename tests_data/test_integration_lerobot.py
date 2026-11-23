@@ -518,3 +518,124 @@ def test_episode_ids_are_lerobot_episode_indices(tmp_path):
     assert ds.get_episode_segments() == [(0, 3, 0), (3, 5, 5), (5, 9, 7)]
     with pytest.raises(IndexError):
         ds.get_episode_data(1)
+
+
+# ---------- column encodings LeRobot / HF `datasets` write (regressions) ----------
+
+def _write_v2_single_feature(root: Path, name, feature, column, lengths=(3, 2)) -> Path:
+    """A v2.1 dataset with an "index" column and one feature ``name`` stored as the arrow ``column``
+    (one value per global frame)."""
+    ds = root / f"lerobot_{name}"
+    (ds / "meta").mkdir(parents=True)
+    info = {"codebase_version": "v2.1", "robot_type": "t", "fps": FPS, "total_episodes": len(lengths),
+            "total_frames": sum(lengths), "total_tasks": 1, "chunks_size": 1000,
+            "features": {"index": {"dtype": "int64", "shape": [1]}, name: feature}}
+    (ds / "meta" / "info.json").write_text(json.dumps(info))
+    with open(ds / "meta" / "episodes.jsonl", "w") as f:
+        for e, n in enumerate(lengths):
+            f.write(json.dumps({"episode_index": e, "length": n, "tasks": ["t"]}) + "\n")
+    start = 0
+    for e, n in enumerate(lengths):
+        path = ds / "data" / "chunk-000" / f"episode_{e:06d}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.table({"index": pa.array(range(start, start + n), pa.int64()),
+                                 name: column.slice(start, n)}), path)
+        start += n
+    return ds
+
+
+def _backends():
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend
+    return [NB, PyTorchComputeBackend]
+
+
+def _png(pixels):
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.fromarray(pixels).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("channels_first", [False, True])
+def test_image_features_stored_in_parquet_are_decoded(tmp_path, channels_first):
+    # Regression: dtype "image" features (HF Image(): struct<bytes, path> of PNG bytes) were
+    # read as numeric columns and failed with "cannot reshape array of size 1 into shape (16,16,3)".
+    frames = [np.full((H, W, 3), 20 * k, np.uint8) for k in range(5)]
+    frames[3][0, 0] = (1, 2, 3)  # check the channel order too
+    column = pa.array([{"bytes": _png(f), "path": None} for f in frames],
+                      pa.struct([("bytes", pa.binary()), ("path", pa.string())]))
+    shape = [3, H, W] if channels_first else [H, W, 3]
+    ds_dir = _write_v2_single_feature(tmp_path, "img", {"dtype": "image", "shape": shape}, column)
+    picks = np.array([4, 0, 3])
+    for backend in _backends():
+        ds = LeRobotAsUniEnvDataset.from_local(str(ds_dir), backend=backend)
+        assert ds.single_space["img"].shape == (H, W, 3)
+        batch = ds.get_at(backend.asarray(picks))
+        np.testing.assert_array_equal(to_numpy(batch["img"]), np.stack([frames[k] for k in picks]))
+        single = ds.get_at(3)
+        np.testing.assert_array_equal(to_numpy(single["img"]), frames[3])
+        assert ds.single_space.contains(single)
+
+
+def test_image_features_given_by_path(tmp_path):
+    frames = [np.full((H, W, 3), 30 * k, np.uint8) for k in range(5)]
+    (tmp_path / "images").mkdir()
+    for k, f in enumerate(frames):
+        (tmp_path / "images" / f"{k}.png").write_bytes(_png(f))
+    column = pa.array([{"bytes": None, "path": str(tmp_path / "images" / f"{k}.png")} for k in range(5)],
+                      pa.struct([("bytes", pa.binary()), ("path", pa.string())]))
+    ds_dir = _write_v2_single_feature(tmp_path, "img", {"dtype": "image", "shape": [H, W, 3]}, column)
+    ds = LeRobotAsUniEnvDataset.from_local(str(ds_dir), backend=NB)
+    np.testing.assert_array_equal(to_numpy(ds.get_at(np.array([2, 4]))["img"]), np.stack([frames[2], frames[4]]))
+
+
+@pytest.mark.parametrize("encoding", ["nested-list", "variable-list", "fixed-size-list"])
+def test_multi_dimensional_and_variable_length_list_columns(tmp_path, encoding):
+    # Regression: only fixed-size lists were flattened; HF Array2D (list<list<float>> without
+    # `datasets` imported) and variable-size lists failed with "cannot reshape array of size 1".
+    values = np.arange(5 * 6, dtype=np.float32).reshape(5, 2, 3)
+    if encoding == "nested-list":
+        column, shape = pa.array(values.tolist(), pa.list_(pa.list_(pa.float32()))), [2, 3]
+    elif encoding == "variable-list":
+        values = values.reshape(5, 6)
+        column, shape = pa.array(values.tolist(), pa.list_(pa.float32())), [6]
+    else:
+        column, shape = pa.array(values.tolist(), pa.list_(pa.list_(pa.float32(), 3), 2)), [2, 3]
+    ds_dir = _write_v2_single_feature(tmp_path, "x", {"dtype": "float32", "shape": shape}, column)
+    picks = np.array([4, 1, 3])
+    for backend in _backends():
+        ds = LeRobotAsUniEnvDataset.from_local(str(ds_dir), backend=backend)
+        out = ds.get_at(backend.asarray(picks))["x"]
+        np.testing.assert_array_equal(to_numpy(out), values[picks])
+        assert ds.single_space.contains(ds.get_at(2))
+
+
+def test_list_column_with_wrong_length_is_rejected(tmp_path):
+    column = pa.array([[1.0, 2.0]] * 4 + [[1.0]], pa.list_(pa.float32()))
+    ds_dir = _write_v2_single_feature(tmp_path, "x", {"dtype": "float32", "shape": [2]}, column)
+    ds = LeRobotAsUniEnvDataset.from_local(str(ds_dir), backend=NB)
+    with pytest.raises(ValueError, match="expected"):
+        ds.get_at(4)
+
+
+def test_column_dtype_differing_from_info_json_is_cast_on_every_backend(tmp_path):
+    # Regression: the torch fast path raised "Index put requires the source and destination
+    # dtypes match" where the numpy path cast float64 columns to the declared float32.
+    column = pa.array([[k, -k] for k in np.arange(5, dtype=np.float64)], pa.list_(pa.float64(), 2))
+    ds_dir = _write_v2_single_feature(tmp_path, "x", {"dtype": "float32", "shape": [2]}, column)
+    for backend in _backends():
+        ds = LeRobotAsUniEnvDataset.from_local(str(ds_dir), backend=backend)
+        out = ds.get_at(backend.asarray(np.array([4, 0])))
+        np.testing.assert_array_equal(to_numpy(out["x"]), np.array([[4, -4], [0, 0]], np.float32))
+        assert ds.single_space.contains(ds.get_at(1))
+
+
+def test_v3_data_files_without_index_column_use_episode_offsets(tmp_path):
+    # Regression: without an "index" column the row offset was the *global* dataset_from_index,
+    # so episodes in file-001 read out-of-range (or other episodes') rows.
+    ds = LeRobotAsUniEnvDataset.from_local(
+        str(write_v3(tmp_path, data_files=[[0], [1, 2]], with_index_column=False)), backend=NB)
+    assert _state_ids(ds.get_at(...)) == list(range(TOTAL))
+    assert _state_ids(ds.get_episode(2)) == [5, 6, 7, 8]
+    assert _state_ids(ds.get_at(PICKS)) == PICKS.tolist()

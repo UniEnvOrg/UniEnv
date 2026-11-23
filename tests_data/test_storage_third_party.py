@@ -149,6 +149,24 @@ def test_parse_info_json_features(tmp_path):
     assert video.video_info.video_codec == "av1" and video.shape == (4, 4, 3)
 
 
+def test_parse_info_json_reads_the_video_info_key_lerobot_writes(tmp_path):
+    # LeRobot v2.1 / v3.0 store the video properties under "info" (v2.0: "video_info"); they
+    # were ignored, so a video fps differing from the dataset fps was never used.
+    root = str(tmp_path)
+    _write_info(root, "v3.0")
+    with open(os.path.join(root, "meta", "info.json")) as f:
+        info = json.load(f)
+    info["features"]["observation.image"] = {
+        "dtype": "video", "shape": [4, 4, 3],
+        "info": {"video.fps": 15.0, "video.codec": "h264", "video.pix_fmt": "yuv420p", "is_depth_map": True},
+    }
+    with open(os.path.join(root, "meta", "info.json"), "w") as f:
+        json.dump(info, f)
+    video = parse_info_json(root).features["observation.image"].video_info
+    assert video is not None
+    assert (video.fps, video.video_codec, video.pixel_format, video.is_depth) == (15.0, "h264", "yuv420p", True)
+
+
 def test_v2_paths_and_episodes(tmp_path):
     root = str(tmp_path)
     _write_info(root, "v2.0")

@@ -1,6 +1,8 @@
 from typing import Optional, Any, Dict, List, Tuple, Sequence, Union, Literal
 from collections import OrderedDict
 import importlib.util
+import io
+import math
 import os
 import threading
 
@@ -204,6 +206,40 @@ def _load_v3_video_locations(
                     int(values[0]), int(values[1]), float(values[2]), float(values[3])
                 )
     return locations
+
+
+def _arrow_storage(arr: pa.Array) -> pa.Array:
+    """The storage array of an extension array (e.g. HF ``Array2D`` when ``datasets`` is imported)."""
+    while isinstance(arr.type, pa.ExtensionType):
+        arr = arr.storage
+    return arr
+
+
+def _is_list_type(arrow_type: pa.DataType) -> bool:
+    if isinstance(arrow_type, pa.ExtensionType):
+        arrow_type = arrow_type.storage_type
+    return (
+        pa.types.is_list(arrow_type)
+        or pa.types.is_large_list(arrow_type)
+        or pa.types.is_fixed_size_list(arrow_type)
+    )
+
+
+class _EncodedImages:
+    """Encoded images of one data file column: per row, the image bytes or (if None) its path."""
+
+    __slots__ = ("encoded", "paths")
+
+    def __init__(self, encoded: List[Optional[bytes]], paths: List[Optional[str]]):
+        self.encoded = encoded
+        self.paths = paths
+
+    def __getstate__(self):
+        return {"encoded": self.encoded, "paths": self.paths}
+
+    def __setstate__(self, state):
+        self.encoded = state["encoded"]
+        self.paths = state["paths"]
 
 
 class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, BRNGType]):
@@ -437,6 +473,15 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             for feat_name in self._tabular_features:
                 if feat_name in parquet_data:
                     cached_values = parquet_data[feat_name]
+                    if isinstance(cached_values, _EncodedImages):
+                        # Image features: decode only the requested rows (PNG / JPEG bytes)
+                        frames = self._decode_images(cached_values, file_row_indices, feat_name)
+                        if use_torch_fastpath and torch is not None:
+                            target = result[feat_name]
+                            target[output_index_tensor_cpu.to(device=target.device)] = torch.from_numpy(frames).to(target.device)
+                        else:
+                            np_result[feat_name][output_positions] = frames
+                        continue
                     if use_torch_fastpath and torch is not None:
                         values = cached_values[row_index_tensor.to(
                             device=cached_values.device if hasattr(cached_values, "device") else "cpu"
@@ -447,6 +492,10 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
                             values = values.reshape(-1, *target.shape[1:])
                         if values.device != target.device:
                             values = values.to(target.device)
+                        if values.dtype != target.dtype:
+                            # The parquet column may be stored with another dtype than info.json declares
+                            # (the numpy path casts on assignment as well).
+                            values = values.to(target.dtype)
                         output_index_tensor = output_index_tensor_cpu.to(device=target.device)
                         target[output_index_tensor] = values
                     else:
@@ -682,8 +731,11 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         for col_name in table.column_names:
             if col_name not in self._tabular_features:
                 continue
-            feat_shape = self._schema.features[col_name].shape
-            data[col_name] = self._materialize_tabular_column(table.column(col_name), feat_shape)
+            feature = self._schema.features[col_name]
+            if feature.is_image:
+                data[col_name] = self._materialize_image_column(table.column(col_name), feature)
+            else:
+                data[col_name] = self._materialize_tabular_column(table.column(col_name), feature.shape)
 
         if len(self._parquet_file_cache) >= self._parquet_cache_max:
             _, evicted = self._parquet_file_cache.popitem(last=False)
@@ -708,7 +760,28 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         if path not in self._data_file_first_index:
             self._load_parquet_episode(episode_index)
         first_index = self._data_file_first_index.get(path)
-        return int(ep_meta.dataset_from_index) - (first_index or 0)
+        if first_index is None:
+            # No "index" column: the data files hold consecutive global frames in (chunk, file)
+            # order, so the file starts after the rows of all the files before it.
+            first_index = self._data_file_first_index_from_layout(ep_meta.data_chunk_index, ep_meta.data_file_index)
+            self._data_file_first_index[path] = first_index
+        return int(ep_meta.dataset_from_index) - first_index
+
+    def _data_file_first_index_from_layout(self, chunk_index: Optional[int], file_index: Optional[int]) -> int:
+        """Global index of the first row of data file ``(chunk_index, file_index)``: the number of
+        rows in the data files before it (read from the parquet footers)."""
+        if chunk_index is None or file_index is None or self._schema.data_path is None:
+            return 0
+        total = 0
+        chunk, file = 0, 0
+        while (chunk, file) < (int(chunk_index), int(file_index)):
+            path = get_data_file_path(self._dataset_dir, self._schema, 0, file_index=file, chunk_index=chunk)
+            if os.path.exists(path):
+                total += pq.read_metadata(path).num_rows
+                file += 1
+            else:  # past the last file of this chunk
+                chunk, file = chunk + 1, 0
+        return total
 
     def _video_fps(self, feat_name: str) -> float:
         video_info = self._schema.features[feat_name].video_info
@@ -730,12 +803,38 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         column: pa.ChunkedArray,
         feat_shape: Tuple[int, ...],
     ) -> Any:
-        """Convert a parquet column to cached tensor/array with a fast torch path."""
-        arr = column.combine_chunks() if hasattr(column, "combine_chunks") else column
+        """Convert a parquet column to cached tensor/array with a fast torch path.
 
-        if pa.types.is_fixed_size_list(arr.type):
-            return self._materialize_fixed_size_list_column(arr, feat_shape)
-        return self._materialize_primitive_column(arr)
+        Fixed-size lists (``Sequence(length=n)``), variable-size lists and nested lists (HF
+        ``Array2D`` / ``Array3D``, stored as ``list<list<...>>``) are flattened to their values and
+        reshaped to ``(rows, *feat_shape)``; primitive columns stay 1-D.
+        """
+        arr = column.combine_chunks() if hasattr(column, "combine_chunks") else column
+        arr = _arrow_storage(arr)
+        if not _is_list_type(arr.type):
+            return self._materialize_primitive_column(arr)
+
+        num_rows = len(arr)
+        values = arr
+        while _is_list_type(values.type):
+            if pa.types.is_fixed_size_list(values.type):
+                size = values.type.list_size
+                # `.values` ignores the array offset (slice it) but keeps the slots of null rows
+                values = values.values.slice(values.offset * size, len(values) * size)
+            else:
+                if values.null_count:
+                    raise ValueError(
+                        f"LeRobot column of type {arr.type} has null rows; cannot reshape it to {feat_shape}"
+                    )
+                values = values.flatten()
+            values = _arrow_storage(values)
+        expected = num_rows * int(math.prod(feat_shape))
+        if len(values) != expected:
+            raise ValueError(
+                f"LeRobot column of type {arr.type} holds {len(values)} values for {num_rows} rows, "
+                f"expected {expected} for feature shape {feat_shape}"
+            )
+        return self._materialize_list_values(values, feat_shape)
 
     def _materialize_primitive_column(self, arr: pa.Array) -> Any:
         if self._use_torch_fastpath and arr.null_count == 0:
@@ -748,13 +847,12 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
             return torch.as_tensor(np_arr.copy())
         return np_arr
 
-    def _materialize_fixed_size_list_column(
+    def _materialize_list_values(
         self,
-        arr: pa.Array,
+        values: pa.Array,
         feat_shape: Tuple[int, ...],
     ) -> Any:
-        values = arr.values
-        if self._use_torch_fastpath and arr.null_count == 0 and values.null_count == 0:
+        if self._use_torch_fastpath and values.null_count == 0:
             try:
                 torch_values = torch.utils.dlpack.from_dlpack(values)
                 return torch_values.reshape(-1, *feat_shape)
@@ -764,6 +862,64 @@ class LeRobotAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeTy
         if self._use_torch_fastpath:
             return torch.as_tensor(np_values.copy())
         return np_values
+
+    def _materialize_image_column(
+        self,
+        column: pa.ChunkedArray,
+        feature: LeRobotFeature,
+    ) -> Any:
+        """Cache an image feature column: encoded images (HF ``Image()``: ``struct<bytes, path>``,
+        or plain binary) are kept encoded and decoded per read; pixel arrays are materialized
+        as ``(rows, H, W, C)`` uint8."""
+        arr = column.combine_chunks() if hasattr(column, "combine_chunks") else column
+        arr = _arrow_storage(arr)
+        if pa.types.is_struct(arr.type):
+            names = [arr.type.field(i).name for i in range(arr.type.num_fields)]
+            fields = dict(zip(names, arr.flatten()))
+            if "bytes" not in fields and "path" not in fields:
+                raise ValueError(f"Image column of type {arr.type} has neither 'bytes' nor 'path'")
+            encoded = fields["bytes"].to_pylist() if "bytes" in fields else [None] * len(arr)
+            paths = fields["path"].to_pylist() if "path" in fields else [None] * len(arr)
+            return _EncodedImages(encoded, paths)
+        if pa.types.is_binary(arr.type) or pa.types.is_large_binary(arr.type):
+            return _EncodedImages(arr.to_pylist(), [None] * len(arr))
+        # Raw pixel arrays, in the layout info.json declares; produce (H, W, C).
+        pixels = self._materialize_tabular_column(pa.chunked_array([arr]), tuple(feature.shape))
+        pixels = pixels.numpy() if torch is not None and isinstance(pixels, torch.Tensor) else np.asarray(pixels)
+        if _normalize_image_shape(feature.shape) != tuple(feature.shape):
+            pixels = np.moveaxis(pixels, 1, -1)
+        return np.ascontiguousarray(pixels, dtype=np.uint8)
+
+    def _decode_images(self, images: Any, rows: np.ndarray, feat_name: str) -> np.ndarray:
+        """``(len(rows), H, W, C)`` uint8 frames of an image feature at file ``rows``."""
+        shape = _normalize_image_shape(self._schema.features[feat_name].shape)
+        if not isinstance(images, _EncodedImages):
+            return images[rows]
+        from PIL import Image
+
+        out = np.empty((len(rows), *shape), dtype=np.uint8)
+        channels = shape[-1] if len(shape) == 3 else None
+        mode = {1: "L", 3: "RGB", 4: "RGBA"}.get(channels)
+        for i, row in enumerate(rows):
+            encoded, path = images.encoded[row], images.paths[row]
+            if encoded is not None:
+                image = Image.open(io.BytesIO(encoded))
+            elif path is not None:
+                image = Image.open(path if os.path.isabs(path) else os.path.join(self._dataset_dir, path))
+            else:
+                raise ValueError(f"Image feature {feat_name!r} has no data in row {int(row)}")
+            with image:
+                if mode is not None and image.mode != mode:
+                    image = image.convert(mode)
+                pixels = np.asarray(image)
+            if pixels.ndim == 2 and len(shape) == 3:
+                pixels = pixels[..., None]
+            if pixels.shape != tuple(shape):
+                raise ValueError(
+                    f"Image feature {feat_name!r} decoded to shape {pixels.shape}, expected {tuple(shape)}"
+                )
+            out[i] = pixels
+        return out
 
     def _decode_video_frames(
         self,
