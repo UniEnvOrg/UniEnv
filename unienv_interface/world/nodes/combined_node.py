@@ -481,8 +481,15 @@ class CombinedWorldNode(WorldNode[
         return result
 
     @property
-    def world(self) -> World[BArrayType, BDeviceType, BDtypeType, BRNGType]:
+    def world(self) -> Optional[World[BArrayType, BDeviceType, BDtypeType, BRNGType]]:
         return self.nodes[0].world
+
+    @property
+    def _batch_size(self) -> Optional[int]:
+        # Nodes may be built without a world (e.g. ``EnvAsWorldNode(world=None)``,
+        # which only supports unbatched environments): treat them as unbatched.
+        world = self.world
+        return world.batch_size if world is not None else None
 
     @property
     def control_timestep(self) -> Optional[float]:
@@ -553,30 +560,30 @@ class CombinedWorldNode(WorldNode[
     
     def get_reward(self):
         assert self.has_reward, "This node does not provide a reward."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return sum(node.get_reward() for node in self._cached_reward_nodes)
         else:
-            rewards = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_floating_dtype, device=self.device)
+            rewards = self.backend.zeros((self._batch_size,), dtype=self.backend.default_floating_dtype, device=self.device)
             for node in self._cached_reward_nodes:
                 rewards = rewards + node.get_reward()
             return rewards
     
     def get_termination(self):
         assert self.has_termination_signal, "This node does not provide a termination signal."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return any(node.get_termination() for node in self._cached_termination_nodes)
         else:
-            terminations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
+            terminations = self.backend.zeros((self._batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self._cached_termination_nodes:
                 terminations = self.backend.logical_or(terminations, node.get_termination())
             return terminations
         
     def get_truncation(self):
         assert self.has_truncation_signal, "This node does not provide a truncation signal."
-        if self.world.batch_size is None:
+        if self._batch_size is None:
             return any(node.get_truncation() for node in self._cached_truncation_nodes)
         else:
-            truncations = self.backend.zeros((self.world.batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
+            truncations = self.backend.zeros((self._batch_size,), dtype=self.backend.default_boolean_dtype, device=self.device)
             for node in self._cached_truncation_nodes:
                 truncations = self.backend.logical_or(truncations, node.get_truncation())
             return truncations

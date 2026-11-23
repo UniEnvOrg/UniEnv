@@ -277,3 +277,20 @@ def test_combined_funcnode_forwards_extra_reset_kwargs():
     state, *_ = env.reset(state, reload=True, options=3)
     assert a.kwargs_log == [("initial", {"options": 1}), ("reset", {"options": 2}), ("reload", {"options": 3})]
     assert b.kwargs_log == a.kwargs_log
+
+
+# ---------------------------------------------------------------------------
+# EnvAsWorldNode without a world inside a combined node
+# ---------------------------------------------------------------------------
+
+def test_combined_env_nodes_without_world_can_step():
+    world = RealWorld(B, world_timestep=0.01)
+    n1 = EnvAsWorldNode(FakeEnv(term_after=2), "e1", control_timestep=0.01)
+    n2 = EnvAsWorldNode(FakeEnv(), "e2", control_timestep=0.01)
+    env = WorldEnv(world, [n1, n2])
+    env.reset()
+    action = np.zeros(2, np.float32)
+    _, reward, terminated, truncated, _ = env.step({"e1": action, "e2": action})
+    assert reward == 2.0 and terminated is False and truncated is False
+    _, _, terminated, _, _ = env.step({"e1": action, "e2": action})
+    assert terminated is True
