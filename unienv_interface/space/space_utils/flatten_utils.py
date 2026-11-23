@@ -60,15 +60,24 @@ def _dict_flat_layout(
     return layout, start
 
 def _flat_part_index(start_dim : int, start : int, end : int) -> typing.Tuple[Any, ...]:
-    """Basic index selecting ``[start, end)`` along axis ``start_dim`` (the flat axis).
+    """Basic index selecting ``[start, end)`` along the flat axis.
 
+    Flattening from ``start_dim`` (positive or negative) always leaves the flat
+    axis LAST (``shape[:start_dim] + (flat_dim,)``), so the slice is on axis -1.
     Slicing gives a view instead of the copy an index-array ``take`` makes; the
     leaf ``unflatten_data`` implementations copy (``astype``), so the results
     still never alias the flat input.
     """
-    if start_dim >= 0:
-        return (slice(None),) * start_dim + (slice(start, end),)
-    return (Ellipsis, slice(start, end)) + (slice(None),) * (-start_dim - 1)
+    return (Ellipsis, slice(start, end))
+
+def _flat_shape(shape : typing.Sequence[int], start_dim : int) -> typing.Tuple[int, ...]:
+    """``shape`` with the axes from ``start_dim`` on merged into one.
+
+    The merged size is explicit: ``reshape(..., (0, -1))`` is ambiguous for empty
+    (e.g. zero-length batch) arrays and fails in numpy and torch.
+    """
+    shape = tuple(shape)
+    return shape[:start_dim] + (math.prod(shape[start_dim:]),)
 
 def is_flattenable(space: Space, start_dim : int = 0) -> bool:
     return flat_dim(space, start_dim) is not None
@@ -139,12 +148,8 @@ def _flatten_space_box(space: BoxSpace, start_dim : int = 0) -> BoxSpace:
     high = space.high
     return BoxSpace(
         space.backend,
-        low=space.backend.reshape(
-            low, low.shape[:start_dim] + (-1,)
-        ), 
-        high=space.backend.reshape(
-            high, high.shape[:start_dim] + (-1,)
-        ), 
+        low=space.backend.reshape(low, _flat_shape(low.shape, start_dim)),
+        high=space.backend.reshape(high, _flat_shape(high.shape, start_dim)),
         dtype=space.dtype,
         device=space.device
     )
@@ -174,12 +179,8 @@ def _flatten_space_dynamic_box(space: DynamicBoxSpace, start_dim : int = 0) -> B
         high = space.backend.where(padding_mask, space.backend.maximum(high, fill_value), high)
     return BoxSpace(
         space.backend,
-        low=space.backend.reshape(
-            low, low.shape[:start_dim] + (-1,)
-        ),
-        high=space.backend.reshape(
-            high, high.shape[:start_dim] + (-1,)
-        ),
+        low=space.backend.reshape(low, _flat_shape(low.shape, start_dim)),
+        high=space.backend.reshape(high, _flat_shape(high.shape, start_dim)),
         dtype=space.dtype,
         device=space.device
     )
@@ -199,8 +200,9 @@ def _flatten_space_binary(space: BinarySpace, start_dim : int = 0) -> BoxSpace:
 @flatten_space.register(DictSpace)
 def _flatten_space_composition(space: typing.Union[TupleSpace, DictSpace], start_dim : int = 0) -> BoxSpace:
     space_list = [flatten_space(s, start_dim) for s in space.spaces] if isinstance(space, TupleSpace) else [flatten_space(s, start_dim) for _, s in _dict_items(space)]
-    flat_low = space.backend.concat([s.low for s in space_list], axis=start_dim)
-    flat_high = space.backend.concat([s.high for s in space_list], axis=start_dim)
+    # The flat axis is the last one, also for a negative ``start_dim``
+    flat_low = space.backend.concat([s.low for s in space_list], axis=-1)
+    flat_high = space.backend.concat([s.high for s in space_list], axis=-1)
 
     return BoxSpace(
         space.backend,
@@ -265,7 +267,7 @@ def unflatten_data(space : Space, data : BArrayType, start_dim : int = 0) -> Any
 @flatten_data.register(BinarySpace)
 def _flatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape) <= start_dim <= len(space.shape)
-    dat = space.backend.reshape(data, data.shape[:start_dim] + (-1,))
+    dat = space.backend.reshape(data, _flat_shape(data.shape, start_dim))
     if isinstance(space, BinarySpace):
         dat = space.backend.astype(dat, space.backend.default_integer_dtype)
     return dat
@@ -274,7 +276,8 @@ def _flatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: BArra
 @unflatten_data.register(BinarySpace)
 def _unflatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: Any, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape) <= start_dim <= len(space.shape)
-    unflat_dat = space.backend.reshape(data, data.shape[:start_dim] + space.shape[start_dim:])
+    # Every axis but the (last) flat one is kept, also for a negative ``start_dim``
+    unflat_dat = space.backend.reshape(data, tuple(data.shape[:-1]) + space.shape[start_dim:])
     if isinstance(space, BinarySpace):
         unflat_dat = space.backend.astype(unflat_dat, space.dtype if space.dtype is not None else space.backend.default_boolean_dtype)
     else:
@@ -285,13 +288,13 @@ def _unflatten_data_common(space: typing.Union[BoxSpace, BinarySpace], data: Any
 def _flatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
     padded_data = space.pad_data(data, start_axis=start_dim)
-    reshaped_data = space.backend.reshape(padded_data, padded_data.shape[:start_dim] + (-1,))
+    reshaped_data = space.backend.reshape(padded_data, _flat_shape(padded_data.shape, start_dim))
     return reshaped_data
 
 @unflatten_data.register(DynamicBoxSpace)
 def _unflatten_data_dynamic_box(space: DynamicBoxSpace, data: BArrayType, start_dim : int = 0) -> BArrayType:
     assert -len(space.shape_high) <= start_dim <= len(space.shape_high)
-    padded_data = space.backend.reshape(data, data.shape[:start_dim] + space.shape_high[start_dim:])
+    padded_data = space.backend.reshape(data, tuple(data.shape[:-1]) + space.shape_high[start_dim:])
     # The flat array may have been promoted to a common dtype (e.g. inside a Dict/Tuple)
     padded_data = space.backend.astype(padded_data, space.dtype)
     data = space.unpad_data(padded_data, start_axis=start_dim)
@@ -307,7 +310,8 @@ def _flatten_data_dict(space: DictSpace, data: typing.Dict[str, typing.Any], sta
         assert flat_sample.shape[-1] == flat_dim_data, f"Flattened data dimension mismatch for key `{key}`: {flat_sample.shape[-1]} != {flat_dim_data}, original data {data[key].shape}, original space {subspace}"
         if flat_sample is not None:
             to_concat.append(flat_sample)
-    return space.backend.concat(to_concat, axis=start_dim)
+    # The flat axis is the last one, also for a negative ``start_dim``
+    return space.backend.concat(to_concat, axis=-1)
 
 @unflatten_data.register(DictSpace)
 def _unflatten_data_dict(space: DictSpace, data: Any, start_dim : int = 0) -> Any:
@@ -327,13 +331,15 @@ def _flatten_data_text(space: TextSpace, data: str, start_dim : int = 0) -> BArr
     pad_size = space.max_length - len(data)
     data = space.backend.asarray(
         [space.character_index(c) for c in data], 
-        dtype=space.backend.default_integer_dtype
+        dtype=space.backend.default_integer_dtype,
+        device=space.device,
     )
     if pad_size > 0:
         padding = space.backend.full(
             pad_size, 
             len(space.charset), 
-            dtype=space.backend.default_integer_dtype
+            dtype=space.backend.default_integer_dtype,
+            device=space.device,
         )
         data = space.backend.concat(
             [data, padding]
@@ -349,9 +355,10 @@ def _unflatten_data_text(space: TextSpace, data: BArrayType, start_dim : int = 0
 
 @flatten_data.register(TupleSpace)
 def _flatten_data_tuple(space: TupleSpace, data: typing.Tuple, start_dim : int = 0) -> BArrayType:
+    # The flat axis is the last one, also for a negative ``start_dim``
     return space.backend.concat([
         flatten_data(subspace, data[i], start_dim) for i, subspace in enumerate(space.spaces)
-    ], axis=start_dim)
+    ], axis=-1)
 
 @unflatten_data.register(TupleSpace)
 def _unflatten_data_tuple(space: TupleSpace, data: BArrayType, start_dim : int = 0) -> typing.Tuple:

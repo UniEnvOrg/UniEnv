@@ -72,7 +72,15 @@ class TextSpace(Space[str, BDeviceType, BDtypeType, BRNGType]):
         self,
         rng: BRNGType,
     ) -> Tuple[BRNGType, str]:
-        charset_list = self._char_list or tuple(sorted(alphanumeric))
+        # An empty charset is a charset too (only "" is valid), not "any character"
+        charset_list = self._char_list if self._char_list is not None else tuple(sorted(alphanumeric))
+        if len(charset_list) == 0:
+            # Only the empty string can be built from an empty charset
+            if self.min_length > 0:
+                raise ValueError(
+                    f"TextSpace.sample: the charset is empty, so no string of length >= {self.min_length} exists"
+                )
+            return rng, ""
         rng, length = self.backend.random.random_discrete_uniform(
             (1,),
             self.min_length,

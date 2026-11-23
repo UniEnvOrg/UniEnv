@@ -38,6 +38,30 @@ def _sample_integers_in_closed_interval(
     # numpy turns 0-d results of elementwise ops into scalars
     return rng, backend.asarray(sample, dtype=dtype, device=device)
 
+def _bounds_on_device_of(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    low : BArrayType,
+    high : BArrayType,
+    x : BArrayType,
+) -> Tuple[BArrayType, BArrayType]:
+    """``low``/``high`` on the device of ``x`` (``contains`` checks data on any device)."""
+    device = backend.device(x)
+    if device != backend.device(low):
+        low = backend.to_device(low, device)
+        high = backend.to_device(high, device)
+    return low, high
+
+def _bounds_equal(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    dtype_is_float : bool,
+    a : BArrayType,
+    b : BArrayType,
+) -> bool:
+    """Whether two (same-shape) bound arrays are equal: exactly for integers, up to rounding for floats."""
+    if dtype_is_float:
+        return bool(backend.all(backend.isclose(a, b)))
+    return bool(backend.all(a == b))
+
 def _bounds_traced(low : BArrayType, high : BArrayType) -> bool:
     """Whether the bounds only exist inside a jax trace (the space was built inside ``jax.jit``)."""
     return _is_jax_tracer(low) or _is_jax_tracer(high)
@@ -66,6 +90,46 @@ def _scalar_bounds(
         return None
     cast = float if dtype_is_float else int
     return cast(low.reshape(-1)[0]), cast(high.reshape(-1)[0])
+
+def _bounds_to_numpy(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    bound : BArrayType,
+) -> np.ndarray:
+    """``bound`` as a numpy array; dtypes numpy lacks (e.g. torch bfloat16) are widened exactly first."""
+    try:
+        return np.asarray(backend.to_numpy(bound))
+    except Exception:
+        dtypes = backend.__array_namespace_info__().dtypes()
+        wide = dtypes["float32"] if backend.dtype_is_real_floating(bound.dtype) else dtypes["int64"]
+        return np.asarray(backend.to_numpy(backend.astype(bound, wide)))
+
+def _fit_integer_bounds(
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    bounds : np.ndarray,
+) -> np.ndarray:
+    """Clip integer ``bounds`` into the range of the dtype ``backend`` stores them as.
+
+    E.g. JAX without x64 stores int64 data as int32: converting the bounds directly
+    would wrap them around (``2**32 + 5`` -> ``5``); clipping keeps full-range boxes
+    full-range and keeps every representable value inside the box.
+    """
+    probe = backend.from_numpy(np.zeros((0,), dtype=bounds.dtype))
+    target = np.asarray(backend.to_numpy(probe)).dtype
+    if target == bounds.dtype:
+        return bounds
+    src, dst = np.iinfo(bounds.dtype), np.iinfo(target)
+    return np.clip(bounds, max(int(src.min), int(dst.min)), min(int(src.max), int(dst.max))).astype(target)
+
+def _bounds_to_backend(
+    src_backend : ComputeBackend,
+    dst_backend : ComputeBackend,
+    bound : Any,
+    dtype_is_float : bool,
+) -> Any:
+    """Move box bounds to another backend (integer bounds are clipped to the target dtype range)."""
+    if dtype_is_float:
+        return dst_backend.from_other_backend(src_backend, bound)
+    return dst_backend.from_numpy(_fit_integer_bounds(dst_backend, _bounds_to_numpy(src_backend, bound)))
 
 # ``random_discrete_uniform`` takes an exclusive upper bound, which jax (without x64)
 # parses as int32: ``high + 1`` has to fit.
@@ -225,6 +289,12 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             _high = backend.full([1] * len(shape), high, dtype=dtype, device=device)
         else:
             _high = backend.astype(high, dtype)
+
+        # Bounds with fewer dims than the box broadcast against its trailing dims (numpy rules)
+        if len(_low.shape) < len(shape):
+            _low = backend.reshape(_low, (1,) * (len(shape) - len(_low.shape)) + tuple(_low.shape))
+        if len(_high.shape) < len(shape):
+            _high = backend.reshape(_high, (1,) * (len(shape) - len(_high.shape)) + tuple(_high.shape))
         
         # Empty arrays have nothing to abbreviate (and xbarray cannot abbreviate them)
         if 0 not in tuple(_low.shape):
@@ -358,8 +428,8 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             return self
         
         if backend is not None and backend != self.backend:
-            new_low = backend.from_other_backend(self.backend, self._low)
-            new_high = backend.from_other_backend(self.backend, self._high)
+            new_low = _bounds_to_backend(self.backend, backend, self._low, self._dtype_is_float)
+            new_high = _bounds_to_backend(self.backend, backend, self._high, self._dtype_is_float)
             new_dtype = new_low.dtype
             new_device = device
         else:
@@ -525,9 +595,10 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             # backend wrappers: about half the cost for small arrays.
             cast = float if self._dtype_is_float else int
             return cast(x.min()) >= low and cast(x.max()) <= high
+        low, high = _bounds_on_device_of(self.backend, self._low, self._high, x)
         return bool(
-            self.backend.all(x >= self._low)
-            and self.backend.all(x <= self._high)
+            self.backend.all(x >= low)
+            and self.backend.all(x <= high)
         )
     
     def clip(self, x: BArrayType) -> BArrayType:
@@ -604,15 +675,19 @@ class BoxSpace(Space[BArrayType, BDeviceType, BDtypeType, BRNGType]):
             return False
 
     def __eq__(self, other: Any) -> bool:
-        """Check whether `other` is equivalent to this instance. Doesn't check dtype equivalence."""
+        """Check whether ``other`` is an equivalent box (same backend, shape, dtype and bounds).
+
+        Integer bounds must be exactly equal; floating bounds are compared with
+        ``isclose`` (tolerating rounding differences). The device is ignored.
+        """
         try:
             return bool(
                 isinstance(other, BoxSpace)
                 and (self.backend == other.backend)
                 and (self.shape == other.shape)
                 and (self.dtype == other.dtype)
-                and self.backend.all(self.backend.isclose(self.low, other.low))
-                and self.backend.all(self.backend.isclose(self.high, other.high))
+                and _bounds_equal(self.backend, self._dtype_is_float, self.low, other.low)
+                and _bounds_equal(self.backend, self._dtype_is_float, self.high, other.high)
             )
         except:
             return False

@@ -7,6 +7,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.backends.numpy import NumpyComputeBackend
 from unienv_interface.backends import serialization as bsu
 from unienv_interface.space.spaces import *
+from unienv_interface.space.spaces.box import _bounds_to_numpy, _fit_integer_bounds
 
 __all__ = [
     "space_to_json",
@@ -30,6 +31,32 @@ def _with_metadata(space : Space, json_data : typing.Dict[str, Any]) -> typing.D
     if len(space.metadata) > 0:
         json_data["metadata"] = space.metadata.to_dict()
     return json_data
+
+def _bounds_from_json(
+    values : Any,
+    dtype_str : str,
+    map_backend : ComputeBackend,
+    new_dtype : Any,
+    map_device : Optional[BDeviceType],
+) -> Any:
+    """Box bounds stored by ``space_to_json`` as an array of ``map_backend`` with dtype ``new_dtype``.
+
+    Integer bounds are clipped into the range of the dtype ``map_backend`` stores them
+    as (JAX without x64 keeps int64 as int32); floating bounds go through a numpy
+    dtype that holds them exactly (numpy has no bfloat16).
+    """
+    try:
+        np_dtype = bsu.deserialize_dtype(NumpyComputeBackend, dtype_str)
+    except ValueError:
+        np_dtype = None
+    if np_dtype is not None and np.issubdtype(np_dtype, np.integer):
+        array = _fit_integer_bounds(map_backend, np.array(values, dtype=np_dtype))
+    else:
+        if np_dtype is None or np_dtype.name not in ("float16", "float32", "float64"):
+            np_dtype = np.float32 if dtype_str in ("bfloat16", "float16") else np.float64
+        array = np.array(values, dtype=np_dtype)
+    bound = map_backend.from_numpy(array, dtype=new_dtype, device=map_device)
+    return map_backend.astype(bound, new_dtype)  # ``from_numpy`` may ignore ``dtype`` (numpy backend)
 
 def _metadata_from_json(json_data : typing.Dict[str, Any]) -> Optional[typing.Dict[str, Any]]:
     """The metadata stored by ``space_to_json`` (``None`` for payloads written without it)."""
@@ -80,25 +107,24 @@ def _box_space_to_json(space: BoxSpace) -> typing.Dict[str, Any]:
     return _with_metadata(space, {
         "type": "BoxSpace",
         "shape": space.shape,
-        "low": space.backend.to_numpy(space._low).tolist(),
-        "high": space.backend.to_numpy(space._high).tolist(),
+        "low": _bounds_to_numpy(space.backend, space._low).tolist(),
+        "high": _bounds_to_numpy(space.backend, space._high).tolist(),
         "dtype": bsu.serialize_dtype(space.backend, space.dtype),
         "shape": space.shape,
     })
 
 @json_to_space.register(BoxSpace)
 def _json_to_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> BoxSpace:
-    np_dtype = bsu.deserialize_dtype(NumpyComputeBackend, json_data["dtype"])
     new_dtype = bsu.deserialize_dtype(map_backend, json_data["dtype"])
 
-    low = map_backend.from_numpy(np.array(json_data["low"], dtype=np_dtype), dtype=new_dtype, device=map_device)
-    high = map_backend.from_numpy(np.array(json_data["high"], dtype=np_dtype), dtype=new_dtype, device=map_device)
+    low = _bounds_from_json(json_data["low"], json_data["dtype"], map_backend, new_dtype, map_device)
+    high = _bounds_from_json(json_data["high"], json_data["dtype"], map_backend, new_dtype, map_device)
     return BoxSpace(
         map_backend,
         low=low,
         high=high,
         shape=json_data["shape"],
-        dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
+        dtype=new_dtype,
         device=map_device,
         metadata=_metadata_from_json(json_data),
     )
@@ -125,8 +151,8 @@ def _json_to_binary_space(json_data: typing.Dict[str, Any], map_backend: Compute
 def _dynamic_box_space_to_json(space: DynamicBoxSpace) -> typing.Dict[str, Any]:
     return _with_metadata(space, {
         "type": "DynamicBoxSpace",
-        "low": space.backend.to_numpy(space._low).tolist(),
-        "high": space.backend.to_numpy(space._high).tolist(),
+        "low": _bounds_to_numpy(space.backend, space._low).tolist(),
+        "high": _bounds_to_numpy(space.backend, space._high).tolist(),
         "shape_low": space.shape_low,
         "shape_high": space.shape_high,
         "dtype": bsu.serialize_dtype(space.backend, space.dtype),
@@ -135,18 +161,17 @@ def _dynamic_box_space_to_json(space: DynamicBoxSpace) -> typing.Dict[str, Any]:
 
 @json_to_space.register(DynamicBoxSpace)
 def _json_to_dynamic_box_space(json_data: typing.Dict[str, Any], map_backend: ComputeBackend, map_device: Optional[BDeviceType]) -> DynamicBoxSpace:
-    np_dtype = bsu.deserialize_dtype(NumpyComputeBackend, json_data["dtype"])
     new_dtype = bsu.deserialize_dtype(map_backend, json_data["dtype"])
 
-    low = map_backend.from_numpy(np.array(json_data["low"], dtype=np_dtype), dtype=new_dtype, device=map_device)
-    high = map_backend.from_numpy(np.array(json_data["high"], dtype=np_dtype), dtype=new_dtype, device=map_device)
+    low = _bounds_from_json(json_data["low"], json_data["dtype"], map_backend, new_dtype, map_device)
+    high = _bounds_from_json(json_data["high"], json_data["dtype"], map_backend, new_dtype, map_device)
     return DynamicBoxSpace(
         map_backend,
         low=low,
         high=high,
         shape_low=json_data["shape_low"],
         shape_high=json_data["shape_high"],
-        dtype=bsu.deserialize_dtype(map_backend, json_data["dtype"]),
+        dtype=new_dtype,
         device=map_device,
         fill_value=json_data["fill_value"],
         metadata=_metadata_from_json(json_data),
