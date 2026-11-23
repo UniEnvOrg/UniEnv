@@ -1,8 +1,8 @@
-from typing import Optional, Any
+from typing import Optional, Any, Mapping
 import numpy as np
 from datasets import Dataset as HFDataset
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
-from unienv_interface.space import Space, DictSpace
+from unienv_interface.space import Space, DictSpace, BoxSpace, BinarySpace, TextSpace
 from unienv_interface.space.space_utils import construct_utils as scu, batch_utils as sbu
 from unienv_interface.utils.dict_util import nested_get
 from unienv_data.base import BatchBase, BatchT
@@ -72,7 +72,12 @@ class HFAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, B
         return (idx.astype(np.int64) % max(len(self), 1)).tolist()
 
     def get_at_with_metadata(self, idx):
-        return _scalars_to_arrays(self.hf_dataset[self._normalize_index(idx)]), {}
+        hf_index = self._normalize_index(idx)
+        data = _scalars_to_arrays(self.hf_dataset[hf_index])
+        if not isinstance(hf_index, int):
+            num_rows = len(range(len(self))[hf_index]) if isinstance(hf_index, slice) else len(hf_index)
+            data = _columns_to_batch(self.single_space, data, num_rows)
+        return data, {}
     
     def get_at(self, idx):
         return self.get_at_with_metadata(idx)[0]
@@ -90,9 +95,39 @@ class HFAsUniEnvDataset(BatchBase[BatchT, BArrayType, BDeviceType, BDtypeType, B
 
 
 def _scalars_to_arrays(data : Any) -> Any:
-    """HF's numpy format returns numpy scalars for scalar columns; UniEnv expects (0-d) arrays."""
+    """HF's numpy format returns numpy scalars for scalar columns; UniEnv expects (0-d) arrays.
+    Text values (``np.str_`` / ``np.bytes_``) stay Python strings, as for ``TextSpace``."""
+    if isinstance(data, (np.str_, np.bytes_)):
+        return data.item()
     if isinstance(data, np.generic):
         return np.asarray(data)
     if isinstance(data, dict):
         return {key: _scalars_to_arrays(value) for key, value in data.items()}
     return data
+
+
+def _columns_to_batch(space : Space, data : Any, num_rows : int) -> Any:
+    """Bring a batch HF returned for a list / slice index into the layout of the batched ``space``.
+
+    HF returns struct (nested dict) columns row by row (a list or object array of dicts) and
+    text columns as lists / unicode arrays; UniEnv batches nested dicts as dicts of stacked
+    arrays and text as object arrays. Empty batches get arrays of shape ``(0, *shape)``.
+    """
+    if num_rows == 0:
+        return _empty_batch(space)
+    if isinstance(space, DictSpace):
+        if isinstance(data, Mapping):
+            return {key: _columns_to_batch(subspace, data[key], num_rows) for key, subspace in space.spaces.items()}
+        # Row-oriented: one dict per row
+        return sbu.concatenate(space, [_scalars_to_arrays(row) for row in data])
+    if isinstance(space, TextSpace):
+        return sbu.concatenate(space, [_scalars_to_arrays(item) for item in data])
+    return data
+
+
+def _empty_batch(space : Space) -> Any:
+    if isinstance(space, DictSpace):
+        return {key: _empty_batch(subspace) for key, subspace in space.spaces.items()}
+    if isinstance(space, (BoxSpace, BinarySpace)):
+        return space.backend.zeros((0, *space.shape), dtype=space.dtype, device=space.device)
+    return np.empty((0,), dtype=object)

@@ -102,3 +102,42 @@ def test_get_column_dotted_name(backend, device):
     ds = HFAsUniEnvDataset.create(hf, NB)
     col = ds.get_column(["observation", "state"])
     assert_tree_equal(col.get_at(np.array([1])), np.array([[2.0]]), check_dtype=False)
+
+
+def test_string_columns(backend, device):
+    # Regression: with the numpy backend, HF's np.str_ values became 0-d "<U" arrays and
+    # create() failed with "Box dtype must be a real floating or integer type".
+    hf = datasets.Dataset.from_dict({"x": [0.0, 1.0, 2.0], "task": ["pick", "place", "push"]})
+    ds = HFAsUniEnvDataset.create(hf, backend, device=device)
+    one = ds.get_at(1)
+    assert one["task"] == "place" and ds.single_space.contains(one)
+    out = ds.get_at(backend.asarray(np.array([2, 0])))
+    assert list(out["task"]) == ["push", "pick"]
+    assert sbu.batch_space(ds.single_space, 2).contains(out)
+    assert list(ds.get_at(slice(0, 2))["task"]) == ["pick", "place"]
+
+
+def test_nested_struct_columns_are_batched_per_field(backend, device):
+    # Regression: for index arrays / slices HF returns struct columns row by row (a list or
+    # object array of dicts), which did not match the nested DictSpace of the batch.
+    hf = datasets.Dataset.from_list([
+        {"obs": {"pos": [float(i), -float(i)], "inner": {"vel": float(i)}}, "step": i} for i in range(N)
+    ])
+    ds = HFAsUniEnvDataset.create(hf, backend, device=device)
+    picks = np.array([5, 1, 6])
+    for idx, ref in ((backend.asarray(picks), picks), (slice(1, 7, 2), np.arange(N)[1:7:2]), (..., np.arange(N))):
+        out = ds.get_at(idx)
+        assert sbu.batch_space(ds.single_space, len(ref)).contains(out)
+        np.testing.assert_array_equal(to_numpy(out["obs"]["pos"]), np.stack([ref, -ref], -1))
+        np.testing.assert_array_equal(to_numpy(out["obs"]["inner"]["vel"]), ref)
+        np.testing.assert_array_equal(to_numpy(out["step"]), ref)
+    single = ds.get_at(3)
+    assert ds.single_space.contains(single)
+    np.testing.assert_array_equal(to_numpy(single["obs"]["pos"]), [3.0, -3.0])
+
+
+def test_empty_index_gives_empty_batches_of_the_right_shape(wrapped):
+    ds, backend = wrapped
+    out = ds.get_at(backend.asarray(np.array([], dtype=np.int64)))
+    assert tuple(out["obs"].shape) == (0, 2) and tuple(out["step"].shape) == (0,)
+    assert sbu.batch_space(ds.single_space, 0).contains(out)
