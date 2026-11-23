@@ -193,3 +193,21 @@ def test_chained_inverse_without_source_space_round_trips():
     back = t.direction_inverse().transform(t.get_target_space_from_source(source), y)
     np.testing.assert_allclose(back["a"]["x"], [0.5])
     np.testing.assert_allclose(back["b"], [0.25])
+
+
+# ---------------------------------------------------------------------------
+# FlattenDictTransformation keeps empty nested dicts
+# ---------------------------------------------------------------------------
+
+def test_flatten_dict_round_trips_empty_nested_dict():
+    source = DictSpace(NB, {"a": DictSpace(NB, {}), "b": _box(0.0, 1.0), "c": DictSpace(NB, {"d": DictSpace(NB, {})})})
+    flatten = FlattenDictTransformation()
+    target = flatten.get_target_space_from_source(source)
+    inverse = flatten.direction_inverse(source)
+    assert inverse.get_target_space_from_source(target) == source
+    x = {"a": {}, "b": np.zeros(1, np.float32), "c": {"d": {}}}
+    flat = flatten.transform(source, x)
+    assert target.contains(flat)
+    back = inverse.transform(target, flat)
+    assert source.contains(back)
+    assert back["a"] == {} and back["c"] == {"d": {}}

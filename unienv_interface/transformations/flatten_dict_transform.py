@@ -19,9 +19,11 @@ def flatten_nested_mapping(
                     f"Cannot flatten key '{key}' because it already contains separator '{nested_separator}'."
                 )
             new_key = key if parent_key is None else f"{parent_key}{nested_separator}{key}"
-            if isinstance(value, DictSpace):
+            # Empty nested dicts have no leaves to flatten into; they are kept as
+            # leaves themselves so that unflattening restores them.
+            if isinstance(value, DictSpace) and len(value.spaces) > 0:
                 _flatten(value.spaces, new_key)
-            elif isinstance(value, Mapping):
+            elif isinstance(value, Mapping) and not isinstance(value, DictSpace) and len(value) > 0:
                 _flatten(value, new_key)
             else:
                 flattened_data[new_key] = value
