@@ -532,3 +532,21 @@ def test_numpy_strings_and_bytes_travel_as_str_and_bytes():
     assert type(restored["label"]) is str and type(restored["raw"]) is bytes
     parts, _ = wire.encode(np.bytes_(b"ab"))  # zero-copy path
     assert wire.loads(b"".join(bytes(p) for p in parts)) == b"ab"
+
+
+# ---------------------------------------------------------------------------- 15: IPv6 listen addresses
+
+def test_listen_on_an_ipv6_address():
+    import socket
+    try:
+        probe = socket.socket(socket.AF_INET6)
+        probe.bind(("::1", 0))
+        probe.close()
+    except OSError:
+        pytest.skip("no IPv6 loopback")
+    with RemoteServer() as server:
+        server.register("sim", ProbeEnv())
+        address = server.listen("tcp://[::1]:0")  # used to fail: Address family for hostname not supported
+        assert address.startswith("tcp://[::1]:")
+        with RemoteClient.connect(address) as client:
+            assert client.env("sim").step(ACTION)[1] == 1.0

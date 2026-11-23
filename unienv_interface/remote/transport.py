@@ -345,7 +345,8 @@ def listen(address: str, *, on_connect: Callable[[Transport], None], serve_conne
     if scheme == "ws":
         return _WebSocketListener(host, port, serve_connection, max_frame_size)
     if scheme == "tcp":
-        sock = socket.create_server((host, port))
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET  # an IPv6 literal, e.g. tcp://[::1]:7000
+        sock = socket.create_server((host, port), family=family)
         return _SocketListener(sock, _format("tcp", host, sock.getsockname()[1]), on_connect, max_frame_size)
     if os.path.exists(host) and stat.S_ISSOCK(os.stat(host).st_mode):
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
