@@ -205,3 +205,33 @@ def test_subscribe_processed_after_the_connection_closed_is_ignored():
             server._protocol_call(served, "subscribe", ["sim"], {})
         assert resource.subscribers == () and served.subscriptions == {}
         client.close()
+
+
+# ---------------------------------------------------------------------------- 5: a peer that stops reading
+
+def test_a_peer_that_stops_reading_does_not_stall_the_other_clients():
+    from unienv_interface.remote.transport import connect as transport_connect
+    from tests_common.remote_envs import LiveImageEnv
+
+    with RemoteServer(send_timeout=0.5) as server:
+        server.register("cam", LiveImageEnv(image_shape=(512, 512, 3)))
+        address = server.listen("tcp://127.0.0.1:0")
+        with RemoteClient.connect(address, timeout=10) as client:
+            env = client.env("cam")
+            env.reset(seed=0)
+            stalled = transport_connect(address)  # sends ~30 MB of replies' worth of requests, reads nothing
+            for request_id in range(1, 40):
+                stalled.send(*wire.encode([request_id, "cam", "step", [np.zeros(3, np.float32)], {}]))
+            wait_for(lambda: len(server._connections) == 2)
+            started = time.monotonic()
+            env.step(np.zeros(3, np.float32))  # used to wait until the stalled peer disconnected
+            assert time.monotonic() - started < 8
+            wait_for(lambda: len(server._connections) == 1)  # the stalled connection was closed
+            stalled.close()
+
+
+def test_send_timeout_validation():
+    with pytest.raises(ValueError, match="send_timeout"):
+        RemoteServer(send_timeout=0)
+    with RemoteServer(send_timeout=None) as server:
+        assert server.send_timeout is None

@@ -182,6 +182,9 @@ class _Connection:
     def send(self, frame: Tuple[List[Any], int]) -> None:
         try:
             self.transport.send(*frame)
+        except TimeoutError as exc:
+            _log.warning("Closing a connection that stopped reading: %s", exc)
+            self.close()
         except (ConnectionError, OSError):
             self.close()
 
@@ -244,10 +247,17 @@ class RemoteServer:
     order, whichever client sent them. Only the methods in ``protocol.METHODS`` can be
     called. :meth:`register_factory` hosts an object that is built when a client first
     opens it and closed once no client uses it.
+
+    Replies are sent from the worker, so a client that stops reading would stall every
+    client of that worker: a connection whose send makes no progress for ``send_timeout``
+    seconds is closed (TCP and Unix sockets; ``None`` waits forever).
     """
 
-    def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE) -> None:
-        self.max_frame_size = max_frame_size
+    def __init__(self, *, max_frame_size: int = wire.DEFAULT_MAX_FRAME_SIZE,
+                 send_timeout: Optional[float] = 60.0) -> None:
+        if send_timeout is not None and not send_timeout > 0:
+            raise ValueError(f"send_timeout must be > 0 seconds or None, got {send_timeout!r}")
+        self.max_frame_size, self.send_timeout = max_frame_size, send_timeout
         self._resources: Dict[str, _Resource] = {}
         self._factories: Dict[str, _Factory] = {}
         self._names: Dict[int, str] = {}  # id(object) -> resource name
@@ -536,6 +546,7 @@ class RemoteServer:
 
     def _serve(self, transport: Transport) -> None:
         """Read requests from one connection until it closes."""
+        transport.send_timeout = self.send_timeout
         connection = _Connection(self, transport)
         with self._lock:
             if self._closed.is_set():

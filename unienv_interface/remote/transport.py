@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import select
 import socket
 import stat
 import struct
@@ -29,6 +30,7 @@ __all__ = ["Transport", "StreamTransport", "MemoryTransport", "WebSocketTranspor
 _MAX_IOV = 512
 _ACCEPT_RETRY_DELAY = 0.05  # seconds between retries after a failed accept()
 _log = logging.getLogger(__name__)
+_NONBLOCKING_SEND = hasattr(socket, "MSG_DONTWAIT") and hasattr(select, "poll")
 Frame = Tuple[Any, List[Any]]
 
 
@@ -36,6 +38,10 @@ class Transport:
     """A reliable, ordered connection carrying whole frames."""
 
     max_frame_size: int = DEFAULT_MAX_FRAME_SIZE
+    #: Seconds a :meth:`send` may make no progress (the peer reads nothing) before it raises
+    #: ``TimeoutError``; ``None`` waits forever. Honoured by :class:`StreamTransport` on
+    #: platforms with ``MSG_DONTWAIT`` and ``poll`` (Linux, macOS).
+    send_timeout: Optional[float] = None
 
     def send(self, parts: Sequence[Any], size: int) -> None:
         """Send the frame ``parts`` (``size`` bytes in total). Thread-safe."""
@@ -67,6 +73,9 @@ class StreamTransport(Transport):
         with self._send_lock:
             if self._closed:
                 raise ConnectionError("Connection closed")
+            if self.send_timeout is not None and _NONBLOCKING_SEND:
+                self._send_with_timeout(parts, self.send_timeout)
+                return
             sent = self.sock.sendmsg(parts)
             if sent < size:  # partial write: send the rest part by part
                 for part in parts:
@@ -76,6 +85,28 @@ class StreamTransport(Transport):
                         continue
                     self.sock.sendall(view[sent:])
                     sent = 0
+
+    def _send_with_timeout(self, parts: Sequence[Any], timeout: float) -> None:
+        """Send without blocking for more than ``timeout`` seconds without progress."""
+        views = [view for view in (memoryview(part).cast("B") for part in parts) if len(view)]
+        poller = None
+        while views:
+            try:
+                sent = self.sock.sendmsg(views, (), socket.MSG_DONTWAIT)
+            except (BlockingIOError, InterruptedError):
+                sent = 0
+            if sent:
+                while sent:
+                    if sent >= len(views[0]):
+                        sent -= len(views.pop(0))
+                    else:
+                        views[0], sent = views[0][sent:], 0
+                continue
+            if poller is None:
+                poller = select.poll()
+                poller.register(self.sock, select.POLLOUT)
+            if not poller.poll(timeout * 1000):
+                raise TimeoutError(f"The peer has read nothing for {timeout} s")
 
     def _read_into(self, buffer: Any) -> None:
         view = memoryview(buffer).cast("B")
