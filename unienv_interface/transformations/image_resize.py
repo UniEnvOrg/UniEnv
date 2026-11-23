@@ -5,6 +5,25 @@ from typing import Union, Any, Optional, Dict
 from unienv_interface.backends import BArrayType, BDeviceType, BDtypeType, BRNGType
 
 
+def _antialiased_bilinear_weights(in_size: int, out_size: int):
+    """``(out_size, in_size)`` float64 interpolation matrix of antialiased bilinear resizing.
+
+    Output pixel ``i`` is centered at input coordinate ``(i + 0.5) / scale - 0.5``
+    and averages the input pixels with a triangle filter whose half-width is
+    ``max(1 / scale, 1)`` input pixels; the weights of each row are normalized to
+    sum to one (which handles the image borders). This matches PyTorch's
+    ``interpolate(mode="bilinear", antialias=True)`` and JAX's
+    ``image.resize(method="bilinear", antialias=True)``.
+    """
+    import numpy as np
+    scale = out_size / in_size
+    support = max(1.0 / scale, 1.0)
+    centers = (np.arange(out_size, dtype=np.float64) + 0.5) / scale - 0.5
+    positions = np.arange(in_size, dtype=np.float64)
+    weights = np.maximum(0.0, 1.0 - np.abs(positions[None, :] - centers[:, None]) / support)
+    return weights / weights.sum(axis=1, keepdims=True)
+
+
 class ImageResizeTransformation(DataTransformation):
     has_inverse = True
 
@@ -50,66 +69,73 @@ class ImageResizeTransformation(DataTransformation):
         )
 
     def transform(self, source_space, data):
+        """Resize ``data`` of shape ``(..., H, W, C)`` to ``(..., new_height, new_width, C)``.
+
+        All backends compute the same result: bilinear interpolation with
+        antialiasing (half-pixel centers, a triangle filter widened by the
+        downscaling factor, weights renormalized at the borders), i.e. the
+        semantics of ``torch.nn.functional.interpolate(mode="bilinear",
+        antialias=True, align_corners=False)`` and ``jax.image.resize(
+        method="bilinear", antialias=True)``. The output keeps the source dtype;
+        integer images are interpolated in floating point, rounded and clipped to
+        the dtype range.
+        """
         source_space = self._validate_source_space(source_space)
         backend = source_space.backend
+        dtype = data.dtype
+        is_integer = backend.dtype_is_real_integer(dtype)
+        target_shape = (
+            *data.shape[:-3],
+            self.new_height,
+            self.new_width,
+            data.shape[-1]
+        )
         if backend.simplified_name == "jax":
-            target_shape = (
-                *data.shape[:-3],
-                self.new_height,
-                self.new_width,
-                source_space.shape[-1]
-            )
             import jax.image
+            import jax.numpy as jnp
             resized_data = jax.image.resize(
                 data,
                 shape=target_shape,
                 method='bilinear',
                 antialias=True
             )
+            if is_integer:
+                info = jnp.iinfo(dtype)
+                resized_data = jnp.clip(jnp.round(resized_data), info.min, info.max)
+            resized_data = resized_data.astype(dtype)
         elif backend.simplified_name == "pytorch":
+            import torch
             import torch.nn.functional as F
-            # PyTorch expects (B, C, H, W) but we have (..., H, W, C)
-            # First permute to (..., C, H, W)
-            data_permuted = backend.permute_dims(data, (*range(len(data.shape[:-3])), -1, -3, -2))
-            # Add batch dimension if needed - F.interpolate expects at least 4D (B, C, H, W)
-            if data_permuted.ndim == 3:
-                data_permuted = data_permuted.unsqueeze(0)
-                resized_data_permuted = F.interpolate(
-                    data_permuted,
-                    size=(self.new_height, self.new_width),
-                    mode='bilinear',
-                    align_corners=False,
-                    antialias=True
-                )
-                # Remove the batch dimension we added
-                resized_data_permuted = resized_data_permuted.squeeze(0)
+            height, width, channels = data.shape[-3:]
+            # F.interpolate expects (N, C, H, W): fold all leading dims into N.
+            flat_data = data.reshape(-1, height, width, channels).permute(0, 3, 1, 2)
+            # Integer (and low-precision) images are interpolated in float32; CUDA has
+            # no integer bilinear kernel.
+            compute_dtype = dtype if dtype in (torch.float32, torch.float64) else torch.float32
+            if flat_data.shape[0] == 0:
+                resized_flat = flat_data.new_zeros((0, channels, self.new_height, self.new_width), dtype=compute_dtype)
             else:
-                resized_data_permuted = F.interpolate(
-                    data_permuted,
+                resized_flat = F.interpolate(
+                    flat_data.to(compute_dtype),
                     size=(self.new_height, self.new_width),
                     mode='bilinear',
                     align_corners=False,
                     antialias=True
                 )
-            # Permute back to original shape (..., H, W, C)
-            resized_data = backend.permute_dims(resized_data_permuted, (*range(len(resized_data_permuted.shape[:-3])), -2, -1, -3))
+            if is_integer:
+                info = torch.iinfo(dtype)
+                resized_flat = torch.clamp(torch.round(resized_flat), info.min, info.max)
+            resized_data = resized_flat.to(dtype).permute(0, 2, 3, 1).reshape(target_shape)
         elif backend.simplified_name == "numpy":
-            import cv2
-            flat_data = backend.reshape(data, (-1, *source_space.shape[-3:]))
-            resized_flat_data = []
-            for i in range(flat_data.shape[0]):
-                img = flat_data[i]
-                resized_img = cv2.resize(
-                    img,
-                    (self.new_width, self.new_height),
-                    interpolation=cv2.INTER_LINEAR
-                )
-                resized_flat_data.append(resized_img)
-            resized_flat_data = backend.stack(resized_flat_data, axis=0)
-            resized_data = backend.reshape(
-                resized_flat_data,
-                (*data.shape[:-3], self.new_height, self.new_width, source_space.shape[-1])
-            )
+            import numpy as np
+            height_weights = _antialiased_bilinear_weights(data.shape[-3], self.new_height)
+            width_weights = _antialiased_bilinear_weights(data.shape[-2], self.new_width)
+            resized_data = np.einsum('oh,...hwc->...owc', height_weights, np.asarray(data, dtype=np.float64))
+            resized_data = np.einsum('pw,...owc->...opc', width_weights, resized_data)
+            if is_integer:
+                info = np.iinfo(dtype)
+                resized_data = np.clip(np.round(resized_data), info.min, info.max)
+            resized_data = resized_data.astype(dtype)
         else:
             raise ValueError(f"Unsupported backend: {backend.simplified_name}")
         return resized_data
