@@ -128,7 +128,8 @@ with RemoteClient.connect("tcp://sim-box:7000") as client:
   Opening it again within that time gets the same object, state included;
   afterwards, a newly built one.
 - A released proxy stops working (`RemoteError` wrapping `PermissionError`);
-  get the proxy again to reopen.
+  get the proxy again to reopen. Releasing also ends this client's subscriptions
+  to it (their `next()` raises `StopIteration`).
 - `backend` / `device` are passed for a factory of `DataTransformation`s, as in
   `register`. There is no recursive variant: only the built object is hosted.
 - Clients of earlier versions do not see factory-hosted objects; everything
@@ -160,6 +161,13 @@ never close those; it releases objects hosted with `register_factory`.
   the server**: nothing is retried, so check the state (or reset) after reconnecting.
 - `RemoteClient.connect(address, timeout=5.0)` bounds every call; a timed-out call
   raises `TimeoutError` but keeps running on the server (the late reply is dropped).
+- A client that stops reading its replies would block the worker it shares with
+  others. `RemoteServer(send_timeout=60.0)` closes a TCP or Unix connection whose
+  sends make no progress for that long (`None`: wait forever; WebSocket connections
+  have no send timeout).
+- A malformed or hostile request closes only its own connection; the server and its
+  other clients keep running. Hosted code that raises anything, even `SystemExit`,
+  is reported to the caller and the worker keeps serving.
 
 ## Spaces that change on reset
 

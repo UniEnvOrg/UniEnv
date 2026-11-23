@@ -65,13 +65,20 @@ execute one at a time, in arrival order. A descriptor's `world`, `node` and
 
 ## Protocol methods
 
-- `hello(version=2, compress=null)` must be the first request. It returns
+- `hello(version=2, compress=null, factories=false, max_frame_size=null)` must be the first request.
+  `factories=true` lists objects hosted with `register_factory` as `{"kind": null, "factory": true}`
+  stubs, opened with `open([name])` and released with `release([name])`; older clients omit it and don't
+  see them. `max_frame_size` is the largest frame the client accepts: a reply that would exceed it
+  becomes an error for that call, and larger events are skipped for that client (servers use their own
+  limit when it is absent). It returns
   `{"version": 2, "resources": {name: descriptor}}`. A descriptor has `kind`
   (`env`, `world`, `node`), `methods`, `attributes` (`name`, `batch_size`, timings,
   `render_mode`, `render_fps`, `supported_render_modes`, `has_*` signals,
   `metadata`; only those present), `spaces` (`[version, {observation_space,
   action_space, context_space}]`), node `priorities`, and links: `world` and `node`
-  (resource names) and node `children` (`{child name: resource name}`).
+  (resource names) and node `children` (`{child name: resource name}`). A client whose backend cannot
+  represent a resource's spaces marks it `unavailable` (with the reason) instead of failing the
+  handshake; getting its proxy raises `TypeError`.
 - `subscribe([env name])` / `unsubscribe([env name])`: start or stop events for
   that env. After every `reset`, `reload` and `step`, whoever called it, the server
   sends `[name, 2, [method, sequence, result]]`. Unsent events are replaced by newer
@@ -88,4 +95,8 @@ the uint8 array leaves of results whose space has `metadata["kind"] == "image"`,
 `HWC` or `CHW` `metadata["layout"]` (default `HWC`) and 1 or 3 channels. Such a leaf
 is sent as `{"__t": "nd", "d": "|u1", "s": shape, "c": "jpeg", "o": {"quality": 90, "layout": ...,
 "format": ...}, "b": [one buffer per image]}` (leading dimensions are batch
-dimensions). Clients never compress what they send.
+dimensions). Clients never compress what they send, and servers reject compressed arrays in requests.
+
+Arrays and spaces with a dtype the receiving backend lacks are converted to the closest one it has:
+lossless widening first (`float16` to `float32` on backends without `float16`), else narrowing the way
+JAX without `jax_enable_x64` does (`float64` to `float32`, `int64` to `int32`).
