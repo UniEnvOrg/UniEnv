@@ -403,6 +403,9 @@ class EpisodeVideoWrapper(
         self.stream = bool(stream)
         self._stream_writers : Dict[Optional[str], Tuple[Any, str]] = {}  # frame key -> (writer, path)
         self._stream_frames : Dict[Optional[str], int] = {}
+        # Frames streamed in the current episode; unlike ``_stream_frames`` it outlives the writers
+        # closed when the episode ends in ``step()``, until the next ``reset()`` starts a new episode.
+        self._stream_episode_frames = 0
 
     def _video_path(self, key : Optional[str] = None) -> str:
         suffix = "" if key is None else f"_key_{key}"
@@ -454,11 +457,12 @@ class EpisodeVideoWrapper(
             self._stream_frames[key] = 0
         self._stream_writers[key][0].write_frame(image)
         self._stream_frames[key] += 1
+        self._stream_episode_frames = max(self._stream_episode_frames, self._stream_frames[key])
 
     def _episode_frame_count(self) -> int:
         if not self.stream:
             return super()._episode_frame_count()
-        return next(iter(self._stream_frames.values()), 0)
+        return self._stream_episode_frames
 
     def _close_stream(self, keep: bool) -> None:
         for writer, path in self._stream_writers.values():
@@ -471,6 +475,7 @@ class EpisodeVideoWrapper(
     def _reset_episode_stack(self) -> None:
         if self.stream:
             self._close_stream(keep=False)  # an episode that ended unwritten (a single frame)
+            self._stream_episode_frames = 0
         super()._reset_episode_stack()
 
     def _post_episode(self) -> None:

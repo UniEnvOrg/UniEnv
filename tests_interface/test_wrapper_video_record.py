@@ -487,3 +487,26 @@ def test_masked_reset_of_other_envs_adds_no_frame():
     assert len(wrapper.episodic_frames) == 3
     wrapper.step(np.full((3, 2), 0.5, np.float32))
     assert len(wrapper.episodic_frames) == 4
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stream", [False, True], ids=["buffered", "streamed"])
+def test_episode_video_wrapper_numbers_episodes_ending_in_step(tmp_path, stream):
+    """Regression: with stream=True an episode that ended inside step() was not counted, so every
+    file was named episode_0_*."""
+    pytest.importorskip("moviepy")
+    env = StubEnv(terminate_above=1.5)
+    wrapper = EpisodeVideoWrapper(env, store_dir=tmp_path, format="mp4", stream=stream)
+    for _ in range(3):
+        wrapper.reset(seed=0)
+        env.position[:] = 0.0  # terminates after the 4th step of +0.5
+        for _ in range(10):
+            _, _, terminated, truncated, _ = wrapper.step(np.full(2, 0.5, np.float32))
+            if terminated or truncated:
+                break
+    wrapper.reset(seed=0)
+    wrapper.close()
+    assert wrapper.video_episode_num == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "episode_0_step_0.mp4", "episode_1_step_4.mp4", "episode_2_step_8.mp4",
+    ]
