@@ -20,6 +20,50 @@ def test_rng_falls_through_to_inner_env_until_overridden(stub_env):
     assert wrapper.env.rng is stub_env.rng
 
 
+def test_sample_action_does_not_pin_the_inner_rng_on_the_wrapper():
+    """Regression: wrapper.sample_action() stored the advanced rng on the wrapper, so a later
+    reset(seed=...) that reseeds the inner env's rng no longer affected sampling."""
+    from unienv_interface.env_base.vec_env import SyncVecEnv
+
+    def run(env):
+        env.reset(seed=0)
+        a = env.sample_action()
+        env.reset(seed=0)
+        b = env.sample_action()
+        return a, b
+
+    inner = SyncVecEnv([StubEnv, StubEnv])
+    wrapper = _Plain(_Plain(inner))
+    a, b = run(wrapper)
+    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(a, run(SyncVecEnv([StubEnv, StubEnv]))[0])
+    assert wrapper._rng is None and wrapper.env._rng is None
+    assert wrapper.rng is inner.rng
+
+
+def test_sample_action_with_jax_key_advances_inner_rng():
+    pytest.importorskip("jax")
+    from unienv_interface.backends.jax import JaxComputeBackend
+    from unienv_interface.wrapper import ToBackendOrDeviceWrapper
+    inner = ToBackendOrDeviceWrapper(StubEnv(), backend=JaxComputeBackend)
+    wrapper = _Plain(inner)
+    key_before = inner.rng
+    first = wrapper.sample_action()
+    assert wrapper._rng is None and inner.rng is not key_before  # the (immutable) key advanced on the inner env
+    second = wrapper.sample_action()
+    assert not np.array_equal(np.asarray(first), np.asarray(second))
+    assert wrapper.rng is inner.rng
+
+
+def test_sample_action_uses_an_explicitly_set_wrapper_rng(stub_env):
+    wrapper = _Plain(stub_env)
+    inner_rng = stub_env.rng
+    wrapper.rng = np.random.default_rng(123)
+    expected = stub_env.action_space.sample(np.random.default_rng(123))[1]
+    np.testing.assert_array_equal(wrapper.sample_action(), expected)
+    assert stub_env.rng is inner_rng
+
+
 def test_rng_with_jax_key_does_not_call_bool():
     jax = pytest.importorskip("jax")
     env = StubEnv()
@@ -119,3 +163,50 @@ def test_context_observation_wrapper_defaults(stub_env):
         wrapper.reverse_map_context(context)
     with pytest.raises(NotImplementedError):
         wrapper.reverse_map_observation(obs)
+
+
+# ---------------------------------------------------------------------------
+# Regression: set_wrapper_attr through read-only forwarding properties
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name,value", [("render_mode", "human"), ("render_fps", 30), ("device", None), ("batch_size", None)])
+def test_set_wrapper_attr_skips_read_only_forwarding_properties(name, value):
+    base = StubEnv()
+    wrapper = _Plain(_Plain(base))
+    wrapper.set_wrapper_attr(name, value)
+    assert getattr(base, name) == value
+    assert getattr(wrapper, name) == value
+
+
+def test_set_wrapper_attr_keeps_wrapper_overrides_and_reports_missing(stub_env):
+    wrapper = _Plain(_Plain(stub_env))
+    own = np.random.default_rng(5)
+    wrapper.set_wrapper_attr("rng", own)  # settable on the outer wrapper: an explicit override, as before
+    assert wrapper.rng is own and stub_env.rng is not own
+    wrapper.set_wrapper_attr("terminate_above", 0.5)
+    assert stub_env.terminate_above == 0.5
+    with pytest.raises(AttributeError):
+        wrapper.set_wrapper_attr("no_such_attribute", 1)
+
+
+def test_set_wrapper_attr_through_func_env_based_env():
+    from tests_common.envs import StubFuncEnv
+    from unienv_interface.env_base.funcenv import FuncEnvBasedEnv
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    inner = StubFuncEnv()
+    wrapper = _Plain(FuncEnvBasedEnv(FuncFrameStackWrapper(inner, obs_stack_size=1)))
+    wrapper.set_wrapper_attr("terminate_above", 0.25)
+    assert inner.terminate_above == 0.25
+    assert wrapper.get_wrapper_attr("terminate_above") == 0.25
+
+
+def test_func_env_wrapper_set_wrapper_attr_skips_read_only_properties():
+    from tests_common.envs import StubFuncEnv
+    from unienv_interface.env_base.funcenv_wrapper import FuncEnvWrapper
+    inner = StubFuncEnv()
+    wrapper = FuncEnvWrapper(FuncEnvWrapper(inner))
+    wrapper.set_wrapper_attr("batch_size", None)
+    wrapper.set_wrapper_attr("device", None)
+    assert inner.batch_size is None and inner.device is None
+    with pytest.raises(AttributeError):
+        wrapper.set_wrapper_attr("no_such_attribute", 1)

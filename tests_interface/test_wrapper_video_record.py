@@ -407,3 +407,106 @@ def test_frame_conversion_rejects_non_rgb():
     with pytest.raises(ValueError, match="rendered_index"):
         EpisodeRenderStackWrapper(DummyRenderEnv([make_rgb_frame(1)]), rendered_index=99)._index_render_tensor_if_needed(
             make_rgb_frame(1)[:2])
+
+
+# ---------------------------------------------------------------------------
+# Regression: masked resets of batched envs
+# ---------------------------------------------------------------------------
+
+class _BatchedImageObsEnv(Env):
+    """Batched env whose observation ``img`` of env ``i`` is filled with ``10 * i + steps_i``."""
+    backend = NumpyComputeBackend
+    device = None
+    render_mode = None
+    render_fps = 10
+    metadata = {"render_modes": []}
+
+    def __init__(self, batch_size: int = 3):
+        from unienv_interface.space import BoxSpace, DictSpace
+        B = NumpyComputeBackend
+        self.batch_size = batch_size
+        self.observation_space = DictSpace(B, {"img": BoxSpace(B, 0, 255, np.uint8, shape=(batch_size, 4, 4, 3))})
+        self.action_space = BoxSpace(B, -1.0, 1.0, np.float32, shape=(batch_size, 1))
+        self.context_space = None
+        self.rng = B.random.random_number_generator(0)
+        self.t = np.zeros(batch_size, np.int64)
+
+    def _obs(self, index: Any = ...):
+        img = np.stack([np.full((4, 4, 3), 10 * i + self.t[i], np.uint8) for i in range(self.batch_size)])
+        return {"img": img[index]}
+
+    def reset(self, *, mask=None, seed=None, **kwargs):
+        index = ... if mask is None else np.asarray(mask, bool)
+        self.t[index] = 0
+        return None, self._obs(index), {}
+
+    def step(self, action):
+        self.t += 1
+        n = self.batch_size
+        return self._obs(), np.zeros(n, np.float32), np.zeros(n, bool), np.zeros(n, bool), {}
+
+    def render(self):
+        return None
+
+
+def _pixels(frames):
+    return [int(f[0, 0, 0]) for f in frames["img"]] if isinstance(frames, dict) else [int(f[0, 0, 0]) for f in frames]
+
+
+@pytest.mark.parametrize("mask", [[False, False, True], [True, False, True], [False, True, True]])
+def test_observation_frames_masked_reset_index_the_recorded_env(mask):
+    wrapper = EpisodeRenderStackWrapper(_BatchedImageObsEnv(), frame_source="observation", rendered_index=2, done_index=2)
+    wrapper.reset()
+    wrapper.step(np.zeros((3, 1), np.float32))
+    assert _pixels(wrapper.episodic_frames) == [20, 21]
+    wrapper.reset(mask=np.array(mask))  # env 2 is reset: a new episode starts with its frame
+    assert _pixels(wrapper.episodic_frames) == [20]
+    wrapper.step(np.zeros((3, 1), np.float32))
+    assert _pixels(wrapper.episodic_frames) == [20, 21]
+
+
+def test_observation_frames_masked_reset_without_the_recorded_env():
+    wrapper = EpisodeRenderStackWrapper(_BatchedImageObsEnv(), frame_source="observation", rendered_index=1)
+    wrapper.reset()
+    wrapper.step(np.zeros((3, 1), np.float32))
+    # done_index is None: any reset starts a new recorded episode, but env 1's observation is not returned
+    wrapper.reset(mask=np.array([True, False, True]))
+    assert _pixels(wrapper.episodic_frames) == []
+    wrapper.step(np.zeros((3, 1), np.float32))
+    assert _pixels(wrapper.episodic_frames) == [12]  # env 1's frame, not env 2's
+
+
+def test_masked_reset_of_other_envs_adds_no_frame():
+    from tests_common.envs import StubEnv
+    wrapper = EpisodeRenderStackWrapper(StubEnv(batch_size=3), done_index=0, rendered_index=0)
+    wrapper.reset(seed=0)
+    for _ in range(2):
+        wrapper.step(np.full((3, 2), 0.5, np.float32))
+    assert len(wrapper.episodic_frames) == 3
+    wrapper.reset(mask=np.array([False, True, False]))  # the recorded env 0 keeps running
+    assert len(wrapper.episodic_frames) == 3
+    wrapper.step(np.full((3, 2), 0.5, np.float32))
+    assert len(wrapper.episodic_frames) == 4
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("stream", [False, True], ids=["buffered", "streamed"])
+def test_episode_video_wrapper_numbers_episodes_ending_in_step(tmp_path, stream):
+    """Regression: with stream=True an episode that ended inside step() was not counted, so every
+    file was named episode_0_*."""
+    pytest.importorskip("moviepy")
+    env = StubEnv(terminate_above=1.5)
+    wrapper = EpisodeVideoWrapper(env, store_dir=tmp_path, format="mp4", stream=stream)
+    for _ in range(3):
+        wrapper.reset(seed=0)
+        env.position[:] = 0.0  # terminates after the 4th step of +0.5
+        for _ in range(10):
+            _, _, terminated, truncated, _ = wrapper.step(np.full(2, 0.5, np.float32))
+            if terminated or truncated:
+                break
+    wrapper.reset(seed=0)
+    wrapper.close()
+    assert wrapper.video_episode_num == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "episode_0_step_0.mp4", "episode_1_step_4.mp4", "episode_2_step_8.mp4",
+    ]

@@ -5,6 +5,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 from unienv_interface.space import Space, batch_utils as sbu
 from dataclasses import dataclass, replace as dataclass_replace
 from .env import Env, ContextType, ObsType, ActType, RenderFrame
+from ._utils import settable_here
 
 StateType = TypeVar("StateType", covariant=True)
 RenderStateType = TypeVar("RenderStateType", covariant=True)
@@ -253,6 +254,12 @@ class FuncEnvBasedEnv(Env[
         except NotImplementedError:
             # The functional env has no renderer; fall back to its declared fps.
             pass
+        except Exception:
+            if self._inited:
+                raise
+            # Before the first reset there is no state (``self.state is None``) and a renderer
+            # that needs one cannot start yet: report the declared fps, and initialise the
+            # renderer on the first ``render()`` / ``render_fps`` after ``reset()``.
         return self._render_fps
     
     @property
@@ -340,10 +347,15 @@ class FuncEnvBasedEnv(Env[
         return image
     
     def close(self) -> None:
-        if self.render_state is not None:
-            self.state = self.func_env.render_close(
-                self.state, self.render_state
-            )
+        # ``render_state`` may legitimately be None (e.g. node-based world envs): whether the
+        # renderer was started is tracked by ``_render_inited``.
+        if self._render_inited:
+            try:
+                self.state = self.func_env.render_close(
+                    self.state, self.render_state
+                )
+            except NotImplementedError:
+                pass  # no ``render_close``: nothing to release
             self._render_inited = False
             self.render_state = None
         self.func_env.close(self.state)
@@ -352,17 +364,20 @@ class FuncEnvBasedEnv(Env[
     
     # ========== Wrapper methods ==========
 
+    # The functional env may itself be a stack of ``FuncEnvWrapper``s: search it through its
+    # ``*_wrapper_attr`` methods rather than only its outermost layer.
+
     def has_wrapper_attr(self, name: str) -> bool:
-        return hasattr(self, name) or hasattr(self.func_env, name)
+        return hasattr(self, name) or self.func_env.has_wrapper_attr(name)
 
     def get_wrapper_attr(self, name: str) -> Any:
         if hasattr(self, name):
             return getattr(self, name)
         else:
-            return getattr(self.func_env, name)
+            return self.func_env.get_wrapper_attr(name)
     
     def set_wrapper_attr(self, name: str, value: Any):
-        if hasattr(self, name):
+        if settable_here(self, name):
             setattr(self, name, value)
         else:
-            setattr(self.func_env, name, value)
+            self.func_env.set_wrapper_attr(name, value)

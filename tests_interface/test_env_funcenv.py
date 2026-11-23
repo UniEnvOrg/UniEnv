@@ -32,3 +32,115 @@ def test_render_fps_uses_render_info_when_renderer_exists():
 
     env = FuncEnvBasedEnv(_FpsFromRenderer())
     assert env.render_fps == 25
+
+
+# ---------------------------------------------------------------------------
+# Regression: render_fps before the first reset (no state yet)
+# ---------------------------------------------------------------------------
+
+class _StatefulRendererFuncEnv(StubFuncEnv):
+    """A renderer that needs the env state (like most real renderers)."""
+
+    def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+        self.calls.append(("render_init",))
+        _ = state["position"]  # raises TypeError for state=None
+        return state, {"frames": 0}, FuncEnvCommonRenderInfo(render_mode="rgb_array", render_fps=25)
+
+
+def test_render_fps_before_reset_with_stateful_renderer():
+    func_env = _StatefulRendererFuncEnv()
+    env = FuncEnvBasedEnv(func_env)
+    assert env.render_fps == 10  # declared fps; the renderer cannot start without a state
+    env.reset(seed=0)
+    assert env.render_fps == 25  # now from the renderer
+    assert env.render().shape == (4, 6, 3)
+    env.close()
+
+
+def _framestack_env():
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    return FuncEnvBasedEnv(FuncFrameStackWrapper(StubFuncEnv(), obs_stack_size=2))
+
+
+def test_render_fps_before_reset_through_func_frame_stack_and_control_frequency_wrapper():
+    from unienv_interface.wrapper import ControlFrequencyLimitWrapper
+    env = _framestack_env()
+    assert env.render_fps == 10
+    wrapper = ControlFrequencyLimitWrapper(_framestack_env())
+    assert wrapper.control_dt == pytest.approx(0.1)
+    env.reset(seed=0)
+    assert env.render().shape == (4, 6, 3)
+    env.close()
+
+
+def test_async_vec_env_of_func_frame_stack_envs():
+    from unienv_interface.env_base.vec_env import AsyncVecEnv
+    env = AsyncVecEnv([_framestack_env, _framestack_env], shared_memory=False)
+    try:
+        assert env.render_fps == 10
+        _, obs, _ = env.reset(seed=0)
+        assert obs["position"].shape == (2, 3, 2)
+    finally:
+        env.close()
+
+
+# ---------------------------------------------------------------------------
+# Regression: wrapper attributes below a FuncEnvWrapper stack
+# ---------------------------------------------------------------------------
+
+def test_wrapper_attrs_reach_through_func_env_wrappers():
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    inner = StubFuncEnv()
+    stack = FuncFrameStackWrapper(inner, obs_stack_size=1)
+    env = FuncEnvBasedEnv(stack)
+    assert env.has_wrapper_attr("terminate_above")
+    assert env.get_wrapper_attr("terminate_above") == 3.0
+    env.set_wrapper_attr("terminate_above", 0.1)
+    assert inner.terminate_above == 0.1
+    assert "terminate_above" not in vars(stack)
+    assert not env.has_wrapper_attr("no_such_attribute")
+    with pytest.raises(AttributeError):
+        env.get_wrapper_attr("no_such_attribute")
+    with pytest.raises(AttributeError):
+        env.set_wrapper_attr("no_such_attribute", 1)
+    # attributes of the adapter itself are still found / set there
+    env.set_wrapper_attr("metadata", {"render_modes": []})
+    assert env.metadata == {"render_modes": []} and inner.metadata != env.metadata
+
+
+# ---------------------------------------------------------------------------
+# Regression: close() releases a renderer whose render_state is None
+# ---------------------------------------------------------------------------
+
+class _NoneRenderStateFuncEnv(StubFuncEnv):
+    def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+        self.calls.append(("render_init",))
+        return state, None, FuncEnvCommonRenderInfo(render_mode="rgb_array", render_fps=10)
+
+    def render_image(self, state, render_state):
+        return None, state, render_state
+
+
+def test_close_calls_render_close_when_render_state_is_none():
+    func_env = _NoneRenderStateFuncEnv()
+    env = FuncEnvBasedEnv(func_env)
+    env.reset(seed=0)
+    env.render()
+    env.close()
+    names = [call[0] for call in func_env.calls]
+    assert names == ["initial", "render_init", "render_close", "close"]
+    assert env._render_inited is False
+    env.reset(seed=1)
+    env.render()  # the renderer is started again for the new state
+    assert [call[0] for call in func_env.calls].count("render_init") == 2
+
+
+def test_close_without_render_close_implementation():
+    class _NoRenderClose(_NoneRenderStateFuncEnv):
+        render_close = FuncEnv.render_close
+
+    env = FuncEnvBasedEnv(_NoRenderClose())
+    env.reset(seed=0)
+    env.render()
+    env.close()  # render_close is not implemented: nothing to release, no error
+    assert env._render_inited is False

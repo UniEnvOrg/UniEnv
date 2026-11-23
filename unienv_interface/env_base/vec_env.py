@@ -21,6 +21,34 @@ import warnings
 import weakref
 import cloudpickle
 
+_BOOL_TYPES = (bool, np.bool_)
+_NUMBER_TYPES = (bool, int, float, np.bool_, np.integer, np.floating)
+
+def _is_number(value : Any) -> bool:
+    return isinstance(value, _NUMBER_TYPES)
+
+def _stack_numbers(
+    data : Sequence[Any],
+    backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
+    device : Optional[BDeviceType] = None,
+) -> BArrayType:
+    """Stack Python / NumPy scalars with a dtype that fits all of them (not only the first):
+    all booleans -> bool, any float -> float, otherwise integers (widened to int64 when the
+    default integer dtype cannot hold them)."""
+    if all(isinstance(d, _BOOL_TYPES) for d in data):
+        return backend.asarray([bool(d) for d in data], dtype=backend.default_boolean_dtype, device=device)
+    if any(isinstance(d, (float, np.floating)) for d in data):
+        return backend.asarray([float(d) for d in data], dtype=backend.default_floating_dtype, device=device)
+    values = [int(d) for d in data]
+    dtype = backend.default_integer_dtype
+    try:
+        info = backend.iinfo(dtype)
+        if min(values) < info.min or max(values) > info.max:
+            dtype = backend.int64
+    except Exception:
+        pass
+    return backend.asarray(values, dtype=dtype, device=device)
+
 def data_stack(
     data : Any,
     backend : ComputeBackend[BArrayType, BDeviceType, BDtypeType, BRNGType],
@@ -56,16 +84,11 @@ def data_stack(
         return backend.stack(data, axis=0)
     elif isinstance(first, np.ndarray):
         return np.stack(data, axis=0)
-    elif isinstance(first, (int, float, bool)):
-        dtype = (
-            backend.default_boolean_dtype if isinstance(first, bool) else
-            backend.default_floating_dtype if isinstance(first, float) else
-            backend.default_integer_dtype
-        )
-        return backend.asarray(data, dtype=dtype, device=device)
+    elif _is_number(first) and all(_is_number(d) for d in data):
+        return _stack_numbers(data, backend, device)
     elif isinstance(first, (str, bytes)) or first is None:
         return list(data)
-    elif isinstance(first, SupportsFloat):
+    elif all(isinstance(d, SupportsFloat) for d in data):
         return backend.asarray(
             [float(d) for d in data],
             dtype=backend.default_floating_dtype,
@@ -87,6 +110,12 @@ def _batch_env_spaces(
     if all(space == first for space in spaces[1:]):
         return sbu.batch_space(first, len(spaces))
     return sbu.batch_differing_spaces(spaces, device=device)
+
+def _empty_rows(space : Optional[Space]) -> Any:
+    """0-row data of the batched ``space`` (``None`` without a space): what a reset with an all-False mask returns."""
+    if space is None:
+        return None
+    return sbu.get_at(space, space.create_empty(), slice(0, 0))
 
 def _sub_env_seed(seed : Optional[int], index : int) -> Optional[int]:
     """Seed used for sub-environment ``index`` when the vectorized env is reset with ``seed``."""
@@ -188,6 +217,10 @@ class SyncVecEnv(Env[
                 all_contexts.append(context)
                 all_obs.append(obs)
                 all_infos.append(info)
+
+        if len(all_obs) == 0:
+            # Nothing selected: empty (0-row) data, as for every other batched env
+            return _empty_rows(self.context_space), _empty_rows(self.observation_space), {}
 
         if self.context_space is not None:
             all_contexts = sbu.concatenate(
@@ -809,6 +842,9 @@ class AsyncVecEnv(Env[
             all_obs.append(obs)
             all_infos.append(info)
         rows = None if len(indices) == len(self.processes) else indices
+        if len(indices) == 0:
+            # Nothing selected: empty (0-row) data, as for every other batched env
+            return _empty_rows(self.context_space), _empty_rows(self.observation_space), {}
 
         if self.context_space is None:
             all_contexts = None

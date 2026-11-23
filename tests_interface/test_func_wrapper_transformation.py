@@ -59,3 +59,17 @@ def test_no_transformation_is_passthrough():
 def test_action_transformation_requires_target_space():
     with pytest.raises(AssertionError):
         FuncTransformWrapper(StubFuncEnv(), action_transformation=RescaleTransformation(-1.0, 1.0))
+
+
+@pytest.mark.parametrize("mask", [[False, True, False], [True, False, True], [False, False, False]])
+def test_masked_reset_uses_masked_space_with_per_env_bounds(mask):
+    """Regression: the masked rows were transformed with the full-batch space (wrong shape / broadcast error)."""
+    high = np.array([[10.0, 10.0], [20.0, 20.0], [40.0, 40.0]], np.float32)
+    func_env = StubFuncEnv(3)
+    func_env.context_space = BoxSpace(B, np.zeros((3, 2), np.float32), high, np.float32, shape=(3, 2))
+    wrapper = FuncTransformWrapper(func_env, context_transformation=RescaleTransformation(0.0, 1.0))
+    state, _, _, _ = wrapper.initial(seed=1)
+    mask = np.array(mask)
+    state, context, _, _ = wrapper.reset(state, mask=mask, seed=4)
+    assert context.shape == (int(mask.sum()), 2)
+    np.testing.assert_allclose(context, state["goal"][mask] / high[mask], rtol=1e-6)

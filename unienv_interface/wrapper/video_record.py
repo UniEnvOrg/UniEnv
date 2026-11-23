@@ -4,6 +4,7 @@ from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, B
 
 from unienv_interface.env_base.wrapper import Wrapper
 from unienv_interface.env_base.env import Env, ContextType, ObsType, ActType, RenderFrame
+from unienv_interface.env_base._utils import mask_to_numpy
 from unienv_interface.space import Space
 from unienv_interface.space.space_utils.metadata_utils import find_spaces_by_metadata
 from unienv_interface.transformations.flatten_dict_transform import flatten_nested_mapping
@@ -162,12 +163,15 @@ class EpisodeRenderStackWrapper(
                     )
                 )
 
-    def _index_render_tensor_if_needed(self, frame: Any) -> Any:
+    def _index_render_tensor_if_needed(self, frame: Any, row: Optional[int] = None) -> Any:
+        """``frame[rendered_index]`` (or ``frame[row]`` when given, e.g. the row of the recorded env in
+        the compacted data of a masked reset)."""
         if self.rendered_index is None:
             return frame
+        index = self.rendered_index if row is None else row
         if self.env.backend.is_backendarray(frame) or isinstance(frame, np.ndarray):
             try:
-                return frame[self.rendered_index]
+                return frame[index]
             except Exception as e:
                 raise ValueError(
                     f"Failed to index render tensor with rendered_index={self.rendered_index}. "
@@ -266,6 +270,7 @@ class EpisodeRenderStackWrapper(
     def _transform_render_frame(
         self,
         frame: Any,
+        row: Optional[int] = None,
     ) -> Any:
         if isinstance(frame, Mapping):
             flattened_frame = flatten_nested_mapping(
@@ -273,13 +278,13 @@ class EpisodeRenderStackWrapper(
                 nested_separator=self.nested_separator,
             )
             indexed = {
-                key: self._index_render_tensor_if_needed(value)
+                key: self._index_render_tensor_if_needed(value, row)
                 for key, value in flattened_frame.items()
             }
             if self._image_specs is None and self.frame_source == "render":
                 return indexed
             return {key: value for key, value in indexed.items() if self._is_image_frame(key, value)}
-        return self._index_render_tensor_if_needed(frame)
+        return self._index_render_tensor_if_needed(frame, row)
 
     def _capture_frame(self, observation: Any = None) -> Any:
         """The raw frame of this step: the observation or ``env.render()``, depending on ``frame_source``."""
@@ -287,8 +292,8 @@ class EpisodeRenderStackWrapper(
             return observation
         return self.env.render()
 
-    def _post_step_render(self, observation: Any = None) -> None:
-        self._step_frame = self._transform_render_frame(self._capture_frame(observation))
+    def _post_step_render(self, observation: Any = None, row: Optional[int] = None) -> None:
+        self._step_frame = self._transform_render_frame(self._capture_frame(observation), row)
         if isinstance(self._step_frame, Mapping):
             self._append_flattened_mapping_frame(self._step_frame)
         elif self._is_image_frame(None, self._step_frame):
@@ -327,7 +332,22 @@ class EpisodeRenderStackWrapper(
             self.video_episode_start_step = self.video_step_num
         
         ret = self.env.reset(*args, mask=mask, seed=seed, **kwargs)
-        self._post_step_render(ret[1])
+        if self.env.batch_size is None or mask is None:
+            self._post_step_render(ret[1])
+        elif render_terminated:
+            # A masked reset returns only the selected rows of the observation.
+            mask_np = mask_to_numpy(self.env.backend, mask)
+            if self.frame_source != "observation" or self.rendered_index is None:
+                self._post_step_render(ret[1])
+            elif mask_np[self.rendered_index]:
+                # Row of the recorded env in the compacted observation
+                self._post_step_render(ret[1], row=int(mask_np[:self.rendered_index].sum()))
+            else:
+                # The recorded env was not reset: its observation is not in the returned rows.
+                self._step_frame = None
+        else:
+            # The recorded episode goes on (its env was not reset) and did not advance: no new frame.
+            self._step_frame = None
         return ret
     
     def render(
@@ -383,6 +403,9 @@ class EpisodeVideoWrapper(
         self.stream = bool(stream)
         self._stream_writers : Dict[Optional[str], Tuple[Any, str]] = {}  # frame key -> (writer, path)
         self._stream_frames : Dict[Optional[str], int] = {}
+        # Frames streamed in the current episode; unlike ``_stream_frames`` it outlives the writers
+        # closed when the episode ends in ``step()``, until the next ``reset()`` starts a new episode.
+        self._stream_episode_frames = 0
 
     def _video_path(self, key : Optional[str] = None) -> str:
         suffix = "" if key is None else f"_key_{key}"
@@ -434,11 +457,12 @@ class EpisodeVideoWrapper(
             self._stream_frames[key] = 0
         self._stream_writers[key][0].write_frame(image)
         self._stream_frames[key] += 1
+        self._stream_episode_frames = max(self._stream_episode_frames, self._stream_frames[key])
 
     def _episode_frame_count(self) -> int:
         if not self.stream:
             return super()._episode_frame_count()
-        return next(iter(self._stream_frames.values()), 0)
+        return self._stream_episode_frames
 
     def _close_stream(self, keep: bool) -> None:
         for writer, path in self._stream_writers.values():
@@ -451,6 +475,7 @@ class EpisodeVideoWrapper(
     def _reset_episode_stack(self) -> None:
         if self.stream:
             self._close_stream(keep=False)  # an episode that ended unwritten (a single frame)
+            self._stream_episode_frames = 0
         super()._reset_episode_stack()
 
     def _post_episode(self) -> None:

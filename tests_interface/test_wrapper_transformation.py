@@ -60,3 +60,76 @@ def test_context_observation_transform_wrapper_reverse_maps():
         non_invertible.reverse_map_observation({"position": np.zeros(2, np.float32)})
     with pytest.raises(AssertionError):
         ContextObservationTransformWrapper(env)
+
+
+# ---------------------------------------------------------------------------
+# Regression: masked resets are transformed with the masked sub-space
+# ---------------------------------------------------------------------------
+
+_PER_ENV_HIGH = np.array([[10.0, 10.0], [20.0, 20.0], [40.0, 40.0]], np.float32)
+
+
+def _per_env_bounds_env():
+    """Batched StubEnv whose ``position`` / context bounds differ per env (``high`` = 10, 20, 40)."""
+    from unienv_interface.space import DictSpace
+    env = StubEnv(3)
+    box = lambda: BoxSpace(B, np.zeros((3, 2), np.float32), _PER_ENV_HIGH, np.float32, shape=(3, 2))
+    env.observation_space = DictSpace(B, {"position": box(), "velocity": env.observation_space["velocity"]})
+    env.context_space = box()
+    return env
+
+
+@pytest.mark.parametrize("cls", [TransformWrapper, ContextObservationTransformWrapper])
+@pytest.mark.parametrize("mask", [[False, True, False], [True, False, True], [False, False, False], [True, True, True]])
+def test_masked_reset_uses_masked_space_with_per_env_bounds(cls, mask):
+    from unienv_interface.transformations.dict_transform import DictTransformation
+    env = _per_env_bounds_env()
+    wrapper = cls(
+        env,
+        context_transformation=RescaleTransformation(0.0, 1.0),
+        observation_transformation=DictTransformation({"position": RescaleTransformation(0.0, 1.0)}),
+    )
+    wrapper.reset(seed=1)
+    mask = np.array(mask)
+    context, obs, _ = wrapper.reset(mask=mask, seed=4)
+    k = int(mask.sum())
+    assert context.shape == (k, 2) and obs["position"].shape == (k, 2)
+    np.testing.assert_allclose(context, env.goal[mask] / _PER_ENV_HIGH[mask], rtol=1e-6)
+    np.testing.assert_allclose(obs["position"], env.position[mask] / _PER_ENV_HIGH[mask], rtol=1e-6)
+
+
+from tests_common.backends import backend_params
+
+
+@pytest.mark.parametrize("backend,device", backend_params())
+def test_masked_reset_masked_space_on_every_backend(backend, device):
+    from unienv_interface.wrapper import ToBackendOrDeviceWrapper
+    env = _per_env_bounds_env()
+    converted = ToBackendOrDeviceWrapper(env, backend=backend, device=device)
+    wrapper = ContextObservationTransformWrapper(converted, context_transformation=RescaleTransformation(0.0, 1.0))
+    wrapper.reset(seed=1)
+    mask_np = np.array([True, False, True])
+    mask = backend.from_numpy(mask_np, device=device) if backend.simplified_name != "numpy" else mask_np
+    context, _, _ = wrapper.reset(mask=mask, seed=4)
+    assert tuple(context.shape) == (2, 2)
+    np.testing.assert_allclose(backend.to_numpy(context), env.goal[mask_np] / _PER_ENV_HIGH[mask_np], rtol=1e-6)
+
+
+@pytest.mark.parametrize("mask", [[True, False, True], [False, False, False], [True, True, True]])
+def test_masked_space_of_nested_spaces(mask):
+    from unienv_interface.env_base._utils import masked_space
+    from unienv_interface.space import BinarySpace, DictSpace, TupleSpace
+    from unienv_interface.space.space_utils import batch_utils as sbu
+    space = DictSpace(B, {
+        "a": BoxSpace(B, np.zeros((3, 2), np.float32), _PER_ENV_HIGH, np.float32, shape=(3, 2)),
+        "t": TupleSpace(B, [BinarySpace(B, shape=(3, 4)), BoxSpace(B, -1.0, 1.0, np.float32, shape=(3,))]),
+    })
+    mask = np.array(mask)
+    sub = masked_space(space, mask)
+    k = int(mask.sum())
+    assert sub["a"].shape == (k, 2) and sub["t"][0].shape == (k, 4) and sub["t"][1].shape == (k,)
+    data = space.sample(B.random.random_number_generator(0))[1]
+    assert sub.contains(sbu.get_at(space, data, mask))
+    if k:
+        np.testing.assert_array_equal(np.broadcast_to(sub["a"].high, (k, 2)), _PER_ENV_HIGH[mask])
+    str(sub)  # printable, also with 0 rows

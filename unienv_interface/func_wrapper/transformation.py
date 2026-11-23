@@ -7,6 +7,7 @@ from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils
 from unienv_interface.utils import seed_util
 from unienv_interface.env_base.funcenv import FuncEnv, ContextType, ObsType, ActType, RenderFrame, StateType, RenderStateType
 from unienv_interface.env_base.funcenv_wrapper import *
+from unienv_interface.env_base._utils import masked_space
 from unienv_interface.space import Space
 from unienv_interface.transformations.transformation import DataTransformation
 
@@ -100,8 +101,9 @@ class FuncTransformWrapper(
         Dict[str, Any]
     ]:
         state, context, obs, info = self.func_env.reset(state, seed=seed, mask=mask, **kwargs)
-        context = self.context_transformation.transform(self.func_env.context_space, context) if self.context_transformation is not None else context
-        obs = self.observation_transformation.transform(self.func_env.observation_space, obs) if self.observation_transformation is not None else obs
+        # A masked reset returns only the selected rows: transform them with the matching sub-space
+        context = self.context_transformation.transform(masked_space(self.func_env.context_space, mask), context) if self.context_transformation is not None else context
+        obs = self.observation_transformation.transform(masked_space(self.func_env.observation_space, mask), obs) if self.observation_transformation is not None else obs
         return state, context, obs, info
 
     def step(

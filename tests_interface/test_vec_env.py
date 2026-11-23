@@ -18,6 +18,49 @@ from tests_common.trees import assert_tree_equal
 # data_stack
 # ---------------------------------------------------------------------------
 
+from tests_common.backends import cpu_backend_params
+
+
+@pytest.mark.parametrize("backend,device", cpu_backend_params())
+def test_data_stack_promotes_mixed_scalars(backend, device):
+    """Regression: the dtype came from the first element only (``[0, 0.75]`` -> ``[0, 0]``)."""
+    to_np = backend.to_numpy
+    out = data_stack([{"d": 0}, {"d": 0.75}], backend, device)["d"]
+    np.testing.assert_allclose(to_np(out), [0.0, 0.75])
+    out = data_stack([np.True_, np.False_], backend, device)
+    assert to_np(out).dtype == np.bool_ and to_np(out).tolist() == [True, False]
+    out = data_stack([np.int64(3), 4], backend, device)
+    assert np.issubdtype(to_np(out).dtype, np.integer) and to_np(out).tolist() == [3, 4]
+    out = data_stack([True, 2], backend, device)
+    assert to_np(out).tolist() == [1, 2]
+    out = data_stack([1, None], backend, device)
+    assert out == [1, None]
+
+
+def test_data_stack_large_ints_on_torch():
+    torch = pytest.importorskip("torch")
+    from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+    out = data_stack([1_700_000_000_000_000_000, 1], TB)
+    assert out.dtype == torch.int64 and out.tolist() == [1_700_000_000_000_000_000, 1]
+
+
+def test_sync_vec_env_info_with_mixed_int_float():
+    class _Env(StubEnv):
+        def reset(self, *, mask=None, seed=None, **kwargs):
+            self.seed_ = seed
+            return super().reset(mask=mask, seed=seed, **kwargs)
+
+        def step(self, action):
+            obs, reward, terminated, truncated, info = super().step(action)
+            info["dist"] = 0 if self.seed_ == 0 else 0.75
+            return obs, reward, terminated, truncated, info
+
+    env = SyncVecEnv([_Env, _Env])
+    env.reset(seed=0)
+    info = env.step(np.zeros((2, 2), np.float32))[-1]
+    np.testing.assert_allclose(info["dist"], [0.0, 0.75])
+
+
 def test_data_stack_scalars_and_arrays():
     out = data_stack([1, 2, 3], B)
     assert isinstance(out, np.ndarray) and out.tolist() == [1, 2, 3]
@@ -324,3 +367,35 @@ def test_worker_loop_reports_construction_errors():
     (name, message, _), ok = parent.recv()
     assert not ok and name == "RuntimeError" and message == "cannot build env"
     thread.join(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Regression: reset with an all-False mask
+# ---------------------------------------------------------------------------
+
+def test_sync_reset_with_empty_mask_returns_empty_rows():
+    env = SyncVecEnv([StubEnv for _ in range(3)])
+    env.reset(seed=1)
+    context, obs, info = env.reset(mask=np.zeros(3, bool))
+    assert context.shape == (0, 2)
+    assert obs["position"].shape == (0, 2) and obs["velocity"].shape == (0, 2)
+    assert info == {}
+    assert all(len(e.reset_calls) == 1 for e in env.envs)  # nothing was reset
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize("backend", ["numpy", "pytorch"])
+@pytest.mark.parametrize("shared_memory", [False, True], ids=["pipe", "shared"])
+def test_async_reset_with_empty_mask_returns_empty_rows(backend, shared_memory):
+    async_env = AsyncVecEnv([functools.partial(ArrayEnv, backend)] * 2, shared_memory=shared_memory)
+    try:
+        async_env.reset(seed=0)
+        context, obs, info = async_env.reset(mask=np.zeros(2, bool))
+        assert tuple(context.shape) == (0, 2)
+        assert tuple(obs["vec"].shape) == (0, 4) and tuple(obs["nested"][0].shape) == (0, 3)
+        assert info == {}
+        # the env keeps working afterwards
+        obs, *_ = async_env.step(async_env.backend.zeros((2, 2), dtype=async_env.action_space.dtype))
+        assert tuple(obs["vec"].shape) == (2, 4)
+    finally:
+        async_env.close()
