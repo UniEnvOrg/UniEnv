@@ -323,21 +323,17 @@ def test_interpreter_exits_without_close(ctx):
 
 
 _EXIT_AFTER_EARLY_EPOCH_BREAK = """
-import multiprocessing as mp, torch
-from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
-from unienv_interface.space import BoxSpace
-from unienv_data import ReplayBuffer
+import multiprocessing as mp
 from unienv_data.samplers import MultiprocessingSampler, StepSampler
-from unienv_data.storages.pytorch import PytorchTensorStorage
+from tests_common.batch_helpers import numpy_array_batch
 
-rb = ReplayBuffer.create(PytorchTensorStorage, BoxSpace(TB, 0, 200_000, torch.int64, shape=(), device="cpu"),
-                         capacity=200_000, is_memmap=False)
-rb.extend(torch.arange(200_000))
-# 8 queued requests of 16384 indices each: far more than a pipe buffer holds
-sampler = MultiprocessingSampler(StepSampler(rb, batch_size=16384, seed=0), n_workers=1, n_buffers=8,
+# NumPy indices are pickled by value (torch tensors travel as shared-memory handles):
+# 8 queued requests of 16384 indices are far more than a pipe buffer holds
+src = numpy_array_batch(200_000, with_metadata=False)
+sampler = MultiprocessingSampler(StepSampler(src, batch_size=16384, seed=0), n_workers=1, n_buffers=8,
                                  ctx=mp.get_context("fork"), daemon=True)
 it = sampler.epoch_iter()
-assert next(it).shape == (16384,)
+assert next(it)["obs"].shape == (16384, 2)
 it.close()
 sampler.close()
 print("ok", flush=True)
