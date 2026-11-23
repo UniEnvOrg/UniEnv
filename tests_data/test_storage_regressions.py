@@ -179,3 +179,54 @@ def test_episode_storage_set_rejects_negative_int_and_resolves_duplicates(tmp_pa
     assert storage.get(3)[0, 0, 0] == 51  # the last value written to a row wins
     np.testing.assert_array_equal(storage.get(slice(None))[:, 0, 0, 0], [10, 11, 12, 51, 60])
     storage.close()
+
+
+# ---------------------------------------------------------------------------
+# HDF5: duplicated indices in set(), column views, "*" compression
+# ---------------------------------------------------------------------------
+
+def test_hdf5_set_with_duplicate_indices_last_value_wins(tmp_path):
+    storage = HDF5Storage.create(_box(), capacity=5, cache_path=str(tmp_path / "a.hdf5"))
+    storage.set(slice(None), np.zeros((5, 2), np.float32))
+    storage.set(np.array([3, 1, 3, 3]), np.array([[1, 1], [5, 5], [2, 2], [4, 4]], np.float32))
+    expected = np.zeros((5, 2), np.float32)
+    expected[np.array([3, 1, 3, 3])] = np.array([[1, 1], [5, 5], [2, 2], [4, 4]], np.float32)
+    np.testing.assert_array_equal(storage.get(slice(None)), expected)
+    storage.close()
+
+
+def test_hdf5_column_view_follows_parent_length(tmp_path):
+    space = DictSpace(NB, {"a": _box((1,)), "b": _box((1,))})
+    storage = HDF5Storage.create(space, capacity=None, cache_path=str(tmp_path / "c.hdf5"))
+    storage.extend_length(3)
+    storage.set(slice(None), {"a": np.arange(3, dtype=np.float32)[:, None], "b": np.zeros((3, 1), np.float32)})
+    column = storage.get_column(["a"])
+    storage.extend_length(2)
+    storage.set(slice(3, 5), {"a": np.array([[3], [4]], np.float32), "b": np.zeros((2, 1), np.float32)})
+    assert len(column) == 5
+    np.testing.assert_array_equal(column.get(np.array([-1, 0])).ravel(), [4, 0])
+    storage.shrink_length(1)
+    assert len(column) == 4
+    storage.close()
+
+
+def test_hdf5_compression_mapping_star_applies_to_remaining_keys(tmp_path):
+    space = DictSpace(NB, {"a": _box((64,)), "b": _box((64,)), "n": DictSpace(NB, {"c": _box((64,))})})
+    storage = HDF5Storage.create(
+        space, capacity=100, cache_path=str(tmp_path / "c.hdf5"), compression={"*": "gzip", "a": "lzf"},
+    )
+    root = storage.root
+    assert root["a"].compression == "lzf"
+    assert root["b"].compression == "gzip"
+    assert root["n"]["c"].compression == "gzip"
+    storage.close()
+
+    storage = HDF5Storage.create(
+        space, capacity=100, cache_path=str(tmp_path / "d.hdf5"),
+        compression={"*": "gzip", "b": None}, compression_level={"*": 7, "a": 2},
+    )
+    root = storage.root
+    assert (root["a"].compression, root["a"].compression_opts) == ("gzip", 2)
+    assert root["b"].compression is None  # a "*" level is not applied to an uncompressed key
+    assert (root["n"]["c"].compression, root["n"]["c"].compression_opts) == ("gzip", 7)
+    storage.close()
