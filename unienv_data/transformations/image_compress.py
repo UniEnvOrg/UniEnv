@@ -112,7 +112,10 @@ class ImageCompressTransformation(DataTransformation):
         else:
             H, W = source_space.shape[-2], source_space.shape[-1]
             C = 1
-        return self.max_size_bytes if self.max_size_bytes is not None else (H * W * C // self.compression_ratio) + 1 + self.header_bytes
+        if self.max_size_bytes is not None:
+            return int(self.max_size_bytes)
+        # `compression_ratio` may be a float: the budget is still a whole number of bytes
+        return int(H * W * C // self.compression_ratio) + 1 + int(self.header_bytes)
 
     def get_target_space_from_source(self, source_space):
         self.validate_source_space(source_space)
