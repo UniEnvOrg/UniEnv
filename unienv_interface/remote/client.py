@@ -87,12 +87,17 @@ class Subscription:
         return self.next()
 
     def close(self) -> None:
+        if self._end():
+            self.client._unsubscribe(self)
+
+    def _end(self) -> bool:
+        """Stop the iteration (``next`` raises ``StopIteration``); ``False`` if it had already stopped."""
         with self._condition:
             if self.closed:
-                return
+                return False
             self.closed = True
             self._condition.notify_all()
-        self.client._unsubscribe(self)
+        return True
 
     def __enter__(self) -> Subscription:
         return self
@@ -265,8 +270,9 @@ class RemoteClient:
     def release(self, name: str) -> None:
         """Stop using factory-hosted ``name``: the server closes it once no client uses it.
 
-        Its proxy stops working; getting the proxy again opens it again (possibly a newly
-        built object). A no-op for resources registered with ``register``.
+        Its proxy stops working and its subscriptions end (``next`` raises ``StopIteration``);
+        getting the proxy again opens it again (possibly a newly built object). A no-op for
+        resources registered with ``register``.
         """
         descriptor = self.resources.get(name)
         if descriptor is None or not descriptor.get("factory"):
@@ -274,9 +280,13 @@ class RemoteClient:
         with self._open_lock:
             if not self.resources[name].get("open"):
                 return
-            with self._lock:
-                self._proxies.pop(name, None)
-                self.resources[name] = dict(self._FACTORY_STUB)
+            with self._subscribe_lock:
+                with self._lock:
+                    self._proxies.pop(name, None)
+                    self.resources[name] = dict(self._FACTORY_STUB)
+                    subscriptions = self._subscriptions.pop(name, [])
+                for subscription in subscriptions:
+                    subscription._end()  # the server drops them with the release
             if not self.closed:
                 try:
                     self._request("", "release", [name], {})

@@ -119,3 +119,40 @@ def test_accept_loop_survives_accept_and_setup_errors():
     finally:
         listener.close()
     assert not listener._thread.is_alive()
+
+
+# ---------------------------------------------------------------------------- 3: subscriptions vs release()
+
+@pytest.mark.parametrize("release_after", [0, 60.0])
+def test_release_ends_subscriptions_of_a_factory_env(release_after):
+    with RemoteServer() as server:
+        server.register_factory("sim", ProbeEnv, release_after=release_after)
+        with server.connect() as client, server.connect() as other:
+            events = client.subscribe("sim")
+            client.env("sim").step(ACTION)
+            assert events.next(timeout=5).kind == "step"
+            client.release("sim")
+            with pytest.raises(StopIteration):  # the subscription ended with the release
+                events.next(timeout=5)
+            events.close()  # used to raise RemoteError(PermissionError)
+            served = server._connections[0]  # the server side of ``client``
+            assert served.subscriptions == {} and served.factories == set()
+            other.env("sim").step(ACTION)
+            assert all(served not in r.subscribers for r in server._resources.values())
+
+            again = client.subscribe("sim")  # reopens it; used to never receive anything
+            client.env("sim").step(ACTION)
+            assert again.next(timeout=5).kind == "step"
+            again.close()
+
+
+def test_unsubscribe_after_release_is_accepted_by_the_server():
+    """An older client keeps its subscription after release() and unsubscribes later."""
+    with RemoteServer() as server:
+        server.register_factory("sim", ProbeEnv, release_after=60.0)
+        with server.connect() as client:
+            client.env("sim")
+            client._request("", "subscribe", ["sim"], {})
+            client._request("", "release", ["sim"], {})
+            assert client._request("", "unsubscribe", ["sim"], {}) is None
+            assert all(not c.subscriptions for c in server._connections)

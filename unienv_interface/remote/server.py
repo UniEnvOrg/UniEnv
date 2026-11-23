@@ -429,6 +429,7 @@ class RemoteServer:
                 record.users.discard(connection)
                 if not record.users:
                     self._schedule_release(record)
+        connection.unsubscribe(record.name)  # a connection only follows what it has open
 
     def _schedule_release(self, record: _Factory) -> None:
         """Queue closing the object in ``release_after`` seconds, unless it is opened again (holds the lock)."""
@@ -624,6 +625,9 @@ class RemoteServer:
             return {"version": PROTOCOL_VERSION, "resources": resources}
         if method in ("subscribe", "unsubscribe"):
             name = args[0]
+            if method == "unsubscribe" and (name in connection.subscriptions or name in self._factories):
+                connection.unsubscribe(name)  # allowed after the factory object was released
+                return None
             resource = self._resources.get(name)
             if resource is None and name in self._factories or (
                     resource is not None and resource.factory is not None and connection not in resource.factory.users):
