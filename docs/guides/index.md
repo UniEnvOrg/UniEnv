@@ -36,4 +36,10 @@ These guides cover the parts of UniEnv you are most likely to reach for after th
 
     [Open the guide](remote-execution.md)
 
+-   **MCP Servers**
+
+    Environments and policies as MCP tools for LLM agents: actions as JSON, observations with images, policies as skills.
+
+    [Open the guide](mcp.md)
+
 </div>
