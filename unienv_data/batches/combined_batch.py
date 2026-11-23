@@ -233,20 +233,33 @@ class CombinedBatch(BatchBase[
             dtype=self.backend.default_integer_dtype,
             device=self.device
         )
+        child_lengths = self._current_child_lengths()
         start_idx = 0
-        for i, batch in enumerate(self.batches):
-            batch_size = len(batch)
+        for i, batch_size in enumerate(child_lengths):
             end_idx = start_idx + batch_size
             index_caches = self.backend.at(index_caches)[i].set(
                 self.backend.asarray([start_idx, end_idx, batch_size], dtype=self.backend.default_integer_dtype, device=self.device)
             )
             start_idx = end_idx
         self.index_caches = index_caches # (len(self.batches), 3) where the second dimension is start, end, and size of each batch
-    
+        self._child_lengths = child_lengths
+        self._total_length = start_idx
+
+    def _current_child_lengths(self) -> Tuple[int, ...]:
+        return tuple(len(batch) for batch in self.batches)
+
+    def _refresh_index_cache(self) -> None:
+        """Rebuild the index cache if a child grew or shrank since it was built (children such as
+        replay buffers keep changing after the view is created, e.g. while data is collected)."""
+        if self._current_child_lengths() != getattr(self, "_child_lengths", None):
+            self._build_index_cache()
+
     def __len__(self) -> int:
-        return self.index_caches[-1, 1]
+        self._refresh_index_cache()
+        return self._total_length
 
     def _convert_single_index(self, idx : int) -> Tuple[int, int]:
+        self._refresh_index_cache()
         return convert_single_index_to_batch(
             self.backend,
             self.index_caches[:, 0],
@@ -261,6 +274,7 @@ class CombinedBatch(BatchBase[
             Tuple[int, BArrayType, BArrayType]
         ]
     ]:
+        self._refresh_index_cache()
         return convert_index_to_batch(
             self.backend,
             self.index_caches[:, 0],
