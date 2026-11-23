@@ -111,6 +111,12 @@ def _batch_env_spaces(
         return sbu.batch_space(first, len(spaces))
     return sbu.batch_differing_spaces(spaces, device=device)
 
+def _empty_rows(space : Optional[Space]) -> Any:
+    """0-row data of the batched ``space`` (``None`` without a space): what a reset with an all-False mask returns."""
+    if space is None:
+        return None
+    return sbu.get_at(space, space.create_empty(), slice(0, 0))
+
 def _sub_env_seed(seed : Optional[int], index : int) -> Optional[int]:
     """Seed used for sub-environment ``index`` when the vectorized env is reset with ``seed``."""
     return None if seed is None else seed + index
@@ -211,6 +217,10 @@ class SyncVecEnv(Env[
                 all_contexts.append(context)
                 all_obs.append(obs)
                 all_infos.append(info)
+
+        if len(all_obs) == 0:
+            # Nothing selected: empty (0-row) data, as for every other batched env
+            return _empty_rows(self.context_space), _empty_rows(self.observation_space), {}
 
         if self.context_space is not None:
             all_contexts = sbu.concatenate(
@@ -832,6 +842,9 @@ class AsyncVecEnv(Env[
             all_obs.append(obs)
             all_infos.append(info)
         rows = None if len(indices) == len(self.processes) else indices
+        if len(indices) == 0:
+            # Nothing selected: empty (0-row) data, as for every other batched env
+            return _empty_rows(self.context_space), _empty_rows(self.observation_space), {}
 
         if self.context_space is None:
             all_contexts = None

@@ -367,3 +367,35 @@ def test_worker_loop_reports_construction_errors():
     (name, message, _), ok = parent.recv()
     assert not ok and name == "RuntimeError" and message == "cannot build env"
     thread.join(timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Regression: reset with an all-False mask
+# ---------------------------------------------------------------------------
+
+def test_sync_reset_with_empty_mask_returns_empty_rows():
+    env = SyncVecEnv([StubEnv for _ in range(3)])
+    env.reset(seed=1)
+    context, obs, info = env.reset(mask=np.zeros(3, bool))
+    assert context.shape == (0, 2)
+    assert obs["position"].shape == (0, 2) and obs["velocity"].shape == (0, 2)
+    assert info == {}
+    assert all(len(e.reset_calls) == 1 for e in env.envs)  # nothing was reset
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize("backend", ["numpy", "pytorch"])
+@pytest.mark.parametrize("shared_memory", [False, True], ids=["pipe", "shared"])
+def test_async_reset_with_empty_mask_returns_empty_rows(backend, shared_memory):
+    async_env = AsyncVecEnv([functools.partial(ArrayEnv, backend)] * 2, shared_memory=shared_memory)
+    try:
+        async_env.reset(seed=0)
+        context, obs, info = async_env.reset(mask=np.zeros(2, bool))
+        assert tuple(context.shape) == (0, 2)
+        assert tuple(obs["vec"].shape) == (0, 4) and tuple(obs["nested"][0].shape) == (0, 3)
+        assert info == {}
+        # the env keeps working afterwards
+        obs, *_ = async_env.step(async_env.backend.zeros((2, 2), dtype=async_env.action_space.dtype))
+        assert tuple(obs["vec"].shape) == (2, 4)
+    finally:
+        async_env.close()
