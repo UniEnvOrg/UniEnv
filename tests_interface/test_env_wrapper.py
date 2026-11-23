@@ -20,6 +20,50 @@ def test_rng_falls_through_to_inner_env_until_overridden(stub_env):
     assert wrapper.env.rng is stub_env.rng
 
 
+def test_sample_action_does_not_pin_the_inner_rng_on_the_wrapper():
+    """Regression: wrapper.sample_action() stored the advanced rng on the wrapper, so a later
+    reset(seed=...) that reseeds the inner env's rng no longer affected sampling."""
+    from unienv_interface.env_base.vec_env import SyncVecEnv
+
+    def run(env):
+        env.reset(seed=0)
+        a = env.sample_action()
+        env.reset(seed=0)
+        b = env.sample_action()
+        return a, b
+
+    inner = SyncVecEnv([StubEnv, StubEnv])
+    wrapper = _Plain(_Plain(inner))
+    a, b = run(wrapper)
+    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(a, run(SyncVecEnv([StubEnv, StubEnv]))[0])
+    assert wrapper._rng is None and wrapper.env._rng is None
+    assert wrapper.rng is inner.rng
+
+
+def test_sample_action_with_jax_key_advances_inner_rng():
+    pytest.importorskip("jax")
+    from unienv_interface.backends.jax import JaxComputeBackend
+    from unienv_interface.wrapper import ToBackendOrDeviceWrapper
+    inner = ToBackendOrDeviceWrapper(StubEnv(), backend=JaxComputeBackend)
+    wrapper = _Plain(inner)
+    key_before = inner.rng
+    first = wrapper.sample_action()
+    assert wrapper._rng is None and inner.rng is not key_before  # the (immutable) key advanced on the inner env
+    second = wrapper.sample_action()
+    assert not np.array_equal(np.asarray(first), np.asarray(second))
+    assert wrapper.rng is inner.rng
+
+
+def test_sample_action_uses_an_explicitly_set_wrapper_rng(stub_env):
+    wrapper = _Plain(stub_env)
+    inner_rng = stub_env.rng
+    wrapper.rng = np.random.default_rng(123)
+    expected = stub_env.action_space.sample(np.random.default_rng(123))[1]
+    np.testing.assert_array_equal(wrapper.sample_action(), expected)
+    assert stub_env.rng is inner_rng
+
+
 def test_rng_with_jax_key_does_not_call_bool():
     jax = pytest.importorskip("jax")
     env = StubEnv()

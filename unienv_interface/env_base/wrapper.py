@@ -125,11 +125,19 @@ class Wrapper(
         self._metadata: Optional[Dict[str, Any]] = None
         self._rng : Optional[WrapperBRngT] = None
 
+    def sample_space(self, space: Space) -> Any:
+        """Sample from ``space`` with this wrapper's own rng if one was set, else with (and
+        advancing) the wrapped env's rng, so sampling does not pin a copy of the env's rng on
+        the wrapper (which a later ``env.reset(seed=...)`` reseeding ``env.rng`` would not reach)."""
+        if self._rng is None:
+            return self.env.sample_space(space)
+        return super().sample_space(space)
+
     def step(
         self, action: WrapperActT
     ) -> Tuple[
-        WrapperObsT, 
-        Union[SupportsFloat, WrapperBArrayT], 
+        WrapperObsT,
+        Union[SupportsFloat, WrapperBArrayT],
         Union[bool, WrapperBArrayT], 
         Union[bool, WrapperBArrayT], 
         Dict[str, Any]
