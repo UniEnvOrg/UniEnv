@@ -123,3 +123,25 @@ def test_clear_on_empty_unbounded_storage(tmp_path, storage_cls, name):
     assert len(rb) == 0 and len(rb.storage) == 0
     rb.extend(np.ones((2, 2), np.float32))
     np.testing.assert_array_equal(rb[np.arange(2)], np.ones((2, 2), np.float32))
+
+
+# ---------------------------------------------------------------------------
+# Episode storages: negative ints and duplicated indices in set()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+def test_episode_storage_set_rejects_negative_int_and_resolves_duplicates(tmp_path):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    path = str(tmp_path / "v")
+    storage = VideoStorage.create(_img_space(), capacity=5, cache_path=path, **LOSSLESS_RGB_KWARGS)
+    storage.set(slice(None), np.stack([_frame(10 + i) for i in range(5)]))
+    with pytest.raises(AssertionError):
+        storage.set(-1, _frame(99))
+    assert storage.get_segments() == [(0, 4)]
+    assert sorted(os.listdir(path)) == ["0_4.mkv"]
+
+    storage.set(np.array([3, 3, 4]), np.stack([_frame(50), _frame(51), _frame(60)]))
+    assert storage.get(3)[0, 0, 0] == 51  # the last value written to a row wins
+    np.testing.assert_array_equal(storage.get(slice(None))[:, 0, 0, 0], [10, 11, 12, 51, 60])
+    storage.close()
