@@ -169,3 +169,27 @@ def test_dict_transformation_disjoint_keys_unchanged():
     np.testing.assert_allclose(y["y"], [0.0])
     back = t.direction_inverse(source).transform(t.get_target_space_from_source(source), y)
     np.testing.assert_allclose(back["x"], [50.0], atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# ChainedTransformation.direction_inverse() without a source space
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("members,expected", [
+    ([FlattenDictTransformation()], [UnflattenDictTransformation]),
+    ([BatchifyTransformation()], [UnBatchifyTransformation]),
+    ([IdentityTransformation(), FlattenDictTransformation()], [UnflattenDictTransformation, IdentityTransformation]),
+])
+def test_chained_inverse_without_source_space(members, expected):
+    inverse = ChainedTransformation(members).direction_inverse()
+    assert [type(t) for t in inverse.transformations] == expected
+
+
+def test_chained_inverse_without_source_space_round_trips():
+    source = DictSpace(NB, {"a": DictSpace(NB, {"x": _box(0.0, 1.0)}), "b": _box(0.0, 1.0)})
+    t = ChainedTransformation([FlattenDictTransformation(), BatchifyTransformation()])
+    x = {"a": {"x": np.array([0.5], np.float32)}, "b": np.array([0.25], np.float32)}
+    y = t.transform(source, x)
+    back = t.direction_inverse().transform(t.get_target_space_from_source(source), y)
+    np.testing.assert_allclose(back["a"]["x"], [0.5])
+    np.testing.assert_allclose(back["b"], [0.25])
