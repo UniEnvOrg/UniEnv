@@ -24,6 +24,12 @@ class GraphInstance(Generic[BArrayType]):
     edges: Optional[BArrayType] = None
     """Edges in the graph, shape (*batch_shape, max(n_edges), 2) where each edge is represented by a pair of node indices, or None if no edges are present."""
 
+def _max_count(backend : ComputeBackend, counts : BArrayType) -> int:
+    """Largest entry of a node / edge count array; 0 for an empty batch."""
+    if int(np.prod(tuple(counts.shape))) == 0:
+        return 0
+    return int(backend.max(counts))
+
 class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGType], Generic[BArrayType, BDeviceType, BDtypeType, BRNGType]):
     def __init__(
         self,
@@ -187,13 +193,14 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             num_edges = None
 
         if self.node_feature_space is not None:
-            batched_node_space = self._make_batched_node_feature_space(int(self.backend.max(num_nodes)))
+            batched_node_space = self._make_batched_node_feature_space(_max_count(self.backend, num_nodes))
             rng, node_features = batched_node_space.sample(rng=rng)
         else:
             node_features = None
         
-        num_edges_batch_max = int(self.backend.max(num_edges)) if num_edges is not None else 0
-        if num_edges is not None and num_edges_batch_max > 0:
+        num_edges_batch_max = _max_count(self.backend, num_edges) if num_edges is not None else 0
+        # ``min_edges >= 1``: only an empty batch has no edge slots, and it still needs (empty) edges
+        if num_edges is not None:
             rng, edges = self.backend.random.random_uniform(
                 self.batch_shape + (num_edges_batch_max, 2),
                 rng=rng,
@@ -205,7 +212,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         else:
             edges = None
 
-        if num_edges_batch_max > 0 and self.edge_feature_space is not None:
+        if num_edges is not None and self.edge_feature_space is not None:
             batched_edge_space = self._make_batched_edge_feature_space(num_edges_batch_max)
             rng, edge_features = batched_edge_space.sample(rng=rng)
         else:
@@ -244,7 +251,7 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
         if self.node_feature_space is not None:
             if x.nodes_features is None:
                 return False
-            batched_node_space = self._make_batched_node_feature_space(int(self.backend.max(x.n_nodes)))
+            batched_node_space = self._make_batched_node_feature_space(_max_count(self.backend, x.n_nodes))
             if not batched_node_space.contains(x.nodes_features):
                 return False
         
@@ -255,13 +262,13 @@ class GraphSpace(Space[GraphInstance[BArrayType], BDeviceType, BDtypeType, BRNGT
             if bool(self.backend.any(x.n_edges < self.min_edges)) or (self.max_edges is not None and bool(self.backend.any(x.n_edges > self.max_edges))):
                 return False
             
-            if x.edges is None or not self.backend.is_backendarray(x.edges) or x.edges.shape != self.batch_shape + (int(self.backend.max(x.n_edges)), 2) or not self.backend.dtype_is_real_integer(x.edges.dtype):
+            if x.edges is None or not self.backend.is_backendarray(x.edges) or x.edges.shape != self.batch_shape + (_max_count(self.backend, x.n_edges), 2) or not self.backend.dtype_is_real_integer(x.edges.dtype):
                 return False
             
             if x.edges_features is not None:
                 if self.edge_feature_space is None:
                     return False
-                batched_edge_space = self._make_batched_edge_feature_space(int(self.backend.max(x.n_edges)))
+                batched_edge_space = self._make_batched_edge_feature_space(_max_count(self.backend, x.n_edges))
                 if not batched_edge_space.contains(x.edges_features):
                     return False
         elif self.is_edge and self.min_edges > 0 and (x.n_edges is None  or x.edges is None):
