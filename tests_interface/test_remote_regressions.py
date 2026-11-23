@@ -71,3 +71,51 @@ def test_jpeg_decode_validates_the_shape_before_allocating():
         codec.decode([], np.dtype(np.uint8), (0, 0, 3), options)
     decoded = codec.decode([memoryview(blob)], np.dtype(np.uint8), (1, 16, 16, 3), options)
     assert decoded.shape == (1, 16, 16, 3)
+
+
+# ---------------------------------------------------------------------------- 2: accept loop survives errors
+
+class _FlakyListeningSocket:
+    """A listening socket whose first ``accept`` fails like it does when the process is out of fds."""
+
+    def __init__(self, sock):
+        self.sock, self.failures = sock, 1
+
+    def accept(self):
+        if self.failures:
+            self.failures -= 1
+            raise OSError(24, "Too many open files")
+        return self.sock.accept()
+
+    def shutdown(self, how):
+        self.sock.shutdown(how)
+
+    def close(self):
+        self.sock.close()
+
+
+def test_accept_loop_survives_accept_and_setup_errors():
+    import socket
+    from unienv_interface.remote.transport import _SocketListener
+
+    sock = socket.create_server(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    accepted, calls = [], []
+
+    def on_connect(transport):
+        calls.append(transport)
+        if len(calls) == 1:
+            raise RuntimeError("setting up the first connection fails")
+        accepted.append(transport)
+
+    listener = _SocketListener(_FlakyListeningSocket(sock), f"tcp://127.0.0.1:{port}", on_connect, 1 << 20)
+    try:
+        clients = [socket.create_connection(("127.0.0.1", port)) for _ in range(2)]
+        wait_for(lambda: len(accepted) == 1)  # the accept error and the failed setup did not stop the loop
+        assert listener._thread.is_alive()
+        for client in clients:
+            client.close()
+        accepted[0].close()
+    finally:
+        listener.close()
+    assert not listener._thread.is_alive()

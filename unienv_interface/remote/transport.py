@@ -8,10 +8,12 @@ frame per :meth:`Transport.send` (thread-safe) and returns
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import stat
 import struct
+import time
 from queue import SimpleQueue
 from threading import Lock, Thread
 from typing import Any, Callable, List, Optional, Sequence, Tuple
@@ -25,6 +27,8 @@ __all__ = ["Transport", "StreamTransport", "MemoryTransport", "WebSocketTranspor
            "parse_address"]
 
 _MAX_IOV = 512
+_ACCEPT_RETRY_DELAY = 0.05  # seconds between retries after a failed accept()
+_log = logging.getLogger(__name__)
 Frame = Tuple[Any, List[Any]]
 
 
@@ -247,12 +251,21 @@ class _SocketListener(Listener):
         while True:
             try:
                 connection, _ = self.sock.accept()
-            except OSError:
-                return
+            except OSError as exc:
+                if self._closed:
+                    return
+                # A transient failure (EMFILE, ENOBUFS, ECONNABORTED, ...) must not stop the listener.
+                _log.warning("Accepting a connection on %s failed: %s", self.address, exc)
+                time.sleep(_ACCEPT_RETRY_DELAY)
+                continue
             if self._closed:
                 connection.close()
                 return
-            self._on_connect(StreamTransport(connection, self._max_frame_size))
+            try:
+                self._on_connect(StreamTransport(connection, self._max_frame_size))
+            except Exception:
+                _log.exception("Setting up a connection on %s failed", self.address)
+                connection.close()
 
     def close(self) -> None:
         if self._closed:
