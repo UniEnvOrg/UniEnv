@@ -8433,7 +8433,7 @@
 while running:
     state, action = policy.get_action(state)
     observation, ... = env.step(action)
-    state = policy.observe_transition(state, action, observation)
+    state = policy.observe_transition(state, action, observation, dt)   # dt: seconds the step took
     # some sub-environments done: state = policy.reset(state, full_context, full_observation, mask=done)
 </code></pre></div>
 <p>The policy state takes in observations only through :meth:<code>initial</code>, :meth:<code>reset</code> and
@@ -9094,7 +9094,7 @@ the others must be kept.</p>
 
   
       module-attribute
-   (unienv_interface.policy.policy.ObsType)" href="../policy/#unienv_interface.policy.policy.ObsType">ObsType</a></span>
+   (unienv_interface.policy.policy.ObsType)" href="../policy/#unienv_interface.policy.policy.ObsType">ObsType</a></span><span class="p">,</span> <span class="n">dt</span><span class="p">:</span> <span class="n"><span title="float">float</span></span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n"><a class="autorefs autorefs-internal" title="            StateType
 
 
@@ -9106,6 +9106,10 @@ the others must be kept.</p>
     <div class="doc doc-contents ">
 
         <p>The state after the environment executed <code>action_taken</code> and returned <code>new_observation</code>.</p>
+<p><code>dt</code> is the env time in seconds between the previous observation and
+<code>new_observation</code>, i.e. how long <code>action_taken</code> was applied (sim time in simulation,
+elapsed time on a robot; one value for a batch). Policies that schedule work in time
+(e.g. asynchronous action chunking) rely on it; others may ignore it.</p>
 
 
     </div>
@@ -10191,7 +10195,7 @@ the others must be kept.</p>
 
 
 <a href="#unienv_interface.policy.funcpolicy.FuncPolicyWrapper.observe_transition" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -11137,7 +11141,7 @@ the others must be kept.</p>
 
 
 <a href="#unienv_interface.policy.funcpolicy.FuncPolicyBasedPolicy.observe_transition" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">

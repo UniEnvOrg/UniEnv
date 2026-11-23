@@ -7915,7 +7915,7 @@
 while running:
     action = policy.get_action()
     observation, reward, terminated, truncated, info = env.step(action)
-    policy.observe_transition(action, observation)
+    policy.observe_transition(action, observation, dt)   # dt: seconds the step took, e.g. the control timestep
     # batched env, some sub-environments done:
     #   merge env.reset(mask=done) into the full batch (env.update_*_post_reset), then
     #   policy.reset(full_context, full_observation, mask=done)
@@ -8578,12 +8578,16 @@ are new, the other rows are unchanged and the policy keeps its state for them.</
 
   
       module-attribute
-   (unienv_interface.policy.policy.ObsType)" href="#unienv_interface.policy.policy.ObsType">ObsType</a></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+   (unienv_interface.policy.policy.ObsType)" href="#unienv_interface.policy.policy.ObsType">ObsType</a></span><span class="p">,</span> <span class="n">dt</span><span class="p">:</span> <span class="n"><span title="float">float</span></span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Update the policy's state with the action the environment executed and the observation it returned.</p>
+<p><code>dt</code> is the env time in seconds between the previous observation and
+<code>new_observation</code>, i.e. how long <code>action_taken</code> was applied (sim time in simulation,
+elapsed time on a robot; one value for a batch). Policies that schedule work in time
+(e.g. asynchronous action chunking) rely on it; others may ignore it.</p>
 
 
     </div>
@@ -9768,7 +9772,7 @@ By default, it returns the environment render frame without any modification.</p
 
 
 <a href="#unienv_interface.policy.policy.PolicyWrapper.observe_transition" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">observe_transition</span><span class="p">(</span><span class="n">action_taken</span><span class="p">,</span> <span class="n">new_observation</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
