@@ -229,3 +229,41 @@ def test_column_view_counters_survive_pickling(tmp_path):
     state = pickle.loads(pickle.dumps(rb._ring_state))
     assert state.read() == (3, 0)
     np.testing.assert_array_equal(column.get_at(slice(None)), np.array([1.0, 2.0, 3.0], np.float32))
+
+
+@pytest.mark.parametrize("make_index", [np.int64, np.int32, lambda i: torch.tensor(i), lambda i: np.array(i)],
+                         ids=["np.int64", "np.int32", "torch-0d", "numpy-0d"])
+def test_zero_dim_integer_indices_work_like_python_ints(make_index, tmp_path):
+    # Regression: 0-d NumPy / torch integer indices failed with "Index shape () is not 1D".
+    from unienv_data.storages.hdf5 import HDF5Storage
+    from unienv_interface.backends.numpy import NumpyComputeBackend as NB
+    from unienv_interface.space.space_utils import flatten_utils as sfu
+    from tests_common.batch_helpers import make_rb, rb_data
+    from tests_common.trees import assert_tree_equal
+
+    rb = make_rb(5, capacity=5)
+    rb.extend(rb_data(2, start=5))  # wrapped: logical index i is sample i + 2
+    for i in (1, -1):
+        assert_tree_equal(rb.get_at(make_index(i)), rb.get_at(i))
+        assert_tree_equal(rb[make_index(i)], rb.get_at(i))
+        assert_tree_equal(rb.get_flattened_at(make_index(i)), rb.get_flattened_at(i))
+    rb.set_at(make_index(0), rb.get_at(3))
+    assert_tree_equal(rb.get_at(0), rb.get_at(3))
+    rb.set_flattened_at(make_index(1), rb.get_flattened_at(4))
+    assert_tree_equal(rb.get_at(1), rb.get_at(4))
+
+    # Episode ids and the episode view (NumPy buffer with episode records)
+    space = BoxSpace(NB, -1e9, 1e9, np.int64, shape=(1,))
+    episodes = ReplayBuffer.create(HDF5Storage, space, cache_path=str(tmp_path / "rb"), capacity=4,
+                                   episode_space=BoxSpace(NB, 0, 100, np.int64, shape=()),
+                                   episode_storage_cls=HDF5Storage)
+    for k, length in enumerate((3, 2)):
+        episodes.extend(np.arange(length)[:, None] + 10 * k, episode_data=np.int64(k))
+    view = episodes.with_episode_data()
+    for i in (0, -1):
+        assert episodes.get_episode_ids(make_index(i)) == episodes.get_episode_ids(i)
+        data, meta = view.get_at_with_metadata(make_index(i))
+        expected_data, expected_meta = view.get_at_with_metadata(i)
+        assert_tree_equal(data, expected_data)
+        assert_tree_equal(meta, expected_meta)
+        assert_tree_equal(view.get_flattened_at(make_index(i)), view.get_flattened_at(i))

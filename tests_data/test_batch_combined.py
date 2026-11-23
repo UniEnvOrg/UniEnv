@@ -259,3 +259,24 @@ def test_view_pickled_without_pool_attributes_still_reads():
     assert_tree_equal(old.get_at(idx), combined.get_at(idx))
     old.close()
     combined.close()
+
+
+def test_children_changed_outside_the_view_are_seen():
+    # Regression: the children's lengths were cached when the view was built, so data
+    # added to a child afterwards (e.g. an online replay buffer next to an offline one)
+    # was never returned, and a child that shrank made reads fail.
+    offline = make_rb(4, capacity=100)
+    online = make_rb(2, capacity=100, start=100)
+    cb = CombinedBatch([offline, online])
+    assert len(cb) == 6
+    online.extend(rb_data(5, start=200))
+    assert len(cb) == 11
+    assert_tree_equal(cb.get_at(slice(6, 11)), rb_data(5, start=200))
+    assert_tree_equal(cb.get_at(10), sbu.get_at(cb._batched_space, rb_data(5, start=200), 4))
+    _, meta = cb.get_at_with_metadata(torch.tensor([3, 10]))
+    assert meta["batch_index"].tolist() == [0, 1]
+    online.clear()
+    assert len(cb) == 4
+    assert_tree_equal(cb.get_at(torch.arange(4)), rb_data(4))
+    with pytest.raises(AssertionError):
+        cb.get_at(torch.tensor([5]))
