@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -16,7 +16,7 @@ from unienv_interface.space.space_utils.json_utils import describe_metadata, to_
 from .images import encode_png, image_kind, prepare_image, split_batch
 
 __all__ = ["ContentOptions", "Rendered", "render_observation", "render_image", "to_result", "error_result",
-           "json_safe"]
+           "json_safe", "image_paths", "result_schema", "with_images"]
 
 
 @dataclass
@@ -29,8 +29,13 @@ class ContentOptions:
     max_values: int = 256
     #: Images are downscaled (by an integer stride) to at most this many pixels per side
     max_image_side: int = 512
-    #: Show image leaves as images (``False``: summarize them like other large arrays)
-    images: bool = True
+    #: Which image leaves are shown, by path (e.g. ``["front", "cameras/wrist"]``); ``None``: all.
+    #: The others are listed in the JSON without pixels. Tools' ``images`` argument overrides it per call.
+    cameras: Optional[Sequence[str]] = None
+    #: At most this many images per result (``None``: no limit); later ones are listed without pixels
+    max_images: Optional[int] = 8
+    #: Batched environments: ``"first"`` shows the first env's images only, ``"all"`` every env's
+    batch_images: str = "first"
 
 
 @dataclass
@@ -43,6 +48,37 @@ class Rendered:
     def add_image(self, caption: str, png: bytes) -> int:
         self.images.append((caption, png))
         return len(self.images)
+
+    def full(self, options: "ContentOptions") -> bool:
+        return options.max_images is not None and len(self.images) >= options.max_images
+
+
+def with_images(options: ContentOptions, images: Union[None, str, Sequence[str]]) -> ContentOptions:
+    """``options`` with a tool call's ``images`` argument applied: ``"all"``, ``"none"`` or a list of paths."""
+    if images is None:
+        return options
+    if images == "all":
+        return replace(options, cameras=None)
+    if images == "none":
+        return replace(options, cameras=())
+    if isinstance(images, (list, tuple)) and all(isinstance(path, str) for path in images):
+        return replace(options, cameras=tuple(images))
+    raise ValueError('images must be "all", "none" or a list of camera paths')
+
+
+def _shown(path: str, options: ContentOptions) -> bool:
+    return options.cameras is None or any(path == c or path.startswith(c.rstrip("/") + "/") for c in options.cameras)
+
+
+def image_paths(space: Optional[Space], batched: bool, path: str = "") -> List[str]:
+    """The paths of the image leaves of ``space`` (the names the ``images`` argument takes)."""
+    if space is None:
+        return []
+    if isinstance(space, DictSpace):
+        return [p for key, sub in space.spaces.items() for p in image_paths(sub, batched, f"{path}/{key}".lstrip("/"))]
+    if isinstance(space, TupleSpace):
+        return [p for i, sub in enumerate(space.spaces) for p in image_paths(sub, batched, f"{path}[{i}]")]
+    return [path or "observation"] if image_kind(space, batched) is not None else []
 
 
 def _summary(array: np.ndarray, digits: int) -> Dict[str, Any]:
@@ -58,11 +94,24 @@ def _summary(array: np.ndarray, digits: int) -> Dict[str, Any]:
 
 
 def _leaf(space: Space, data: Any, path: str, batch_ndim: int, out: Rendered, options: ContentOptions) -> Any:
-    kind = image_kind(space, batch_ndim > 0) if options.images else None
+    kind = image_kind(space, batch_ndim > 0)
     if kind is not None:
         array = np.asarray(space.backend.to_numpy(data))
         refs = []
-        for index, image in split_batch(array, batch_ndim):
+        for number, (index, image) in enumerate(split_batch(array, batch_ndim)):
+            height, width = image.shape[1:3] if str((space.metadata or {}).get("layout", "")).upper() == "CHW" \
+                else image.shape[:2]
+            if not _shown(path, options):
+                refs.append({"image": None, "height": int(height), "width": int(width),
+                             "omitted": "not requested (images argument)"})
+                continue
+            if batch_ndim and options.batch_images == "first" and number > 0:
+                refs.append({"image": None, "omitted": "only the first env's images are shown"})
+                continue
+            if out.full(options):
+                refs.append({"image": None, "height": int(height), "width": int(width),
+                             "omitted": f"image limit ({options.max_images}) reached"})
+                continue
             prepared, notes = prepare_image(space, image, kind, max_side=options.max_image_side)
             caption = path + ("" if not index else f" (env {', '.join(str(i) for i in index)})")
             number = out.add_image(caption, encode_png(prepared))
@@ -98,9 +147,9 @@ def render_observation(space: Optional[Space], data: Any, out: Rendered, key: st
 
 
 def render_image(frame: Any, caption: str, out: Rendered, options: ContentOptions) -> Optional[int]:
-    """Add a rendered frame (``H x W x C`` array) as an image; ``None`` if it is not one."""
+    """Add a rendered frame (``H x W x C`` array) as an image; ``None`` if it is not one or the limit is reached."""
     array = np.asarray(frame) if not hasattr(frame, "cpu") else frame.detach().cpu().numpy()
-    if array.ndim not in (2, 3):
+    if array.ndim not in (2, 3) or out.full(options):
         return None
     dummy = BoxSpace.__new__(BoxSpace)  # prepare_image only reads metadata
     object.__setattr__(dummy, "_metadata", {})
@@ -156,3 +205,34 @@ def error_result(message: str) -> types.CallToolResult:
 
 def space_summary(space: Optional[Space]) -> Optional[str]:
     return None if space is None else describe_metadata(space)
+
+
+def result_schema(space: Optional[Space], batched: bool, options: ContentOptions, path: str = "") -> Any:
+    """The JSON Schema of how ``space``'s data appears in results: image leaves as image references,
+    large arrays as summaries, the rest as their JSON form."""
+    from unienv_interface.space.space_utils.json_utils import space_to_json_schema
+    if space is None:
+        return None
+    if isinstance(space, DictSpace):
+        return {"type": "object", "properties": {
+            str(key): result_schema(sub, batched, options, f"{path}/{key}".lstrip("/")) for key, sub in space.spaces.items()
+        }}
+    if isinstance(space, TupleSpace):
+        return {"type": "array", "prefixItems": [result_schema(sub, batched, options, f"{path}[{i}]")
+                                                 for i, sub in enumerate(space.spaces)]}
+    kind = image_kind(space, batched)
+    if kind is not None:
+        reference = {"type": "object", "description": (
+            f"{'a depth image (gray: near is dark), with depth_range' if kind == 'depth' else 'an image'}: returned "
+            "as image content after the JSON; `image` is its number, null when omitted (see `omitted`)"),
+            "properties": {"image": {"type": ["integer", "null"]}, "height": {"type": "integer"},
+                           "width": {"type": "integer"}, "omitted": {"type": "string"}}}
+        return {"type": "array", "items": reference, "description": "one per env"} if batched else reference
+    try:
+        schema = space_to_json_schema(space)
+    except TypeError as exc:
+        return {"description": str(exc)}
+    size = int(np.prod(tuple(getattr(space, "shape", None) or ())))
+    if isinstance(space, (BoxSpace, DynamicBoxSpace)) and size > options.max_values:
+        return {"description": f"summarized ({size} values): shape, dtype, min, max, mean", "type": "object"}
+    return schema
