@@ -1,4 +1,4 @@
-"""Repository-wide pytest configuration shared by tests_interface, tests_data and tests_utils."""
+"""Repository-wide pytest configuration shared by tests_interface, tests_data, tests_utils and tests_mcp."""
 
 import os
 

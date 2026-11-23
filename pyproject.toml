@@ -17,6 +17,10 @@ dependencies = [
 network = [
     "websockets>=15,<16",
 ]
+mcp = [
+    # unienv_mcp: environments and policies as MCP servers
+    "mcp>=2.3,<3",
+]
 calibration = [
     # TODO(opencv5): OpenCV 5.0.0 does not expose cv2.calibrateHandEye to Python (declared
     # CV_EXPORTS, not CV_EXPORTS_W). Fixed upstream in opencv/opencv@325e30db1d on 5.x but
@@ -40,6 +44,8 @@ dev = [
     "datasets",
     "huggingface_hub",
     "typing_extensions",
+    "mcp>=2.3,<3",
+    "jsonschema",
 ]
 docs = [
     # MkDocs 2 drops support for existing themes and plugins; stay on 1.x.
@@ -59,6 +65,9 @@ video = [
     "moviepy>=2.1",
 ]
 
+[project.scripts]
+unienv-mcp = "unienv_mcp.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/UniEnvOrg/UniEnv"
 Documentation = "https://github.com/UniEnvOrg/UniEnv"
@@ -71,7 +80,7 @@ include = ["*"]
 exclude = ["training*", "tests*", "examples*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests_interface", "tests_data", "tests_utils"]
+testpaths = ["tests_interface", "tests_data", "tests_utils", "tests_mcp"]
 timeout = 300
 markers = [
     "slow: long-running tests (video encoding, multiprocessing); deselect with -m 'not slow'",

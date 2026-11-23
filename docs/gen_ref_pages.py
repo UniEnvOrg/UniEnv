@@ -3,7 +3,7 @@ from pathlib import Path
 import mkdocs_gen_files
 
 
-PACKAGE_DIRS = (Path("unienv_interface"), Path("unienv_data"))
+PACKAGE_DIRS = (Path("unienv_interface"), Path("unienv_data"), Path("unienv_mcp"))
 DOCS_DIR = Path("docs")
 INDEX_PATH = Path("api", "index.md")
 SUMMARY_PATH = Path("SUMMARY.md")
@@ -19,6 +19,8 @@ PREFERRED_DOC_ORDER = [
     Path("guides", "wrappers-and-transformations.md"),
     Path("guides", "replay-buffers-and-storage.md"),
     Path("guides", "dataset-integrations.md"),
+    Path("guides", "remote-execution.md"),
+    Path("guides", "mcp.md"),
     Path("guides", "development.md"),
 ]
 
