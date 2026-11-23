@@ -294,3 +294,21 @@ def test_combined_env_nodes_without_world_can_step():
     assert reward == 2.0 and terminated is False and truncated is False
     _, _, terminated, _, _ = env.step({"e1": action, "e2": action})
     assert terminated is True
+
+
+# ---------------------------------------------------------------------------
+# root_node display name must not collide with a child name
+# ---------------------------------------------------------------------------
+
+def test_combined_node_rejects_root_named_like_child():
+    world = SimWorld()
+    with pytest.raises(ValueError, match="root_node"):
+        CombinedWorldNode("c", [CounterNode(world, "arm")], root_node=_DictObsNode(world, "arm", ["root_obs"]))
+    with pytest.raises(ValueError, match="root_node"):
+        FlatCombinedWorldNode("c", [_DictObsNode(world, "arm", ["x"])], root_node=_DictObsNode(world, "arm", ["y"]))
+
+
+def test_combined_funcnode_rejects_root_named_like_child():
+    world = SimFuncWorld()
+    with pytest.raises(ValueError, match="root_node"):
+        CombinedFuncWorldNode("c", [CounterFuncNode(world, "arm")], root_node=_DictObsFuncNode(world, "arm", ["root_obs"]))

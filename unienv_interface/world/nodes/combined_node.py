@@ -125,6 +125,11 @@ class CombinedWorldNode(WorldNode[
                 "root_node must belong to the same world as the other nodes."
             assert root_node.name, \
                 "root_node must have a non-empty name (used for info / render keys)."
+            if root_node.name in names:
+                raise ValueError(
+                    f"root_node name '{root_node.name}' collides with a child node name; "
+                    f"info / render / pernode_kwargs entries are keyed by node name."
+                )
         self.root_node = root_node
         if root_node is not None:
             self._all_nodes.append(root_node)
