@@ -272,3 +272,146 @@ def test_shared_slot_task_sends_mismatching_leaves_as_is():
     _, packed, skeleton = _SharedSlotTask(lambda work: other, slots)(0)
     assert not packed and _SharedSlotTask.unpack(packed, skeleton, slots[0]) is other
     assert _allocate_shared_slots({"x": 1}, 2) is None
+
+
+# ---------------------------------------------------------------------------
+# Hangs, worker failures and reseeding
+# ---------------------------------------------------------------------------
+
+def _run_script_must_exit(script, timeout=60):
+    """Run ``script`` in a fresh interpreter; a hang (e.g. at interpreter exit) fails the test."""
+    import os, signal, subprocess, sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script], cwd=root, start_new_session=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        pytest.fail("the interpreter did not exit")
+    assert proc.returncode == 0 and out.strip().endswith("ok"), err
+
+
+_EXIT_WITHOUT_CLOSE = """
+import multiprocessing as mp, torch
+from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+from unienv_interface.space import BoxSpace
+from unienv_data import ReplayBuffer
+from unienv_data.samplers import MultiprocessingSampler, StepSampler
+from unienv_data.storages.pytorch import PytorchTensorStorage
+
+if __name__ == "__main__":
+    rb = ReplayBuffer.create(PytorchTensorStorage, BoxSpace(TB, 0, 100, torch.int64, shape=(), device="cpu"),
+                             capacity=100, is_memmap=False)
+    rb.extend(torch.arange(100))
+    sampler = MultiprocessingSampler(StepSampler(rb, batch_size=4, seed=0), n_workers=2, n_buffers=2,
+                                     ctx=mp.get_context("{ctx}"))
+    assert sampler.sample().shape == (4,)
+    print("ok", flush=True)  # the script ends without sampler.close()
+"""
+
+
+@pytest.mark.parametrize("ctx", ["fork", "spawn"])
+def test_interpreter_exits_without_close(ctx):
+    # Regression: workers are non-daemonic by default and only stop when the sampler is
+    # closed, so multiprocessing's exit handler joined them forever when a script ended
+    # without close(). Live samplers are now closed by an atexit hook.
+    _run_script_must_exit(_EXIT_WITHOUT_CLOSE.replace("{ctx}", ctx))
+
+
+_EXIT_AFTER_EARLY_EPOCH_BREAK = """
+import multiprocessing as mp, torch
+from unienv_interface.backends.pytorch import PyTorchComputeBackend as TB
+from unienv_interface.space import BoxSpace
+from unienv_data import ReplayBuffer
+from unienv_data.samplers import MultiprocessingSampler, StepSampler
+from unienv_data.storages.pytorch import PytorchTensorStorage
+
+rb = ReplayBuffer.create(PytorchTensorStorage, BoxSpace(TB, 0, 200_000, torch.int64, shape=(), device="cpu"),
+                         capacity=200_000, is_memmap=False)
+rb.extend(torch.arange(200_000))
+# 8 queued requests of 16384 indices each: far more than a pipe buffer holds
+sampler = MultiprocessingSampler(StepSampler(rb, batch_size=16384, seed=0), n_workers=1, n_buffers=8,
+                                 ctx=mp.get_context("fork"), daemon=True)
+it = sampler.epoch_iter()
+assert next(it).shape == (16384,)
+it.close()
+sampler.close()
+print("ok", flush=True)
+"""
+
+
+def test_interpreter_exits_after_an_epoch_is_stopped_early():
+    # Regression: closing a manager left the requests no worker took in the work queue,
+    # whose feeder thread then blocked interpreter exit waiting to flush them.
+    _run_script_must_exit(_EXIT_AFTER_EARLY_EPOCH_BREAK)
+
+
+def _failing_rb_sampler(mode, **kwargs):
+    import os
+    from unienv_data.base import BatchBase
+
+    class Failing(BatchBase):
+        def __init__(self):
+            super().__init__(BoxSpace(TB, 0, N, torch.int64, shape=(), device="cpu"))
+
+        def __len__(self):
+            return N
+
+        def get_at(self, idx):
+            if mode == "raise":
+                raise RuntimeError("storage read failed")
+            os._exit(3)  # a worker crash
+
+    return MultiprocessingSampler(StepSampler(Failing(), batch_size=BATCH, seed=0),
+                                  n_workers=2, n_buffers=2, ctx=mp.get_context("fork"), **kwargs)
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize("shared_memory", [False, True], ids=["queue", "shared-memory"])
+def test_worker_exception_is_raised_in_the_parent(shared_memory):
+    # Regression: an exception in a worker killed it without sending a result, and
+    # sample() waited for that result forever.
+    from unienv_data.samplers.multiprocessing_sampler import SamplerWorkerError
+    sampler = _failing_rb_sampler("raise", shared_memory=shared_memory)
+    try:
+        for _ in range(3):  # the workers survive and keep reporting
+            with pytest.raises(SamplerWorkerError, match="storage read failed") as info:
+                sampler.sample()
+            assert isinstance(info.value.__cause__, RuntimeError)
+        if shared_memory:
+            # n_buffers requests stay in flight: a failed request hands its slot back
+            assert len(sampler.sample.free_slots) == 1
+    finally:
+        sampler.close()
+
+
+@pytest.mark.timeout(60)
+def test_dead_workers_raise_instead_of_blocking():
+    from unienv_data.samplers.multiprocessing_sampler import SamplerWorkerError
+    sampler = _failing_rb_sampler("crash")
+    try:
+        with pytest.raises(SamplerWorkerError, match="exited unexpectedly"):
+            sampler.sample()
+        assert sampler.sample.sample_manager is None  # restarted on the next call
+    finally:
+        sampler.close()
+
+
+@pytest.mark.timeout(60)
+def test_manual_seed_reseeds_running_workers():
+    # Regression: manual_seed() only reseeded the parent's sampler; running workers kept
+    # their RNGs (and their queued batches), so reseeding did not reproduce batches.
+    sampler = _sampler(n_workers=1)
+    try:
+        sampler.sample()
+        sampler.manual_seed(5)
+        first = [sampler.sample().tolist() for _ in range(3)]
+        sampler.manual_seed(5)
+        second = [sampler.sample().tolist() for _ in range(3)]
+    finally:
+        sampler.close()
+    assert first == second

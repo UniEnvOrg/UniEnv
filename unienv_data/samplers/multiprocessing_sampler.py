@@ -5,12 +5,56 @@ from unienv_interface.space import Space
 from unienv_interface.space.space_utils import batch_utils as sbu, flatten_utils as sfu
 from unienv_interface.utils.seed_util import next_seed_rng
 import multiprocessing as mp
+# Imported before the `atexit` hook below is registered: `atexit` runs hooks last-in first-out, so
+# ours (closing the samplers' workers) runs before multiprocessing's own one, which joins every
+# non-daemonic child process and would otherwise wait forever for workers nobody stopped.
+import multiprocessing.util
 from multiprocessing.context import BaseContext as MPContext
 from multiprocessing.synchronize import Event as MPEvent
+import atexit
 import copy
+import pickle
 import queue
 import sys
 import time
+import traceback
+import weakref
+
+class SamplerWorkerError(RuntimeError):
+    """Raised in the main process when a sampler worker failed to produce a result.
+
+    ``work_info`` is the request the worker was serving; the worker's own exception is
+    chained as ``__cause__`` when it could be sent back.
+    """
+    def __init__(self, message : str, work_info : Any = None):
+        super().__init__(message)
+        self.work_info = work_info
+
+class _WorkerFailure:
+    """Sent through the result queue instead of a result when ``fetch_fn`` raised."""
+    def __init__(self, work_info : Any, exc : BaseException):
+        self.work_info = work_info
+        self.traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        try:
+            pickle.dumps(exc)
+            self.exception : Optional[BaseException] = exc
+        except Exception:
+            self.exception = None
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if state["exception"] is not None:
+            state["exception"] = copy.copy(state["exception"])
+            state["exception"].__traceback__ = None
+        return state
+
+    def to_error(self) -> SamplerWorkerError:
+        error = SamplerWorkerError(
+            f"A sampler worker raised while serving {self.work_info!r}:\n{self.traceback}",
+            self.work_info,
+        )
+        error.__cause__ = self.exception
+        return error
 
 def _limit_worker_intraop_threads() -> None:
     """
@@ -54,7 +98,11 @@ def worker_loop(
             except ValueError:
                 break
             
-            result = fetch_fn(work_info)
+            try:
+                result = fetch_fn(work_info)
+            except Exception as exc:
+                # Report the failure instead of dying silently: the main process waits for this result
+                result = _WorkerFailure(work_info, exc)
             result_queue.put(result)
             del result
     except KeyboardInterrupt:
@@ -211,7 +259,22 @@ def _draw_worker_seeds(
 
 TaskInfoT = TypeVar('TaskInfoT')
 ResultT = TypeVar('ResultT')
+#: Managers whose workers are running; closed at interpreter exit (see the `multiprocessing.util` import)
+_LIVE_MANAGERS : "weakref.WeakSet[MultiProcessingSampleManager]" = weakref.WeakSet()
+
+def _close_live_managers() -> None:
+    for manager in list(_LIVE_MANAGERS):
+        try:
+            manager.close()
+        except Exception:
+            pass
+
+atexit.register(_close_live_managers)
+
 class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
+    #: Seconds between checks that the workers are still alive while waiting for a result
+    _LIVENESS_POLL = 0.1
+
     def __init__(
         self,
         target_fn : Callable[[TaskInfoT], ResultT],
@@ -255,6 +318,7 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
             self.workers.append(worker)
         
         self.closed = False
+        _LIVE_MANAGERS.add(self)
         try:
             for worker in self.workers:
                 worker.start()
@@ -271,8 +335,13 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
             return
         
         self.done_event.set()
+        _LIVE_MANAGERS.discard(self)
         self.sampler_result_queue.cancel_join_thread()
         self.sampler_result_queue.close()
+        # Requests no worker will take any more: without this, the queue's feeder thread blocks
+        # interpreter exit while it waits to flush them into a pipe nobody reads.
+        self.sampler_work_queue.cancel_join_thread()
+        self.sampler_work_queue.close()
         started = [worker for worker in self.workers if worker.pid is not None]
         for worker in started:
             worker.join(timeout=2)
@@ -285,11 +354,32 @@ class MultiProcessingSampleManager(Generic[TaskInfoT, ResultT]):
     def fetch(self, block : bool = True, timeout : Optional[float] = None) -> Optional[ResultT]:
         assert not self.closed, "Cannot fetch from a closed MultiProcessingSampleManager."
         assert self.remaining_work >= 1, "No work to fetch."
-        try:
-            ret = self.sampler_result_queue.get(block=block, timeout=timeout)
-            self.remaining_work -= 1
-        except queue.Empty:
-            return None
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            # Wait in short slices so that a worker that died (and whose result will never
+            # come) raises instead of blocking forever.
+            if not block:
+                wait = None
+            elif deadline is None:
+                wait = self._LIVENESS_POLL
+            else:
+                wait = max(0.0, min(self._LIVENESS_POLL, deadline - time.monotonic()))
+            try:
+                ret = self.sampler_result_queue.get(block=block, timeout=wait)
+                break
+            except queue.Empty:
+                pass
+            dead = [worker for worker in self.workers if worker.exitcode is not None]
+            if dead:
+                raise SamplerWorkerError(
+                    f"{len(dead)} sampler worker(s) exited unexpectedly "
+                    f"(exit codes {[worker.exitcode for worker in dead]})"
+                )
+            if not block or (deadline is not None and time.monotonic() >= deadline):
+                return None
+        self.remaining_work -= 1
+        if isinstance(ret, _WorkerFailure):
+            raise ret.to_error()
         return ret
 
     def add_work(self, work_info : TaskInfoT):
@@ -354,11 +444,20 @@ def wrap_sample_function(
             target_fn.sample_manager = sample_manager
         
         slots = target_fn.slots
-        if slots is None:
-            sample_manager.add_work(1)
-            return sample_manager.fetch()
-        sample_manager.add_work(target_fn.free_slots.pop())
-        slot_id, packed, skeleton = sample_manager.fetch()
+        try:
+            if slots is None:
+                sample_manager.add_work(1)
+                return sample_manager.fetch()
+            sample_manager.add_work(target_fn.free_slots.pop())
+            slot_id, packed, skeleton = sample_manager.fetch()
+        except SamplerWorkerError as error:
+            if error.work_info is None:
+                # A worker died: its request is lost, start over with fresh workers next time
+                sample_manager.close()
+                target_fn.sample_manager = None
+            elif slots is not None:
+                target_fn.free_slots.append(error.work_info)  # the failed request's slot is free again
+            raise
         # Copy the result out so that the slot can be handed to the next request.
         result = _SharedSlotTask.unpack(packed, skeleton, slots[slot_id])
         target_fn.free_slots.append(slot_id)
@@ -489,6 +588,8 @@ class MultiprocessingSampler(
 
         # Iterate through the wrapper sampler's methods and wrap them with the multiprocessing methods
         self.functions_to_close = []
+        # The `sample*` functions, whose workers draw from RNGs seeded when they start
+        self._sample_functions = []
         for name in dir(sampler):
             attr = getattr(sampler, name)
             if callable(attr) and name.startswith("sample"):
@@ -507,6 +608,7 @@ class MultiprocessingSampler(
                 )
                 setattr(self, name, wrapped_fn)
                 self.functions_to_close.append(wrapped_fn)
+                self._sample_functions.append(wrapped_fn)
             elif callable(attr) and name.startswith("get_at"):
                 new_name = "epoch_iter" + name[len("get_at"):]
                 wrapped_fn = wrap_epoch_iter_function(
@@ -526,7 +628,13 @@ class MultiprocessingSampler(
         assert hasattr(self.sample, "close")
 
     def manual_seed(self, seed):
+        """Reseed the sampler. Running ``sample*`` workers (and the batches they already queued)
+        are stopped: they restart on the next call with seeds drawn from the reseeded sampler,
+        so that the batches that follow depend only on ``seed``. Epoch iterations in progress
+        keep their permutation."""
         self.sampler.manual_seed(seed)
+        for fn in self._sample_functions:
+            fn.close()
 
     @property
     def sampled_space(self):
