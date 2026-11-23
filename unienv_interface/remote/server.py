@@ -220,9 +220,13 @@ class _Connection:
             self._events.clear()
             self._condition.notify_all()
         self.transport.close()
-        for name in list(self.subscriptions):
+        # ``subscribe`` and ``_open`` check ``closed`` and register this connection under the
+        # server lock, so this snapshot cannot miss one that saw the connection still open.
+        with self.server._lock:
+            names, factories = list(self.subscriptions), list(self.factories)
+        for name in names:
             self.unsubscribe(name)
-        for factory in list(self.factories):
+        for factory in factories:
             self.server._release_use(self, factory)
 
 
@@ -634,10 +638,13 @@ class RemoteServer:
                 raise _not_open(name)
             if resource is None or resource.kind != "env":
                 raise KeyError(f"No environment named {name!r}")
-            if method == "subscribe" and name not in connection.subscriptions:
-                connection.subscriptions[name] = resource
-                with self._lock:
-                    resource.subscribers += (connection,)
+            if method == "subscribe":
+                with self._lock:  # see _Connection.close
+                    if connection.closed:
+                        raise ConnectionError("Connection closed")
+                    if name not in connection.subscriptions:
+                        connection.subscriptions[name] = resource
+                        resource.subscribers += (connection,)
             elif method == "unsubscribe":
                 connection.unsubscribe(name)
             return None

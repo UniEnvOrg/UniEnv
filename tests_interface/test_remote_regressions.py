@@ -156,3 +156,52 @@ def test_unsubscribe_after_release_is_accepted_by_the_server():
             client._request("", "release", ["sim"], {})
             assert client._request("", "unsubscribe", ["sim"], {}) is None
             assert all(not c.subscriptions for c in server._connections)
+
+
+# ---------------------------------------------------------------------------- 4 / 9: close() vs open / subscribe
+
+class _CloseWhileAdding(set):
+    """``record.users`` that closes the connection (on another thread) the moment ``_open`` adds it,
+    i.e. right after ``_open`` checked that the connection was still open."""
+
+    closer = None
+
+    def add(self, connection):
+        self.closer = threading.Thread(target=connection.close)
+        self.closer.start()
+        self.closer.join(0.3)  # without the fix close() completes here, before the connection is added
+        super().add(connection)
+
+
+def test_connection_closing_while_its_open_runs_releases_the_object():
+    built = []
+
+    def make():
+        built.append(ProbeEnv())
+        return built[-1]
+
+    with RemoteServer() as server:
+        server.register_factory("sim", make, release_after=0)
+        record = server._factories["sim"]
+        record.users = users = _CloseWhileAdding()
+        client_side, server_side = MemoryTransport.pair()
+        server._accept(server_side)
+        client_side.send(*wire.encode([1, "", "open", ["sim"], {}]))
+        wait_for(lambda: users.closer is not None)
+        users.closer.join(5)
+        wait_for(lambda: not record.users and built and built[0].closed_on is not None, timeout=2)
+        assert record.resource is None
+
+
+def test_subscribe_processed_after_the_connection_closed_is_ignored():
+    """The reader may still process a buffered 'subscribe' after another thread closed the connection."""
+    with RemoteServer() as server:
+        server.register("sim", ProbeEnv())
+        resource = server._resources["sim"]
+        client = server.connect()
+        served = server._connections[0]
+        served.close()  # e.g. the worker failed to send it a reply
+        with pytest.raises(ConnectionError):
+            server._protocol_call(served, "subscribe", ["sim"], {})
+        assert resource.subscribers == () and served.subscriptions == {}
+        client.close()
