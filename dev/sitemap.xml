@@ -305,6 +305,10 @@
          <lastmod>2026-11-23</lastmod>
     </url>
     <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_interface/space/space_utils/json_utils/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
          <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_interface/space/space_utils/metadata_utils/</loc>
          <lastmod>2026-11-23</lastmod>
     </url>
@@ -541,6 +545,30 @@
          <lastmod>2026-11-23</lastmod>
     </url>
     <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/bridge/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/content/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/hosting/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/images/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/api/unienv_mcp/server/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
          <loc>https://unienvorg.github.io/UniEnv/dev/concepts/</loc>
          <lastmod>2026-11-23</lastmod>
     </url>
@@ -570,6 +598,10 @@
     </url>
     <url>
          <loc>https://unienvorg.github.io/UniEnv/dev/guides/development/</loc>
+         <lastmod>2026-11-23</lastmod>
+    </url>
+    <url>
+         <loc>https://unienvorg.github.io/UniEnv/dev/guides/mcp/</loc>
          <lastmod>2026-11-23</lastmod>
     </url>
     <url>

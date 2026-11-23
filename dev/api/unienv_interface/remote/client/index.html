@@ -668,6 +668,8 @@
       
         
       
+        
+      
     
     
     
@@ -811,14 +813,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/development/" class="md-nav__link">
+      <a href="../../../../guides/remote-execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Development
+    Remote Execution
   
 
     
@@ -839,14 +841,42 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/remote-execution/" class="md-nav__link">
+      <a href="../../../../guides/mcp/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Remote Execution
+    Mcp
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../guides/development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
   
 
     
@@ -968,6 +998,8 @@
   
     
     
+      
+        
       
         
       
@@ -2585,6 +2617,8 @@
       
         
       
+        
+      
     
     
     
@@ -2736,6 +2770,34 @@
     
   
     gym_utils
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../space/space_utils/json_utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    json_utils
   
 
     
@@ -6225,6 +6287,228 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../unienv_mcp/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    unienv_mcp
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6_3" id="__nav_6_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    unienv_mcp
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../unienv_mcp/bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bridge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../unienv_mcp/content/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    content
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../unienv_mcp/hosting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    hosting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../unienv_mcp/images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    images
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../unienv_mcp/server/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -7232,6 +7516,8 @@ released by :meth:<code>release</code>, <code>close()</code> on their proxy, or 
     <div class="doc doc-contents ">
 
         <p>Descriptor of every hosted resource, by name (<code>kind</code> is <code>None</code> for a factory not opened yet).</p>
+<p>A resource whose spaces this client's backend cannot represent has an <code>unavailable</code>
+entry (the reason); getting its proxy raises <code>TypeError</code>.</p>
 
     </div>
 
@@ -7320,8 +7606,9 @@ released by :meth:<code>release</code>, <code>close()</code> on their proxy, or 
     <div class="doc doc-contents ">
 
         <p>Stop using factory-hosted <code>name</code>: the server closes it once no client uses it.</p>
-<p>Its proxy stops working; getting the proxy again opens it again (possibly a newly
-built object). A no-op for resources registered with <code>register</code>.</p>
+<p>Its proxy stops working and its subscriptions end (<code>next</code> raises <code>StopIteration</code>);
+getting the proxy again opens it again (possibly a newly built object). A no-op for
+resources registered with <code>register</code>.</p>
 
 
     </div>
