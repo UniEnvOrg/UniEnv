@@ -8,7 +8,7 @@ from unienv_interface.backends import ComputeBackend
 from unienv_interface.space import Space, BoxSpace, BinarySpace, DictSpace, TupleSpace
 from unienv_interface.space.space_utils import batch_utils as sbu
 
-__all__ = ["mask_to_numpy", "masked_space", "set_attr_on_first_layer"]
+__all__ = ["mask_to_numpy", "masked_space", "settable_here", "set_attr_on_first_layer"]
 
 
 def mask_to_numpy(backend : Optional[ComputeBackend], mask : Any) -> np.ndarray:
@@ -101,7 +101,7 @@ def masked_space(space : Optional[Space], mask : Any) -> Optional[Space]:
         return space
 
 
-def _settable_here(obj : Any, name : str) -> bool:
+def settable_here(obj : Any, name : str) -> bool:
     """Whether ``setattr(obj, name, ...)`` sets an existing attribute of ``obj`` itself
     (a read-only property, such as a wrapper forwarding ``batch_size``, does not count)."""
     if not hasattr(obj, name):
@@ -117,7 +117,7 @@ def set_attr_on_first_layer(layer : Any, name : str, value : Any, owner_name : s
     can set it; layers that only expose it through a read-only property are skipped."""
     found = False
     while layer is not None:
-        if _settable_here(layer, name):
+        if settable_here(layer, name):
             setattr(layer, name, value)
             return
         found = found or hasattr(layer, name)

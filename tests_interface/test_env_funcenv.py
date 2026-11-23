@@ -82,3 +82,27 @@ def test_async_vec_env_of_func_frame_stack_envs():
         assert obs["position"].shape == (2, 3, 2)
     finally:
         env.close()
+
+
+# ---------------------------------------------------------------------------
+# Regression: wrapper attributes below a FuncEnvWrapper stack
+# ---------------------------------------------------------------------------
+
+def test_wrapper_attrs_reach_through_func_env_wrappers():
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    inner = StubFuncEnv()
+    stack = FuncFrameStackWrapper(inner, obs_stack_size=1)
+    env = FuncEnvBasedEnv(stack)
+    assert env.has_wrapper_attr("terminate_above")
+    assert env.get_wrapper_attr("terminate_above") == 3.0
+    env.set_wrapper_attr("terminate_above", 0.1)
+    assert inner.terminate_above == 0.1
+    assert "terminate_above" not in vars(stack)
+    assert not env.has_wrapper_attr("no_such_attribute")
+    with pytest.raises(AttributeError):
+        env.get_wrapper_attr("no_such_attribute")
+    with pytest.raises(AttributeError):
+        env.set_wrapper_attr("no_such_attribute", 1)
+    # attributes of the adapter itself are still found / set there
+    env.set_wrapper_attr("metadata", {"render_modes": []})
+    assert env.metadata == {"render_modes": []} and inner.metadata != env.metadata
