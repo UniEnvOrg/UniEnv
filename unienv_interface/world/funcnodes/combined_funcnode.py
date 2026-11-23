@@ -439,6 +439,34 @@ class CombinedFuncWorldNode(FuncWorldNode[
 		node_states[self._CACHED_ACTIONS] = {}
 		return world_state, node_states
 
+	def merge_partial_states(
+		self,
+		accumulated: CombinedNodeStateT,
+		partial: CombinedNodeStateT,
+	) -> CombinedNodeStateT:
+		"""Merge the node state returned by ``initial`` / ``reload`` at one priority
+		into the state accumulated over the previous priorities.
+
+		Each priority only returns the states of the nodes that participate in it,
+		so the states are merged key by key. Nested combined nodes are merged
+		recursively; their per-priority states are partial as well, and replacing
+		them wholesale would drop the children initialized at other priorities.
+		Returns a new dictionary; the inputs are not modified.
+		"""
+		merged = dict(accumulated)
+		nodes_by_key = {self._node_key(node): node for node in self._all_nodes}
+		for key, value in partial.items():
+			node = nodes_by_key.get(key)
+			if (
+				isinstance(node, CombinedFuncWorldNode)
+				and isinstance(merged.get(key), dict)
+				and isinstance(value, dict)
+			):
+				merged[key] = node.merge_partial_states(merged[key], value)
+			else:
+				merged[key] = value
+		return merged
+
 	def reload(
 		self,
 		world_state: WorldStateT,

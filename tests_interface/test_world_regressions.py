@@ -137,3 +137,36 @@ def test_combined_funcnode_forwards_dt_to_untimed_children():
     env.step(state, {"a": [0.1], "b": [0.1]})
     assert [dt for m, dt in untimed.log if m == "post_step"] == [0.02]
     assert [dt for m, dt in timed.log if m == "post_step"] == [0.02]
+
+
+# ---------------------------------------------------------------------------
+# Nested combined func nodes across initial / reload priorities
+# ---------------------------------------------------------------------------
+
+def _nested_func_env():
+    world = SimFuncWorld(0.01)
+    a = CounterFuncNode(world, "a")
+    a.initial_priorities = {1}
+    a.reload_priorities = {1}
+    b = CounterFuncNode(world, "b")
+    inner = CombinedFuncWorldNode("inner", [a, b])
+    outer = CombinedFuncWorldNode("outer", [inner, CounterFuncNode(world, "c")])
+    return FuncWorldEnv(world, outer)
+
+
+def test_nested_combined_funcnode_keeps_state_of_all_initial_priorities():
+    env = _nested_func_env()
+    state, _, obs, _ = env.initial()
+    assert {"a", "b"} <= set(state.node_state["inner"])
+    assert set(obs) == {"inner", "c"} and set(obs["inner"]) == {"a", "b"}
+    state, obs, *_ = env.step(state, {"inner": {"a": [1.0], "b": [0.5]}, "c": [0.25]})
+    np.testing.assert_allclose(obs["inner"]["a"], [1.0])
+    np.testing.assert_allclose(obs["inner"]["b"], [0.5])
+
+
+def test_nested_combined_funcnode_keeps_state_of_all_reload_priorities():
+    env = _nested_func_env()
+    state, *_ = env.initial()
+    state, _, obs, _ = env.reset(state, reload=True)
+    assert {"a", "b"} <= set(state.node_state["inner"])
+    assert set(obs["inner"]) == {"a", "b"}

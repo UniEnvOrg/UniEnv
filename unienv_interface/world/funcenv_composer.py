@@ -149,6 +149,16 @@ class FuncWorldEnv(FuncEnv[
 
 	# ========== FuncEnv interface ==========
 
+	def _merge_priority_states(self, node_state: Any, ns_p: Any) -> Any:
+		"""Merge the node state produced at one ``initial`` / ``reload`` priority into
+		the state accumulated over the previous priorities."""
+		if isinstance(ns_p, dict) and isinstance(node_state, dict):
+			if isinstance(self.node, CombinedFuncWorldNode):
+				# Recursive merge: nested combined nodes return partial states too.
+				return self.node.merge_partial_states(node_state, ns_p)
+			return {**node_state, **ns_p}
+		return ns_p
+
 	def reload(
 		self,
 		state: WorldFuncEnvState,
@@ -167,10 +177,7 @@ class FuncWorldEnv(FuncEnv[
 		node_state = None
 		for p in sorted(self.node.reload_priorities, reverse=True):
 			world_state, ns_p = self.node.reload(world_state, priority=p, seed=seed, **kwargs)
-			if isinstance(ns_p, dict) and isinstance(node_state, dict):
-				node_state.update(ns_p)
-			else:
-				node_state = ns_p
+			node_state = self._merge_priority_states(node_state, ns_p)
 
 		# 3. World compiles scene with all entities
 		world_state = self.world.after_reload(
@@ -202,10 +209,7 @@ class FuncWorldEnv(FuncEnv[
 		node_state = None
 		for p in sorted(self.node.initial_priorities, reverse=True):
 			world_state, ns_p = self.node.initial(world_state, priority=p, seed=seed, **kwargs)
-			if isinstance(ns_p, dict) and isinstance(node_state, dict):
-				node_state.update(ns_p)
-			else:
-				node_state = ns_p
+			node_state = self._merge_priority_states(node_state, ns_p)
 
 		# after_reset — call at each priority for side effects
 		for p in sorted(self.node.after_reset_priorities, reverse=True):
