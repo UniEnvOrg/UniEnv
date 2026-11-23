@@ -175,6 +175,13 @@ class FlattenedStorage(SpaceStorage[
     def mark_segment_end(self) -> None:
         self.inner_storage.mark_segment_end()
 
+    @property
+    def _append_rewindable(self) -> bool:
+        return self.inner_storage._append_rewindable
+
+    def _rewind_append(self) -> bool:
+        return self.inner_storage._rewind_append()
+
     def abort_segment(self) -> None:
         self.inner_storage.abort_segment()
 

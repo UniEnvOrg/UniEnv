@@ -64,10 +64,11 @@ def fancy_indexing_to_supported_set_indexing(
     Returns:
         np.ndarray: Limited fancy indexing array of shape (M,)
         np.ndarray: Indices to read data required to construct the limited set data, shape (M,)
+            (the last occurrence of every duplicated index)
     """
-    unique_indices, unique_idx = np.unique(index, return_index=True)
-    unique_indices_sorted_ids = np.argsort(unique_indices)
-    return unique_indices[unique_indices_sorted_ids], unique_idx[unique_indices_sorted_ids]
+    # For a duplicated index the last value wins, as with numpy assignment (or a serial loop of writes)
+    unique_indices, last_from_end = np.unique(index[::-1], return_index=True)
+    return unique_indices, index.shape[0] - 1 - last_from_end
 
 def io_reduced_indexing(
     original_index : np.ndarray,
@@ -217,6 +218,16 @@ def write_sorted_unique_rows(dataset : h5py.Dataset, index : np.ndarray, value :
         if not write_rows(dataset, first, value[start:end], end - start):
             dataset[first:first + (end - start)] = value[start:end]
 
+def _decode_utf8(raw : bytes) -> str:
+    """
+    Decode a stored text field. Files written before text fields were sized for UTF-8 may hold a string cut
+    inside a multi-byte character; drop that incomplete tail instead of failing the whole read.
+    """
+    try:
+        return raw.decode('utf-8')
+    except UnicodeDecodeError:
+        return raw.decode('utf-8', errors='ignore')
+
 HDF5BatchType = Union[Dict[str, Any], NumpyArrayType, str]
 HDF5SpaceType = Union[DictSpace, BoxSpace, TextSpace]
 class HDF5Storage(SpaceStorage[
@@ -248,6 +259,8 @@ class HDF5Storage(SpaceStorage[
     # ========== Class Attributes ==========
     single_file_ext : Optional[str] = ".hdf5"
     DEFAULT_KEY : str = "data"
+    #: Bytes reserved per character of a `TextSpace` (the longest UTF-8 encoding of a character).
+    TEXT_BYTES_PER_CHAR : int = 4
 
     @staticmethod
     def build_space_from_hdf5_file(
@@ -442,7 +455,9 @@ class HDF5Storage(SpaceStorage[
                 elif isinstance(space, TextSpace):
                     shape = (initial_capacity,)
                     maxshape = (capacity,) if capacity is not None else (None,)
-                    dtype = h5py.string_dtype(encoding='utf-8', length=space.max_length)
+                    # `max_length` counts characters, the fixed-length dataset bytes: UTF-8 takes up to 4 bytes
+                    # per character, so a `max_length`-byte field cut valid multi-byte strings short
+                    dtype = h5py.string_dtype(encoding='utf-8', length=__class__.TEXT_BYTES_PER_CHAR * space.max_length)
                 else:
                     raise ValueError(f"Unsupported space type: {type(space)}")
 
@@ -452,7 +467,12 @@ class HDF5Storage(SpaceStorage[
                     for i, c_size in enumerate(current_chunks):
                         next_chunks[i] = c_size
                     current_chunks = tuple(next_chunks)
-                current_compression = compression if not isinstance(compression, Mapping) else compression.get(key, None)
+                current_compression = compression if not isinstance(compression, Mapping) else compression.get(key, compression.get("*", None))
+                current_compression_level = compression_level if not isinstance(compression_level, Mapping) \
+                    else compression_level.get(key, compression_level.get("*", None))
+                if current_compression is None and isinstance(compression_level, Mapping):
+                    # A level only applies to a compressed key (h5py rejects options without a filter)
+                    current_compression_level = None
                 if current_chunks is None and capacity is not None and initial_capacity == capacity \
                         and current_compression is None:
                     # Fixed capacity, no filters: a contiguous dataset (no `maxshape`, which would make h5py
@@ -469,9 +489,7 @@ class HDF5Storage(SpaceStorage[
                     maxshape=maxshape,
                     dtype=dtype,
                     compression=current_compression,
-                    compression_opts=compression_level if not isinstance(compression_level, Mapping) else compression_level.get(
-                        key, None
-                    ),
+                    compression_opts=current_compression_level,
                     chunks=current_chunks,
                 )
             else:
@@ -482,10 +500,10 @@ class HDF5Storage(SpaceStorage[
                     capacity=capacity,
                     initial_capacity=initial_capacity,
                     compression=compression if not isinstance(compression, Mapping) else compression.get(
-                        key, None
+                        key, compression.get("*", None)
                     ),
                     compression_level=compression_level if not isinstance(compression_level, Mapping) else compression_level.get(
-                        key, None
+                        key, compression_level.get("*", None)
                     ),
                     chunks=chunks if not isinstance(chunks, Mapping) else chunks.get(key, chunks.get("*", None)),
                 )
@@ -585,9 +603,9 @@ class HDF5Storage(SpaceStorage[
             result = np.array(result)
         if isinstance(space, TextSpace):
             if isinstance(result, bytes):
-                result = result.decode('utf-8')
+                result = _decode_utf8(result)
             elif isinstance(result, np.ndarray):
-                result = np.array([r.decode('utf-8') if isinstance(r, bytes) else r for r in result], dtype=object)
+                result = np.array([_decode_utf8(r) if isinstance(r, bytes) else r for r in result], dtype=object)
         return result
 
     @staticmethod
@@ -715,6 +733,7 @@ class HDF5Storage(SpaceStorage[
         h5py_kwargs : Optional[Dict[str, Any]] = None,
         length : Optional[int] = None,
         owns_root : bool = True,
+        length_source : Optional["HDF5Storage"] = None,
     ):
         assert root is not None or filename is not None, \
             "Either root or filename must be provided"
@@ -738,6 +757,8 @@ class HDF5Storage(SpaceStorage[
         # Column views share their parent's open file and must not close it;
         # a handle this instance opens itself (see `_ensure_root`) is always owned.
         self._owns_root = owns_root
+        # A column view (`get_column`) reads its length from the storage it views, which may grow / shrink later
+        self._length_source = length_source
         self.capacity = capacity
         self._multiprocessing = multiprocessing
         self._h5py_kwargs = dict(h5py_kwargs or {})
@@ -763,6 +784,15 @@ class HDF5Storage(SpaceStorage[
         if self._multiprocessing and self.root is not None:
             self.close()
     
+    @property
+    def _len(self) -> int:
+        source = self.__dict__.get("_length_source")
+        return source._len if source is not None else self._own_len
+
+    @_len.setter
+    def _len(self, value : int) -> None:
+        self._own_len = value
+
     @property
     def is_mutable(self) -> bool:
         return self._is_mutable
@@ -958,6 +988,7 @@ class HDF5Storage(SpaceStorage[
             h5py_kwargs=self._h5py_kwargs,
             length=self._len,
             owns_root=sub_root is None,
+            length_source=self,
         )
 
     def dumps(self, path):

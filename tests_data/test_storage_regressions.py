@@ -1,0 +1,232 @@
+"""Regression tests for storage bugs found before 1.0 (one test or group per bug)."""
+
+import os
+
+import h5py
+import numpy as np
+import pytest
+
+from unienv_interface.backends.numpy import NumpyComputeBackend as NB
+from unienv_interface.space import BoxSpace, DictSpace, TextSpace
+
+from unienv_data.replay_buffer import ReplayBuffer
+from unienv_data.storages import DictStorage
+from unienv_data.storages.hdf5 import HDF5Storage
+from unienv_data.storages.image_storage import ImageStorage
+from unienv_data.storages.npz_storage import NPZStorage
+from unienv_data.storages.parquet import ParquetStorage
+
+from tests_common.storage_video import LOSSLESS_RGB_KWARGS, clean_video_codec_cache  # noqa: F401  (fixture)
+
+
+def _box(shape=(2,), dtype=np.float32):
+    return BoxSpace(NB, -1e3, 1e3, dtype, shape=shape)
+
+
+def _img_space():
+    return BoxSpace(NB, 0, 255, np.uint8, shape=(8, 8, 3))
+
+
+def _frame(value):
+    return np.full((8, 8, 3), value, np.uint8)
+
+
+# ---------------------------------------------------------------------------
+# Unbounded List storages are not multiprocessing-safe (their length is per process)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("storage_cls,kwargs,space", [
+    (NPZStorage, {}, _box((2,))),
+    (ImageStorage, {"format": "PNG"}, _img_space()),
+])
+def test_unbounded_list_storage_is_not_multiprocessing_safe(tmp_path, storage_cls, kwargs, space):
+    unbounded = storage_cls.create(space, capacity=None, cache_path=str(tmp_path / "u"), **kwargs)
+    assert not unbounded.is_multiprocessing_safe
+    with pytest.raises(AssertionError, match="not multiprocessing safe"):
+        ReplayBuffer.create(storage_cls, space, cache_path=str(tmp_path / "rb"), capacity=None,
+                            multiprocessing=True, **kwargs)
+    # Fixed-capacity (every process agrees on the length) and read-only storages still are
+    bounded = storage_cls.create(space, capacity=3, cache_path=str(tmp_path / "b"), **kwargs)
+    assert bounded.is_multiprocessing_safe
+    unbounded.dumps(str(tmp_path / "u"))
+    assert storage_cls.load_from(str(tmp_path / "u"), space, read_only=True).is_multiprocessing_safe
+
+
+def test_list_storage_set_past_length_raises_instead_of_dropping(tmp_path):
+    storage = NPZStorage.create(_box((2,)), capacity=None, cache_path=str(tmp_path / "s"))
+    storage.extend_length(2)
+    with pytest.raises(ValueError):
+        storage.set(slice(1, 3), np.ones((2, 2), np.float32))
+    assert sorted(os.listdir(tmp_path / "s")) == []
+
+
+# ---------------------------------------------------------------------------
+# One invalid video frame must not drop the open segment
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+def test_invalid_video_frame_keeps_open_segment(tmp_path):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    rb = ReplayBuffer.create(VideoStorage, _img_space(), cache_path=str(tmp_path / "rb"), capacity=10,
+                             **LOSSLESS_RGB_KWARGS)
+    for i in range(3):
+        rb.append(_frame(10 * i))
+    with pytest.raises(ValueError):  # InvalidVideoFrameError
+        rb.append(np.zeros((8, 8, 3), np.float32))  # wrong dtype
+    assert rb.storage.has_open_segment
+    with pytest.raises(ValueError):
+        rb.append(np.zeros((4, 8, 3), np.uint8))  # wrong shape
+    assert rb.storage.has_open_segment
+    rb.append(_frame(30))
+    rb.mark_segment_end()
+    assert len(rb) == 4
+    np.testing.assert_array_equal(rb[np.arange(4)][:, 0, 0, 0], [0, 10, 20, 30])
+
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+@pytest.mark.parametrize("bad_key", ["img", "x"])
+def test_dict_storage_child_rejecting_a_sample_keeps_children_in_step(tmp_path, bad_key):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    space = DictSpace(NB, {"img": _img_space(), "x": _box((1,))})
+    rb = ReplayBuffer.create(
+        DictStorage, space, cache_path=str(tmp_path / "rb"), capacity=None,
+        storage_cls_map={"img": VideoStorage, "*": HDF5Storage}, key_kwargs={"img": LOSSLESS_RGB_KWARGS},
+    )
+    for i in range(3):
+        rb.append({"img": _frame(10 * i), "x": np.array([i], np.float32)})
+    bad = {"img": _frame(99), "x": np.array([99], np.float32)}
+    bad[bad_key] = np.zeros((8, 8, 3), np.float32) if bad_key == "img" else np.zeros((5, 5), np.float32)
+    with pytest.raises(Exception):
+        rb.append(bad)
+    assert {k: s.has_open_segment for k, s in rb.storage.storage_map.items()} == {"img": True, "*": True}
+    rb.append({"img": _frame(30), "x": np.array([3], np.float32)})
+    rb.mark_segment_end()
+    assert len(rb) == 4
+    data = rb[np.arange(4)]
+    np.testing.assert_array_equal(data["img"][:, 0, 0, 0], [0, 10, 20, 30])
+    np.testing.assert_array_equal(data["x"][:, 0], [0, 1, 2, 3])
+
+
+# ---------------------------------------------------------------------------
+# HDF5 text fields hold `max_length` characters of any UTF-8 text
+# ---------------------------------------------------------------------------
+
+def test_hdf5_text_multibyte_characters_round_trip(tmp_path):
+    space = DictSpace(NB, {"t": TextSpace(NB, max_length=4)})
+    path = str(tmp_path / "t.hdf5")
+    storage = HDF5Storage.create(space, capacity=3, cache_path=path)
+    texts = ["日ab", "日本語!", "éé"]
+    for text in texts:
+        assert space.spaces["t"].contains(text)
+    storage.set(slice(None), {"t": np.array(texts, dtype=object)})
+    assert list(storage.get(slice(None))["t"]) == texts
+    assert storage.get(1)["t"] == "日本語!"
+    storage.close()
+    loaded = HDF5Storage.load_from(path, space, capacity=3)
+    assert list(loaded.get(slice(None))["t"]) == texts
+    loaded.close()
+
+
+def test_hdf5_text_files_written_before_utf8_sizing_still_read(tmp_path):
+    # The old layout: a `max_length`-byte field, with multi-byte strings cut inside a character
+    path = str(tmp_path / "old.hdf5")
+    with h5py.File(path, "w") as f:
+        dataset = f.create_dataset("t", shape=(2,), dtype=h5py.string_dtype("utf-8", length=4))
+        dataset[0] = "abcd".encode()
+        dataset[1] = "日本".encode()[:4]
+    space = DictSpace(NB, {"t": TextSpace(NB, max_length=4)})
+    storage = HDF5Storage.load_from(path, space, capacity=2)
+    assert list(storage.get(slice(None))["t"]) == ["abcd", "日"]
+    assert storage.get(1)["t"] == "日"
+    storage.close()
+
+
+# ---------------------------------------------------------------------------
+# clear() on an empty unbounded storage
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("storage_cls,name", [(HDF5Storage, "s.hdf5"), (ParquetStorage, "s")])
+def test_clear_on_empty_unbounded_storage(tmp_path, storage_cls, name):
+    rb = ReplayBuffer.create(storage_cls, _box(), cache_path=str(tmp_path / "rb"), capacity=None)
+    rb.clear()  # never written
+    rb.extend(np.zeros((3, 2), np.float32))
+    rb.clear()
+    rb.clear()  # already empty
+    assert len(rb) == 0 and len(rb.storage) == 0
+    rb.extend(np.ones((2, 2), np.float32))
+    np.testing.assert_array_equal(rb[np.arange(2)], np.ones((2, 2), np.float32))
+
+
+# ---------------------------------------------------------------------------
+# Episode storages: negative ints and duplicated indices in set()
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+def test_episode_storage_set_rejects_negative_int_and_resolves_duplicates(tmp_path):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    path = str(tmp_path / "v")
+    storage = VideoStorage.create(_img_space(), capacity=5, cache_path=path, **LOSSLESS_RGB_KWARGS)
+    storage.set(slice(None), np.stack([_frame(10 + i) for i in range(5)]))
+    with pytest.raises(AssertionError):
+        storage.set(-1, _frame(99))
+    assert storage.get_segments() == [(0, 4)]
+    assert sorted(os.listdir(path)) == ["0_4.mkv"]
+
+    storage.set(np.array([3, 3, 4]), np.stack([_frame(50), _frame(51), _frame(60)]))
+    assert storage.get(3)[0, 0, 0] == 51  # the last value written to a row wins
+    np.testing.assert_array_equal(storage.get(slice(None))[:, 0, 0, 0], [10, 11, 12, 51, 60])
+    storage.close()
+
+
+# ---------------------------------------------------------------------------
+# HDF5: duplicated indices in set(), column views, "*" compression
+# ---------------------------------------------------------------------------
+
+def test_hdf5_set_with_duplicate_indices_last_value_wins(tmp_path):
+    storage = HDF5Storage.create(_box(), capacity=5, cache_path=str(tmp_path / "a.hdf5"))
+    storage.set(slice(None), np.zeros((5, 2), np.float32))
+    storage.set(np.array([3, 1, 3, 3]), np.array([[1, 1], [5, 5], [2, 2], [4, 4]], np.float32))
+    expected = np.zeros((5, 2), np.float32)
+    expected[np.array([3, 1, 3, 3])] = np.array([[1, 1], [5, 5], [2, 2], [4, 4]], np.float32)
+    np.testing.assert_array_equal(storage.get(slice(None)), expected)
+    storage.close()
+
+
+def test_hdf5_column_view_follows_parent_length(tmp_path):
+    space = DictSpace(NB, {"a": _box((1,)), "b": _box((1,))})
+    storage = HDF5Storage.create(space, capacity=None, cache_path=str(tmp_path / "c.hdf5"))
+    storage.extend_length(3)
+    storage.set(slice(None), {"a": np.arange(3, dtype=np.float32)[:, None], "b": np.zeros((3, 1), np.float32)})
+    column = storage.get_column(["a"])
+    storage.extend_length(2)
+    storage.set(slice(3, 5), {"a": np.array([[3], [4]], np.float32), "b": np.zeros((2, 1), np.float32)})
+    assert len(column) == 5
+    np.testing.assert_array_equal(column.get(np.array([-1, 0])).ravel(), [4, 0])
+    storage.shrink_length(1)
+    assert len(column) == 4
+    storage.close()
+
+
+def test_hdf5_compression_mapping_star_applies_to_remaining_keys(tmp_path):
+    space = DictSpace(NB, {"a": _box((64,)), "b": _box((64,)), "n": DictSpace(NB, {"c": _box((64,))})})
+    storage = HDF5Storage.create(
+        space, capacity=100, cache_path=str(tmp_path / "c.hdf5"), compression={"*": "gzip", "a": "lzf"},
+    )
+    root = storage.root
+    assert root["a"].compression == "lzf"
+    assert root["b"].compression == "gzip"
+    assert root["n"]["c"].compression == "gzip"
+    storage.close()
+
+    storage = HDF5Storage.create(
+        space, capacity=100, cache_path=str(tmp_path / "d.hdf5"),
+        compression={"*": "gzip", "b": None}, compression_level={"*": 7, "a": 2},
+    )
+    root = storage.root
+    assert (root["a"].compression, root["a"].compression_opts) == ("gzip", 2)
+    assert root["b"].compression is None  # a "*" level is not applied to an uncompressed key
+    assert (root["n"]["c"].compression, root["n"]["c"].compression_opts) == ("gzip", 7)
+    storage.close()

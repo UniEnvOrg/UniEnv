@@ -365,8 +365,8 @@ def test_fancy_reads_with_and_without_io_reduction(tmp_path, reduce_io):
     index = np.array([39, 0, 1, 2, 20, 22, 24, 0])
     assert_tree_equal(storage.get(index), _rows(_nested_batch(40), index))
     storage.set(np.array([5, 3, 5]), _nested_batch(3, start=100.0))
-    # duplicated targets: the first occurrence wins
-    assert storage.get(5)["reward"] == 1000.0
+    # duplicated targets: the last occurrence wins, as with numpy assignment (and the other storages)
+    assert storage.get(5)["reward"] == 1020.0
     assert storage.get(3)["reward"] == 1010.0
     storage.close()
 

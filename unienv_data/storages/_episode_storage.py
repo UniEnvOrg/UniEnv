@@ -9,6 +9,7 @@ from unienv_interface.utils.symbol_util import *
 from unienv_data.base import SpaceStorage, BatchT, IndexableType
 from ._io_pool import map_io
 
+import numpy as np
 import os
 import glob
 import json
@@ -575,6 +576,8 @@ class EpisodeStorageBase(SpaceStorage[
         assert self.is_mutable, "Storage is not mutable"
         # Make sure the index is continuous
         if isinstance(index, int):
+            # Like `get`, reject negative / out-of-range rows (a negative index would name a file "-1_-1")
+            assert 0 <= index < len(self), f"Index {index} out of bounds for storage of length {len(self)}"
             self.remove_index_range(index, index)
             filename = self._make_filename(index, index)
             self.set_to_file_safe(filename, sbu.concatenate(self._batched_single_space, [value]))
@@ -600,6 +603,16 @@ class EpisodeStorageBase(SpaceStorage[
         assert self.backend.is_backendarray(index) and self.backend.dtype_is_real_integer(index.dtype) and len(index.shape) == 1, "Index must be a 1D array of integers"
         if index.shape[0] == 0:
             return
+        index_np = np.asarray(self.backend.to_numpy(index))
+        unique_count = np.unique(index_np).shape[0]
+        if unique_count < index_np.shape[0]:
+            # Duplicated rows: the last value wins, as with array assignment (they would otherwise all be
+            # written into one file whose name only counts the distinct rows)
+            _, last_from_end = np.unique(index_np[::-1], return_index=True)
+            keep = np.sort(index_np.shape[0] - 1 - last_from_end)
+            keep_backend = self.backend.asarray(keep, dtype=self.backend.default_integer_dtype, device=self.device)
+            index = index[keep_backend]
+            value = sbu.get_at(self._batched_single_space, value, keep_backend)
         sorted_indexes_arg = self.backend.argsort(index)
         sorted_indexes = index[sorted_indexes_arg]
         diff_sorted = sorted_indexes[1:] - sorted_indexes[:-1]

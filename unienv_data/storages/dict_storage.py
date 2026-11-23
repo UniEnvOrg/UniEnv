@@ -335,14 +335,46 @@ class DictStorage(SpaceStorage[
         for storage in self.storage_map.values():
             storage.mark_segment_start(start_index)
 
+    @property
+    def _append_rewindable(self) -> bool:
+        return all(storage._append_rewindable for storage in self.storage_map.values())
+
+    def _rewind_append(self) -> bool:
+        return all([storage._rewind_append() for storage in self.storage_map.values()])
+
     def append(self, value) -> None:
+        jobs = []
         _, residual = map_transform(
             value,
             self.storage_map,
-            lambda key, data, storage: storage.append(data),
+            lambda key, data, storage: jobs.append((storage, data)),
             nested_separator=self.nested_separator,
         )
         assert len(residual) == 0, f"Some spaces do not have corresponding storage: {residual}"
+        # The children must stay in step: if one rejects the sample, the children that already took it are
+        # rewound. Children whose appends cannot be undone (e.g. video encoders) go last, so a sample they
+        # reject is taken back from every other child and the open segment survives.
+        jobs.sort(key=lambda job: not job[0]._append_rewindable)
+        appended = []
+        for storage, data in jobs:
+            try:
+                storage.append(data)
+            except Exception as e:
+                rewound = all([child._rewind_append() for child in reversed(appended)])
+                try:
+                    consistent = len({child.has_open_segment for child in self.storage_map.values()}) <= 1
+                except Exception:
+                    consistent = False
+                if rewound and consistent:
+                    raise
+                # Some child kept (or lost) part of the segment: drop it everywhere rather than leave the
+                # children out of step with each other
+                self.abort_segment()
+                raise RuntimeError(
+                    "DictStorage.append failed in one child after other children took the sample; "
+                    "the open segment was aborted in every child"
+                ) from e
+            appended.append(storage)
 
     def mark_segment_end(self) -> None:
         for storage in self.storage_map.values():
