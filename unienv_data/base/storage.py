@@ -234,6 +234,25 @@ class SpaceStorage(abc.ABC, Generic[BatchT, BArrayType, BDeviceType, BDtypeType,
         else:
             self._active_segment_index = (current_index + 1) % self.capacity
 
+    @property
+    def _append_rewindable(self) -> bool:
+        """Whether `_rewind_append()` can undo an `append()` (False for storages that stream appends into an encoder)."""
+        return True
+
+    def _rewind_append(self) -> bool:
+        """
+        Undo the last `append()` of the open segment, so the next one lands in the same row (used by composite
+        storages to keep their children in step when one child rejects a sample). Returns False if it cannot.
+        """
+        if not self.has_open_segment or self._active_segment_index is None \
+                or self._active_segment_index == self._active_segment_start_index:
+            return False
+        if self.capacity is None:
+            self._active_segment_index = self._active_segment_index - 1
+        else:
+            self._active_segment_index = (self._active_segment_index - 1) % self.capacity
+        return True
+
     def mark_segment_end(self) -> None:
         if not self.has_open_segment:
             return

@@ -36,6 +36,10 @@ except ImportError:
 
 LOGGER = logging.getLogger(__name__)
 
+class InvalidVideoFrameError(ValueError):
+    """A frame given to a `VideoStorage` cannot be encoded (e.g. wrong shape or dtype); nothing was written."""
+
+
 class PyAvVideoReader:
     HWAccel = PyAvHWAccel
 
@@ -661,13 +665,25 @@ class VideoStorage(EpisodeStorageBase[
 
         try:
             self._active_segment_writer.append(frame)
+        except InvalidVideoFrameError:
+            # Rejected before it reached the encoder: the frames appended so far are kept
+            raise
         except Exception:
+            # The encoder failed and its state is unknown: the segment cannot be finished
             self.abort_segment()
             raise
         if self.capacity is None:
             self._active_segment_index = self._active_segment_index + 1
         else:
             self._active_segment_index = (self._active_segment_index + 1) % self.capacity
+
+    @property
+    def _append_rewindable(self) -> bool:
+        # Appended frames are streamed into the encoder and cannot be taken back
+        return False
+
+    def _rewind_append(self) -> bool:
+        return False
 
     def mark_segment_end(self):
         if not self.has_open_segment:
@@ -953,8 +969,24 @@ class VideoStorage(EpisodeStorageBase[
             raise
         return container, output_stream
 
-    def _encode_frame(self, container, output_stream, frame_np : np.ndarray) -> None:
-        frame = av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format, channel_last=True)
+    def _make_frame(self, frame_np : np.ndarray) -> "av.VideoFrame":
+        """
+        The `av.VideoFrame` of one sample, without touching any encoder.
+        Raises `InvalidVideoFrameError` for a sample that cannot be encoded (wrong shape or dtype), so a caller
+        can reject it while an open segment stays intact.
+        """
+        expected_shape = tuple(int(s) for s in self.single_instance_space.shape)
+        if tuple(frame_np.shape) != expected_shape:
+            raise InvalidVideoFrameError(
+                f"Expected a video frame of shape {expected_shape}, got {tuple(frame_np.shape)}"
+            )
+        try:
+            return av.VideoFrame.from_ndarray(frame_np, format=self.buffer_pixel_format, channel_last=True)
+        except (ValueError, TypeError) as e:
+            raise InvalidVideoFrameError(str(e)) from e
+
+    def _encode_frame(self, container, output_stream, frame_np : Union[np.ndarray, "av.VideoFrame"]) -> None:
+        frame = frame_np if isinstance(frame_np, av.VideoFrame) else self._make_frame(frame_np)
         packets = output_stream.encode(frame)
         if packets:
             container.mux(packets)
@@ -1047,7 +1079,7 @@ class _VideoSegmentWriter(SegmentWriter):
         self.temp_filename = storage._get_active_segment_temp_filename()
         self._container = None
         self._stream = None
-        self._held_frames : List[np.ndarray] = []
+        self._held_frames : List["av.VideoFrame"] = []
         if storage._min_clip_length_for_default_options <= 1:
             # Nothing to hold back: open now, so a bad codec / format fails right away.
             try:
@@ -1059,11 +1091,14 @@ class _VideoSegmentWriter(SegmentWriter):
     def _append(self, frame) -> None:
         storage = self.storage
         frame_np = storage.backend.to_numpy(frame) if storage.backend.is_backendarray(frame) else np.asarray(frame)
+        # Validate (and convert) the frame before touching the encoder: an invalid frame raises
+        # `InvalidVideoFrameError` and leaves the writer as it was
+        video_frame = storage._make_frame(frame_np)
         try:
             if self._stream is not None:
-                storage._encode_frame(self._container, self._stream, frame_np)
+                storage._encode_frame(self._container, self._stream, video_frame)
                 return
-            self._held_frames.append(frame_np)
+            self._held_frames.append(video_frame)
             if len(self._held_frames) >= storage._min_clip_length_for_default_options:
                 self._open_encoder(None)
         except Exception:

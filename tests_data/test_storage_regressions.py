@@ -61,6 +61,55 @@ def test_list_storage_set_past_length_raises_instead_of_dropping(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# One invalid video frame must not drop the open segment
+# ---------------------------------------------------------------------------
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+def test_invalid_video_frame_keeps_open_segment(tmp_path):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    rb = ReplayBuffer.create(VideoStorage, _img_space(), cache_path=str(tmp_path / "rb"), capacity=10,
+                             **LOSSLESS_RGB_KWARGS)
+    for i in range(3):
+        rb.append(_frame(10 * i))
+    with pytest.raises(ValueError):  # InvalidVideoFrameError
+        rb.append(np.zeros((8, 8, 3), np.float32))  # wrong dtype
+    assert rb.storage.has_open_segment
+    with pytest.raises(ValueError):
+        rb.append(np.zeros((4, 8, 3), np.uint8))  # wrong shape
+    assert rb.storage.has_open_segment
+    rb.append(_frame(30))
+    rb.mark_segment_end()
+    assert len(rb) == 4
+    np.testing.assert_array_equal(rb[np.arange(4)][:, 0, 0, 0], [0, 10, 20, 30])
+
+
+@pytest.mark.usefixtures("clean_video_codec_cache")
+@pytest.mark.parametrize("bad_key", ["img", "x"])
+def test_dict_storage_child_rejecting_a_sample_keeps_children_in_step(tmp_path, bad_key):
+    from unienv_data.storages.video_storage import VideoStorage
+
+    space = DictSpace(NB, {"img": _img_space(), "x": _box((1,))})
+    rb = ReplayBuffer.create(
+        DictStorage, space, cache_path=str(tmp_path / "rb"), capacity=None,
+        storage_cls_map={"img": VideoStorage, "*": HDF5Storage}, key_kwargs={"img": LOSSLESS_RGB_KWARGS},
+    )
+    for i in range(3):
+        rb.append({"img": _frame(10 * i), "x": np.array([i], np.float32)})
+    bad = {"img": _frame(99), "x": np.array([99], np.float32)}
+    bad[bad_key] = np.zeros((8, 8, 3), np.float32) if bad_key == "img" else np.zeros((5, 5), np.float32)
+    with pytest.raises(Exception):
+        rb.append(bad)
+    assert {k: s.has_open_segment for k, s in rb.storage.storage_map.items()} == {"img": True, "*": True}
+    rb.append({"img": _frame(30), "x": np.array([3], np.float32)})
+    rb.mark_segment_end()
+    assert len(rb) == 4
+    data = rb[np.arange(4)]
+    np.testing.assert_array_equal(data["img"][:, 0, 0, 0], [0, 10, 20, 30])
+    np.testing.assert_array_equal(data["x"][:, 0], [0, 1, 2, 3])
+
+
+# ---------------------------------------------------------------------------
 # clear() on an empty unbounded storage
 # ---------------------------------------------------------------------------
 
