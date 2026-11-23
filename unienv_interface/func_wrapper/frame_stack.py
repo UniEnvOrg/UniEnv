@@ -161,9 +161,12 @@ class FuncFrameStackWrapper(
         self.func_env.close(None if state is None else state.env_state)
 
     def render_init(self, state, *, seed = None, render_mode = None, **kwargs):
+        # ``state`` is None when FuncEnvBasedEnv queries the renderer before its first reset
         env_state, render_state, render_info = self.func_env.render_init(
-            state.env_state, seed=seed, render_mode=render_mode, **kwargs
+            None if state is None else state.env_state, seed=seed, render_mode=render_mode, **kwargs
         )
+        if state is None:
+            return None, render_state, render_info
         return state.replace(env_state=env_state), render_state, render_info
 
     def render_image(self, state, render_state):

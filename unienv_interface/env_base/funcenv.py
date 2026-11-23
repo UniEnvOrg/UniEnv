@@ -253,6 +253,12 @@ class FuncEnvBasedEnv(Env[
         except NotImplementedError:
             # The functional env has no renderer; fall back to its declared fps.
             pass
+        except Exception:
+            if self._inited:
+                raise
+            # Before the first reset there is no state (``self.state is None``) and a renderer
+            # that needs one cannot start yet: report the declared fps, and initialise the
+            # renderer on the first ``render()`` / ``render_fps`` after ``reset()``.
         return self._render_fps
     
     @property

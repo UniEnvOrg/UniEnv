@@ -32,3 +32,53 @@ def test_render_fps_uses_render_info_when_renderer_exists():
 
     env = FuncEnvBasedEnv(_FpsFromRenderer())
     assert env.render_fps == 25
+
+
+# ---------------------------------------------------------------------------
+# Regression: render_fps before the first reset (no state yet)
+# ---------------------------------------------------------------------------
+
+class _StatefulRendererFuncEnv(StubFuncEnv):
+    """A renderer that needs the env state (like most real renderers)."""
+
+    def render_init(self, state, *, seed=None, render_mode=None, **kwargs):
+        self.calls.append(("render_init",))
+        _ = state["position"]  # raises TypeError for state=None
+        return state, {"frames": 0}, FuncEnvCommonRenderInfo(render_mode="rgb_array", render_fps=25)
+
+
+def test_render_fps_before_reset_with_stateful_renderer():
+    func_env = _StatefulRendererFuncEnv()
+    env = FuncEnvBasedEnv(func_env)
+    assert env.render_fps == 10  # declared fps; the renderer cannot start without a state
+    env.reset(seed=0)
+    assert env.render_fps == 25  # now from the renderer
+    assert env.render().shape == (4, 6, 3)
+    env.close()
+
+
+def _framestack_env():
+    from unienv_interface.func_wrapper.frame_stack import FuncFrameStackWrapper
+    return FuncEnvBasedEnv(FuncFrameStackWrapper(StubFuncEnv(), obs_stack_size=2))
+
+
+def test_render_fps_before_reset_through_func_frame_stack_and_control_frequency_wrapper():
+    from unienv_interface.wrapper import ControlFrequencyLimitWrapper
+    env = _framestack_env()
+    assert env.render_fps == 10
+    wrapper = ControlFrequencyLimitWrapper(_framestack_env())
+    assert wrapper.control_dt == pytest.approx(0.1)
+    env.reset(seed=0)
+    assert env.render().shape == (4, 6, 3)
+    env.close()
+
+
+def test_async_vec_env_of_func_frame_stack_envs():
+    from unienv_interface.env_base.vec_env import AsyncVecEnv
+    env = AsyncVecEnv([_framestack_env, _framestack_env], shared_memory=False)
+    try:
+        assert env.render_fps == 10
+        _, obs, _ = env.reset(seed=0)
+        assert obs["position"].shape == (2, 3, 2)
+    finally:
+        env.close()
