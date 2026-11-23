@@ -48,7 +48,10 @@ class _Group:
             item = self.queue.get()
             if item is None:
                 return
-            item[0](*item[1])
+            try:
+                item[0](*item[1])
+            except BaseException:  # the worker must outlive any failure (calls report theirs themselves)
+                _log.exception("A remote worker task failed")
 
 
 class _Resource:
@@ -408,7 +411,7 @@ class RemoteServer:
             descriptor = dict(resource.static, **self._links(resource), spaces=resource.space_update(), factory=True)
             frame = wire.encode([request_id, OK, descriptor])
             connection.seen[group] = group.version
-        except Exception as exc:
+        except BaseException as exc:  # e.g. SystemExit from the factory: still answer, keep the worker
             frame = _error(request_id, exc)
         connection.send(frame)
 
@@ -680,7 +683,7 @@ class RemoteServer:
                 message.append({r.name: r.space_update() for r in group.resources if r.version > seen})
             frame = wire.encode(message, max_size=connection.transport.max_frame_size)
             connection.seen[group] = group.version
-        except Exception as exc:
+        except BaseException as exc:  # e.g. SystemExit from the hosted object: still answer, keep the worker
             frame = _error(request_id, exc)
         connection.send(frame)
 

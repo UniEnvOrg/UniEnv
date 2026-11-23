@@ -350,3 +350,35 @@ def test_compression_of_namedtuple_observations():
         with server.connect(compress={"image": "jpeg:90"}) as client:
             image, state = client.env("nt").step(ACTION)[0]  # used to fail: Observation.__new__() missing 'state'
             assert np.abs(image.astype(int) - 100).max() <= 2 and np.array_equal(state, np.ones(2, np.float32))
+
+
+# ---------------------------------------------------------------------------- 8: BaseException in hosted code
+
+class _ExitingEnv(ProbeEnv):
+    def step(self, action):
+        if isinstance(action, str) and action == "exit":
+            raise SystemExit("the simulator gave up")
+        return super().step(action)
+
+
+def test_system_exit_in_a_hosted_call_is_reported_and_the_worker_survives():
+    hosted = _ExitingEnv()
+    with RemoteServer() as server:
+        server.register("sim", hosted)
+        with server.connect(timeout=5) as client:
+            with pytest.raises(Exception, match="SystemExit: the simulator gave up"):  # used to hang
+                client.call("sim", "step", "exit")
+            assert client.call("sim", "step", ACTION)[1] == 1.0
+    assert hosted.closed_on == "unienv-remote:sim"  # closed on its worker at shutdown
+
+
+def test_system_exit_in_a_factory_is_reported():
+    def make():
+        raise SystemExit("cannot start")
+
+    with RemoteServer() as server:
+        server.register_factory("sim", make)
+        with server.connect(timeout=5) as client:
+            for _ in range(2):  # the worker is still there for the second attempt
+                with pytest.raises(Exception, match="SystemExit: cannot start"):
+                    client.env("sim")
