@@ -116,6 +116,29 @@ Pass `physical=True` to `add_env` for a real robot: its acting tools (`open`, `r
 `run`) are annotated as destructive and open-world, so MCP hosts ask before calling them. Action bounds always
 apply; `max_steps_per_call` bounds `step`'s `repeat`, and `add_policy`'s `max_steps` bounds runs.
 
+## Hosting instances for other processes
+
+`E.host(instance, address?)` serves an open instance with UniEnv's [remote execution](remote-execution.md), so other
+processes can use exactly the environment the model set up: a training script, a viewer, a policy on another
+machine. The result says how to connect, e.g. `RemoteClient.connect("tcp://127.0.0.1:41233").env("sim-1")`.
+
+- `address` is any address the remote layer serves (`tcp://host:port`, `unix:///path`, `ws://host:port`); the
+  default is `tcp://127.0.0.1` on a free port. Calling `host` again with another address adds it.
+- Remote calls run on the instance's thread, like the model's, so the two interleave one at a time; there is no
+  ownership. Remote resets and steps update what `E.observe` reports.
+- Remote **subscribers** (`client.subscribe("sim-1")`) see every reset and step of the instance: the model's own,
+  every step of policy runs, and other clients'. All of them are published from the instance's thread, so the
+  stream's order is the order the steps happened in.
+- `P.host(instance)` serves the policy object paired with the instance (the one its runs use), as
+  `<policy>-<instance>`, on the same addresses: `RemoteClient.connect(address).policy("pick-sim-1")`.
+- A hosted instance is never closed for being idle. `E.unhost` stops hosting (remote clients are disconnected), as
+  do `E.close` and closing the server. `describe` and `observe` show where an instance is hosted.
+- Environments and policies of a bridged remote stack are already hosted: `host` returns their original address.
+
+Hosting is on by default; `UniEnvMCPServer(hosting=False)` removes the tools. The remote protocol has no
+authentication: anyone who can reach a hosted address can control the instance, so a model that hosts on
+`0.0.0.0` exposes it to the network.
+
 ## Serving a remote stack
 
 When the simulator or robot runs in its own process (or Python environment) under a UniEnv `RemoteServer`, bridge

@@ -22,6 +22,7 @@ from unienv_interface.policy import Policy
 from unienv_interface.space.space_utils.json_utils import (bound_violations, describe_metadata, from_json,
                                                           space_to_json_schema, to_json)
 
+from .hosting import DEFAULT_ADDRESS, HostedEnv, HostedPolicy, Hosting, on_thread
 from .content import (ContentOptions, Rendered, error_result, image_paths, json_safe, render_image, render_observation,
                       result_schema, to_result, with_images)
 
@@ -54,6 +55,7 @@ class _EnvEntry:
     spaces: Dict[str, Any] = field(default_factory=dict)  # observation / action / context space
     batch_size: Optional[int] = None
     spare: Optional["_Instance"] = None  # the instance built at registration, until the first open
+    remote: Optional[Tuple[str, str]] = None  # (address, name) where a bridged env is already hosted
 
 
 @dataclass
@@ -65,6 +67,7 @@ class _PolicyEntry:
     envs: Optional[Tuple[str, ...]]
     max_steps: int
     lock: threading.Lock = field(default_factory=threading.Lock)  # one run at a time on a shared policy
+    remote: Optional[Tuple[str, str]] = None  # (address, name) where a bridged policy is already hosted
 
 
 class _Instance:
@@ -72,6 +75,8 @@ class _Instance:
 
     def __init__(self, entry: _EnvEntry, instance_id: str, worker: ThreadPoolExecutor, env: Env) -> None:
         self.entry, self.id, self.worker, self.env = entry, instance_id, worker, env
+        self.thread_ident = worker.submit(threading.get_ident).result()
+        self.hosting: Optional[Hosting] = None  # the remote server hosting it, if any
         self.context: Any = None
         self.observation: Any = None
         self.reset_done = False
@@ -147,8 +152,9 @@ class UniEnvMCPServer:
     """
 
     def __init__(self, name: str = "unienv", *, instructions: Optional[str] = None,
-                 content: Optional[ContentOptions] = None, max_finished_runs: int = 32) -> None:
+                 content: Optional[ContentOptions] = None, max_finished_runs: int = 32, hosting: bool = True) -> None:
         self.name = name
+        self.hosting = hosting
         self.content = content or ContentOptions()
         self.max_finished_runs = max_finished_runs
         self._instructions = instructions
@@ -292,6 +298,24 @@ class UniEnvMCPServer:
                            input_schema={"type": "object", "properties": {"instance": instance},
                                          "required": ["instance"], "additionalProperties": False},
                            annotations=reading),
+                *([types.Tool(name=f"{name}.host", description=(
+                    f"Host a {name} instance with UniEnv remote execution, so other processes (a training script, "
+                    "a viewer, a policy on another machine) can use it: RemoteClient.connect(address).env(name). "
+                    "Its calls run on the instance's thread like yours, interleaved with them; remote subscribers "
+                    "see every reset and step, yours and policy runs' included. `address`: tcp://host:port, "
+                    "unix:///path or ws://host:port (default tcp://127.0.0.1 on a free port); call again to add "
+                    "addresses. Anyone who can reach an address can control the instance."),
+                    input_schema={"type": "object", "properties": {"instance": instance, "address": {"type": "string"}},
+                                  "required": ["instance"], "additionalProperties": False},
+                    annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+                                                      idempotent_hint=True, open_world_hint=True)),
+                   types.Tool(name=f"{name}.unhost", description=(
+                       f"Stop hosting a {name} instance (and the policies hosted with it); remote clients are "
+                       "disconnected."),
+                       input_schema={"type": "object", "properties": {"instance": instance},
+                                     "required": ["instance"], "additionalProperties": False},
+                       annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+                                                         idempotent_hint=True))] if self.hosting else []),
                 types.Tool(name=f"{name}.close", description=(
                     f"Close a {name} instance." if not shared else f"No-op: the shared {name} instance stays open."),
                     input_schema={"type": "object", "properties": {"instance": instance},
@@ -317,6 +341,15 @@ class UniEnvMCPServer:
                         "required": ["instance"], "additionalProperties": False},
                     annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=physical,
                                                       idempotent_hint=False, open_world_hint=physical)),
+                *([types.Tool(name=f"{name}.host", description=(
+                    f"Host {name} as paired with an env instance (the policy object its runs use), with UniEnv "
+                    "remote execution: RemoteClient.connect(address).policy(name). It is served with the "
+                    "instance (see <env>.host for `address`); <env>.unhost stops both."),
+                    input_schema={"type": "object", "properties": {"instance": instance, "address": {"type": "string"}},
+                                  "required": ["instance"], "additionalProperties": False},
+                    annotations=types.ToolAnnotations(read_only_hint=False, destructive_hint=False,
+                                                      idempotent_hint=True, open_world_hint=True))]
+                  if self.hosting else []),
                 types.Tool(name=f"{name}.suggest", description=(
                     f"The action {name} would take now on an env instance, without executing it (apply it with "
                     "<env>.step, possibly edited). `task` replaces the env's context for the policy."),
@@ -436,24 +469,17 @@ class UniEnvMCPServer:
         if verb == "close":
             return await self._close_instance(self._instance(arguments, entry))
         instance = self._instance(arguments, entry)
+        if verb == "host" and self.hosting:
+            return await self._host(instance, arguments.get("address"))
+        if verb == "unhost" and self.hosting:
+            return await self._unhost(instance)
         options = self._options(arguments)
         if verb == "observe":
             return self._observe(instance, options)
         if verb in ("reset", "step") and instance.active_run is not None:
             raise _ToolError(f"{instance.id} is running {instance.active_run}; wait for it or cancel it (runs.cancel)")
         if verb == "reset":
-            seed = arguments.get("seed")
-            context, observation, info = await self._call(instance, lambda: instance.env.reset(seed=seed))
-            instance.context, instance.observation = context, observation
-            instance.reset_done, instance.episode_steps = True, 0
-            instance.last_rewards, instance.terminated, instance.truncated = [], False, False
-            instance.info = json_safe(info, self.content.digits)
-            out = Rendered({"instance": instance.id})
-            render_observation(entry.spaces["context"], context, out, "context", batched=False, options=options)
-            render_observation(entry.spaces["observation"], observation, out, "observation",
-                               batched=entry.batch_size is not None, options=options)
-            out.structured["info"] = instance.info
-            return to_result(out)
+            return await self._call(instance, self._reset, instance, arguments.get("seed"), options)
         if verb == "step":
             if not instance.reset_done:
                 raise _ToolError(f"Reset {instance.id} first ({entry.name}.reset)")
@@ -470,6 +496,116 @@ class UniEnvMCPServer:
             out.structured["render"] = {"image": 1}
             return to_result(out)
         raise _ToolError(f"Unknown tool {entry.name}.{verb}")
+
+    def _reset(self, instance: _Instance, seed: Optional[int], options: ContentOptions) -> types.CallToolResult:
+        """A reset on the instance's thread."""
+        entry = instance.entry
+        context, observation, info = instance.env.reset(seed=seed)
+        self._after_reset(instance, context, observation, info)
+        out = Rendered({"instance": instance.id})
+        render_observation(entry.spaces["context"], context, out, "context", batched=False, options=options)
+        render_observation(entry.spaces["observation"], observation, out, "observation",
+                           batched=entry.batch_size is not None, options=options)
+        out.structured["info"] = instance.info
+        return to_result(out)
+
+    # Every reset and step of an instance, from tools, runs or remote clients, goes through these two, on the
+    # instance's thread: they keep the state observe reports, and publish to remote subscribers in order.
+
+    def _after_reset(self, instance: _Instance, context: Any, observation: Any, info: Any, *, full: bool = True,
+                     mask: Any = None) -> None:
+        if not full and mask is not None and instance.observation is not None:
+            env = instance.env
+            observation = env.update_observation_post_reset(instance.observation, observation, mask)
+            if context is not None and instance.context is not None:
+                context = env.update_context_post_reset(instance.context, context, mask)
+        instance.context, instance.observation = context, observation
+        instance.reset_done = True
+        if full:
+            instance.episode_steps = 0
+        instance.last_rewards, instance.terminated, instance.truncated = [], False, False
+        instance.info = json_safe(info, self.content.digits)
+        instance.last_used = time.monotonic()
+        self._publish(instance, "reset", (context, observation, info))
+
+    def _after_step(self, instance: _Instance, observation: Any, reward: Any, terminated: Any, truncated: Any,
+                    info: Any) -> Tuple[Any, bool, bool]:
+        """Record a step; returns (the reward as JSON, terminated, truncated)."""
+        instance.observation = observation
+        instance.episode_steps += 1
+        reward_json = json_safe(reward, self.content.digits)
+        instance.last_rewards = [reward_json]
+        instance.terminated, instance.truncated = _any(terminated), _any(truncated)
+        instance.info = json_safe(info, self.content.digits)
+        instance.last_used = time.monotonic()
+        self._publish(instance, "step", (observation, reward, terminated, truncated, info))
+        return reward_json, instance.terminated, instance.truncated
+
+    def _publish(self, instance: _Instance, method: str, value: Any) -> None:
+        hosting = instance.hosting
+        if hosting is None or hosting.env is None:
+            return
+        try:
+            hosting.server.publish(hosting.env, method, value)
+        except Exception:
+            _log.exception("Publishing %s of %s failed", method, instance.id)
+
+    # ------------------------------------------------------------------ hosting
+
+    async def _host(self, instance: _Instance, address: Optional[str],
+                    policy: Optional[_PolicyEntry] = None) -> types.CallToolResult:
+        if address is not None and not isinstance(address, str):
+            raise _ToolError("address must be a string such as tcp://127.0.0.1:7000")
+        remote = (policy.remote if policy is not None else instance.entry.remote)
+        if remote is not None:
+            origin, name = remote
+            kind = "policy" if policy is not None else "env"
+            return to_result(Rendered({"instance": instance.id, "addresses": [origin], kind: name,
+                                       "note": "already hosted by the remote server this MCP server bridges",
+                                       "connect": f'RemoteClient.connect("{origin}").{kind}("{name}")'}))
+        try:
+            hosting = await anyio.to_thread.run_sync(self._host_sync, instance, address, policy)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise _ToolError(f"Cannot host {instance.id}{f' on {address}' if address else ''}: {exc}") from None
+        kind, name = ("policy", hosting.policies[policy.name]) if policy is not None else ("env", hosting.env)
+        return to_result(Rendered({
+            "instance": instance.id, "addresses": list(hosting.addresses), kind: name, "hosted": hosting.describe(),
+            "connect": f'RemoteClient.connect("{hosting.addresses[0]}").{kind}("{name}")',
+            "note": "anyone who can reach these addresses can control it; remote subscribers see every reset and "
+                    "step, including yours and policy runs'",
+        }))
+
+    def _host_sync(self, instance: _Instance, address: Optional[str], policy: Optional[_PolicyEntry]) -> Hosting:
+        from unienv_interface.remote import RemoteServer
+
+        with self._lock:
+            if instance.closed:
+                raise RuntimeError("the instance is closed")
+            hosting = instance.hosting
+            if hosting is None:
+                hosting = instance.hosting = Hosting(RemoteServer())
+        if policy is None:
+            if hosting.env is None:
+                hosting.server.register(instance.id, HostedEnv(self, instance), close=False, publish_results=False)
+                hosting.env = instance.id
+        elif policy.name not in hosting.policies:
+            built = on_thread(instance, lambda: self._policy_for(policy, instance))
+            name = f"{policy.name}-{instance.id}"
+            hosting.server.register(name, HostedPolicy(instance, built), close=False)
+            hosting.policies[policy.name] = name
+        if address is not None and address not in hosting.addresses:
+            hosting.addresses.append(hosting.server.listen(address))
+        elif not hosting.addresses:
+            hosting.addresses.append(hosting.server.listen(DEFAULT_ADDRESS))
+        return hosting
+
+    async def _unhost(self, instance: _Instance) -> types.CallToolResult:
+        with self._lock:
+            hosting, instance.hosting = instance.hosting, None
+        if hosting is None:
+            return to_result(Rendered({"instance": instance.id, "hosted": None, "note": "it was not hosted"}))
+        await anyio.to_thread.run_sync(hosting.server.close)
+        return to_result(Rendered({"instance": instance.id, "hosted": None, "stopped": hosting.addresses}))
 
     def _options(self, arguments: Dict[str, Any]) -> ContentOptions:
         try:
@@ -497,7 +633,8 @@ class UniEnvMCPServer:
         with self._lock:
             instances = [i for i in self._instances.values() if i.entry is entry and not i.closed]
         about["instances"] = [{"instance": i.id, "episode_steps": i.episode_steps if i.reset_done else None,
-                               "episode_ended": i.terminated or i.truncated, "run": i.active_run} for i in instances]
+                               "episode_ended": i.terminated or i.truncated, "run": i.active_run,
+                               "hosted": i.hosting.describe() if i.hosting else None} for i in instances]
         return to_result(Rendered(about))
 
     def _observe(self, instance: _Instance, options: ContentOptions) -> types.CallToolResult:
@@ -506,7 +643,8 @@ class UniEnvMCPServer:
         out = Rendered({"instance": instance.id, "episode_started": instance.reset_done,
                         "episode_steps": instance.episode_steps if instance.reset_done else None,
                         "terminated": instance.terminated, "truncated": instance.truncated,
-                        "last_rewards": instance.last_rewards, "run": instance.active_run})
+                        "last_rewards": instance.last_rewards, "run": instance.active_run,
+                        "hosted": instance.hosting.describe() if instance.hosting else None})
         if not instance.reset_done:
             out.structured["next"] = f"{entry.name}.reset to start an episode"
             return to_result(out)
@@ -545,6 +683,9 @@ class UniEnvMCPServer:
                 raise _ToolError(f"{instance.id} is busy (a run or call is in progress); cancel the run first")
             instance.closed = True
             self._instances.pop(instance.id, None)
+            hosting, instance.hosting = instance.hosting, None
+        if hosting is not None:
+            await anyio.to_thread.run_sync(hosting.server.close)
         await anyio.to_thread.run_sync(self._dispose, instance)
         return to_result(Rendered({"instance": instance.id, "closed": True}))
 
@@ -581,14 +722,11 @@ class UniEnvMCPServer:
         rewards, info, terminated, truncated, observation = [], {}, False, False, instance.observation
         for _ in range(repeat):
             observation, reward, term, trunc, info = instance.env.step(action)
-            instance.episode_steps += 1
-            rewards.append(json_safe(reward, self.content.digits))
-            terminated, truncated = _any(term), _any(trunc)
+            reward_json, terminated, truncated = self._after_step(instance, observation, reward, term, trunc, info)
+            rewards.append(reward_json)
             if terminated or truncated:
                 break
-        instance.observation = observation
-        instance.last_rewards, instance.terminated, instance.truncated = rewards, terminated, truncated
-        instance.info = json_safe(info, self.content.digits)
+        instance.last_rewards = rewards
         out = Rendered({"instance": instance.id, "steps": len(rewards), "episode_steps": instance.episode_steps,
                         "rewards": rewards, "terminated": terminated, "truncated": truncated})
         render_observation(entry.spaces["observation"], observation, out, "observation",
@@ -605,6 +743,8 @@ class UniEnvMCPServer:
         instance = self._instance(arguments)
         if entry.envs is not None and instance.entry.name not in entry.envs:
             raise _ToolError(f"{entry.name} runs on {', '.join(entry.envs)}, not {instance.entry.name}")
+        if verb == "host" and self.hosting:
+            return await self._host(instance, arguments.get("address"), policy=entry)
         if not instance.reset_done:
             raise _ToolError(f"Reset {instance.id} first ({instance.entry.name}.reset)")
         task = arguments.get("task")
@@ -707,8 +847,7 @@ class UniEnvMCPServer:
                     break
                 action = policy.get_action()
                 observation, reward, term, trunc, info = instance.env.step(action)
-                instance.observation = observation
-                instance.episode_steps += 1
+                self._after_step(instance, observation, reward, term, trunc, info)
                 run.steps = step + 1
                 rewards = [json_safe(reward, self.content.digits)]
                 total_reward += float(np.sum(np.asarray(json_safe(reward), dtype=float)))
@@ -810,7 +949,7 @@ class UniEnvMCPServer:
             with self._lock:
                 stale = [i for i in self._instances.values()
                          if i.entry.factory is not None and i.entry.idle_timeout is not None and not i.busy
-                         and now - i.last_used > i.entry.idle_timeout]
+                         and i.hosting is None and now - i.last_used > i.entry.idle_timeout]
                 for instance in stale:
                     instance.closed = True
                     del self._instances[instance.id]
@@ -835,6 +974,13 @@ class UniEnvMCPServer:
             self._instances.clear()
         for run in runs:
             run.cancel.set()
+        for instance in instances + shared:
+            hosting, instance.hosting = instance.hosting, None
+            if hosting is not None:
+                try:
+                    hosting.server.close()
+                except Exception:
+                    _log.exception("Stopping the hosting of %s failed", instance.id)
         for instance in instances + spares:
             try:
                 self._dispose(instance)

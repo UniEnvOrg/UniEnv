@@ -55,7 +55,9 @@ def test_tools_and_schemas(server):
             return {tool.name: tool for tool in (await client.list_tools()).tools}
     tools = anyio.run(main)
     assert set(tools) == {"grid.describe", "grid.open", "grid.reset", "grid.step", "grid.observe", "grid.render",
-                          "grid.close", "goto.run", "goto.suggest", "runs.status", "runs.cancel"}
+                          "grid.host", "grid.unhost", "grid.close", "goto.run", "goto.suggest", "goto.host",
+                          "runs.status", "runs.cancel"}
+    assert tools["grid.host"].annotations.open_world_hint
     assert tools["grid.observe"].annotations.read_only_hint and tools["grid.observe"].annotations.idempotent_hint
     action = tools["grid.step"].input_schema["properties"]["action"]
     assert action["type"] == "object" and action["required"] == ["dx", "dy"]
@@ -329,7 +331,8 @@ def test_observe_shows_the_state_again_without_acting(server):
     assert len(images(results[4])) == 1 and images(results[4]) == images(results[3])
     assert server._instances["grid-1"].env.steps == 1  # observing did not step the env
     assert images(results[5]) == [] and blind["observation"]["camera"]["omitted"].startswith("not requested")
-    assert described["instances"] == [{"instance": "grid-1", "episode_steps": 1, "episode_ended": False, "run": None}]
+    assert described["instances"] == [{"instance": "grid-1", "episode_steps": 1, "episode_ended": False, "run": None,
+                                       "hosted": None}]
 
 
 def test_observe_during_a_background_run():
@@ -407,3 +410,98 @@ def test_batched_envs_show_the_first_env_images():
         server.add_env("many", BatchedCameras)
         _, reset = call(server, ("many.open", {}), ("many.reset", {"instance": "many-1"}))
         assert len(images(reset)) == 3
+
+
+# ---------------------------------------------------------------------------- hosting through remote execution
+
+
+def test_hosted_instance_is_driven_and_watched_remotely():
+    from unienv_interface.remote import RemoteClient
+
+    with UniEnvMCPServer() as server:
+        server.add_env("grid", make_grid, dt=0.05, idle_timeout=0.3)
+        server.add_policy("goto", make_goal_policy)
+
+        async def main():
+            async with Client(server.mcp_server) as client:
+                await client.list_tools()
+                await client.call_tool("grid.open", {})
+                await client.call_tool("grid.reset", {"instance": "grid-1"})
+                hosted = (await client.call_tool("grid.host", {"instance": "grid-1"})).structured_content
+                address = hosted["addresses"][0]
+
+                def remote():
+                    remote_client = RemoteClient.connect(address)  # stays open until the end
+                    events = remote_client.subscribe("grid-1")
+                    env = remote_client.env("grid-1")
+                    assert env.action_space.shape == (2,) and remote_client.resources["grid-1"]["kind"] == "env"
+                    obs, *_ = env.step(np.array([0.0, 1.0], np.float32))  # a remote step
+                    seen = [events.next(timeout=5)]
+                    return obs, seen, events, remote_client
+                obs, seen, events, remote_client = await anyio.to_thread.run_sync(remote)
+                observed = (await client.call_tool("grid.observe", {"instance": "grid-1"})).structured_content
+                # The model's own step and a policy run's steps reach the remote subscriber too
+                await client.call_tool("grid.step", {"instance": "grid-1", "action": {"dx": 0.5, "dy": 0}})
+                seen.append(await anyio.to_thread.run_sync(lambda: events.next(timeout=5)))
+                await client.call_tool("goto.run", {"instance": "grid-1", "task": "go to (-0.5, 3)", "max_steps": 6})
+                await anyio.sleep(0.6)  # past the idle timeout: hosted instances stay open
+                last = await anyio.to_thread.run_sync(lambda: events.next(timeout=5))
+                described = (await client.call_tool("grid.describe", {})).structured_content
+                await client.call_tool("grid.unhost", {"instance": "grid-1"})
+                remote_client.close()
+                return hosted, obs, seen, last, observed, described
+        hosted, obs, seen, last, observed, described = anyio.run(main)
+        assert hosted["env"] == "grid-1" and hosted["addresses"][0].startswith("tcp://127.0.0.1:")
+        assert 'RemoteClient.connect("tcp://127.0.0.1:' in hosted["connect"]
+        np.testing.assert_allclose(obs["pos"], [-1.0, 1.0])
+        assert observed["observation"]["pos"] == {"x": -1.0, "y": 1.0} and observed["episode_steps"] == 1  # remote step recorded
+        assert observed["hosted"]["env"] == "grid-1"
+        assert [e.kind for e in seen] == ["step", "step"] and seen[1].sequence == seen[0].sequence + 1
+        np.testing.assert_allclose(seen[1].value[0]["pos"], [-0.5, 1.0])  # the model's step
+        np.testing.assert_allclose(last.value[0]["pos"], [-0.5, 3.0])  # the end of the policy run (latest wins)
+        assert last.sequence >= seen[1].sequence + 4
+        assert described["instances"][0]["hosted"]["addresses"] == hosted["addresses"]
+        assert "grid-1" in server._instances  # survived the idle timeout while hosted
+
+
+def test_hosted_policies_unix_and_websocket_addresses(tmp_path):
+    from unienv_interface.remote import RemoteClient
+
+    with UniEnvMCPServer() as server:
+        server.add_env("grid", make_grid, dt=0.05)
+        server.add_policy("goto", make_goal_policy)
+        unix = f"unix://{tmp_path / 'grid.sock'}"
+        results = call(server, ("grid.open", {}), ("grid.reset", {"instance": "grid-1"}),
+                       ("goto.host", {"instance": "grid-1", "address": unix}),
+                       ("grid.host", {"instance": "grid-1", "address": "ws://127.0.0.1:0"}),
+                       ("grid.host", {"instance": "grid-1", "address": "carrier-pigeon://x"}))
+        policy_hosted, env_hosted, bad = structured(results[2]), structured(results[3]), results[4]
+        assert policy_hosted["policy"] == "goto-grid-1" and policy_hosted["addresses"] == [unix]
+        assert env_hosted["addresses"][0] == unix and env_hosted["addresses"][1].startswith("ws://")
+        assert bad.is_error and "Cannot host grid-1 on carrier-pigeon://x" in bad.content[0].text
+        with RemoteClient.connect(unix) as remote:
+            policy = remote.policy("goto-grid-1")
+            policy.reset("go to (5, 5)", {"pos": np.zeros(2, np.float32), "camera": np.zeros((16, 16, 3), np.uint8)})
+            np.testing.assert_allclose(policy.get_action(), [0.5, 0.5])
+        with RemoteClient.connect(env_hosted["addresses"][1]) as remote:
+            assert remote.env("grid-1").action_space.shape == (2,)
+        _, closed = call(server, ("grid.close", {"instance": "grid-1"}), ("grid.observe", {"instance": "grid-1"}))
+        with pytest.raises((ConnectionError, OSError)):
+            RemoteClient.connect(unix, connect_timeout=1)  # closing the instance stopped hosting it
+
+
+def test_hosting_can_be_disabled_and_bridged_objects_point_to_their_origin():
+    with UniEnvMCPServer(hosting=False) as server:
+        server.add_env("grid", make_grid)
+        assert not any(name.endswith("host") for name in anyio.run(_tools, server))
+
+    from unienv_interface.remote import RemoteServer
+    from unienv_mcp import bridge
+
+    with RemoteServer() as remote:
+        remote.register("sim", GridEnv())
+        address = remote.listen("tcp://127.0.0.1:0")
+        with bridge(address) as server:
+            (hosted,) = call(server, ("sim.host", {"instance": "sim"}))
+            assert structured(hosted)["addresses"] == [address] and structured(hosted)["env"] == "sim"
+        server._bridge_client.close()

@@ -69,6 +69,8 @@ class _Resource:
         self.version = 0
         self.sequence = 0
         self.subscribers: Tuple[_Connection, ...] = ()
+        self.publish_results = True  # False: the object publishes its own events (RemoteServer.publish)
+        self.publish_lock = Lock()  # one event at a time, so sequence numbers follow the publishing order
         self.static: Dict[str, Any] = {}
         self.factory: Optional[_Factory] = None  # set for objects built by a factory
         self.released = False  # a factory-built object that has since been closed
@@ -277,7 +279,8 @@ class RemoteServer:
     # ------------------------------------------------------------------ registration
 
     def register(self, name: str, obj: Hosted, *, close: bool = True,
-                 backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
+                 backend: Optional[ComputeBackend] = None, device: Optional[Any] = None,
+                 publish_results: bool = True) -> str:
         """Host ``obj`` (an ``Env``, ``World``, ``WorldNode``, ``DataTransformation`` or ``Policy``) under ``name``.
 
         Only ``obj`` itself is exposed; use :meth:`register_recursive` to also expose
@@ -294,7 +297,8 @@ class RemoteServer:
         (default: numpy, no device) are where the source spaces and data of its
         calls are rebuilt on the server. Other objects use their own.
         """
-        return self._register(name, obj, close=close, recursive=False, backend=backend, device=device)
+        return self._register(name, obj, close=close, recursive=False, backend=backend, device=device,
+                              publish_results=publish_results)
 
     def register_recursive(self, name: str, obj: Hosted, *, close: bool = True) -> str:
         """Like :meth:`register`, but also expose everything ``obj`` is built from.
@@ -307,7 +311,8 @@ class RemoteServer:
         return self._register(name, obj, close=close, recursive=True)
 
     def _register(self, name: str, obj: Hosted, *, close: bool, recursive: bool,
-                  backend: Optional[ComputeBackend] = None, device: Optional[Any] = None) -> str:
+                  backend: Optional[ComputeBackend] = None, device: Optional[Any] = None,
+                  publish_results: bool = True) -> str:
         if not isinstance(name, str) or not name:
             raise ValueError("Resource names must be non-empty strings")
         _kind(obj)
@@ -335,6 +340,7 @@ class RemoteServer:
                 if resource.kind == "transformation":
                     from unienv_interface.backends.numpy import NumpyComputeBackend
                     resource.backend, resource.device = backend or NumpyComputeBackend, device
+                resource.publish_results = publish_results
                 resource.static = resource.descriptor()
             self._resources.update(added)
             self._names.update(names)
@@ -684,7 +690,7 @@ class RemoteServer:
             group = resource.group
             if method in RESET_METHODS:
                 self._check_spaces(group)
-            if resource.subscribers and method in PUBLISHED_METHODS:
+            if resource.subscribers and method in PUBLISHED_METHODS and resource.publish_results:
                 self._publish(resource, method, value)
             message = [request_id, OK, self._compress(connection, resource, method, value)]
             seen = connection.seen.get(group, 0)
@@ -717,7 +723,28 @@ class RemoteServer:
         from .compression import compress_result
         return compress_result(value, resource, method, connection.compress)
 
+    def publish(self, name: str, method: str, value: Any) -> None:
+        """Send ``value`` to the subscribers of hosted env ``name`` as the result of ``method``.
+
+        For results the server did not produce itself, e.g. steps of a hosted env driven on the
+        server's side while remote clients watch. ``method`` is ``"reset"``, ``"reload"`` or
+        ``"step"``; ``value`` is what that method returned. Thread-safe; a no-op without subscribers.
+        Register objects that publish all their own events with ``publish_results=False``, so the
+        server does not publish their remote calls a second time.
+        """
+        if method not in PUBLISHED_METHODS:
+            raise ValueError(f"Only {sorted(PUBLISHED_METHODS)} results are published, not {method!r}")
+        resource = self._resources.get(name)
+        if resource is None or resource.kind != "env":
+            raise KeyError(f"No hosted environment named {name!r}")
+        if resource.subscribers:
+            self._publish(resource, method, value)
+
     def _publish(self, resource: _Resource, method: str, value: Any) -> None:
+        with resource.publish_lock:
+            self._publish_locked(resource, method, value)
+
+    def _publish_locked(self, resource: _Resource, method: str, value: Any) -> None:
         resource.sequence += 1
         frames: Dict[Any, Optional[Tuple[List[Any], int]]] = {}  # by compression: None if it failed
         for connection in resource.subscribers:

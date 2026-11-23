@@ -34,7 +34,9 @@ def bridge(address: str, *, names: Optional[Sequence[str]] = None, server: Optio
         tool_name = name.replace("/", "_")
         if kind == "env":
             server.add_env(tool_name, client.env(name), physical=tool_name in physical or name in physical)
+            server._envs[tool_name].remote = (address, name)  # host returns where it already is
         elif kind == "policy":
             server.add_policy(tool_name, client.policy(name))
+            server._policies[tool_name].remote = (address, name)
     server._bridge_client = client  # keep the connection open as long as the server
     return server
