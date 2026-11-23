@@ -55,6 +55,8 @@ def _masked_space_fast(space : Space, indices : np.ndarray) -> Optional[Space]:
             # Bounds may be abbreviated: a leading axis of size 1 (or fewer dims) is shared by every row.
             if len(bound.shape) < len(space.shape) or bound.shape[0] == 1:
                 return bound
+            if len(indices) == 0:
+                return bound[:1]  # keep a (broadcastable) row: empty bounds break e.g. ``repr``
             index = backend.asarray(indices.astype(np.int64), device=backend.device(bound))
             return backend.take(bound, index, axis=0)
 

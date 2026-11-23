@@ -113,3 +113,23 @@ def test_masked_reset_masked_space_on_every_backend(backend, device):
     context, _, _ = wrapper.reset(mask=mask, seed=4)
     assert tuple(context.shape) == (2, 2)
     np.testing.assert_allclose(backend.to_numpy(context), env.goal[mask_np] / _PER_ENV_HIGH[mask_np], rtol=1e-6)
+
+
+@pytest.mark.parametrize("mask", [[True, False, True], [False, False, False], [True, True, True]])
+def test_masked_space_of_nested_spaces(mask):
+    from unienv_interface.env_base._utils import masked_space
+    from unienv_interface.space import BinarySpace, DictSpace, TupleSpace
+    from unienv_interface.space.space_utils import batch_utils as sbu
+    space = DictSpace(B, {
+        "a": BoxSpace(B, np.zeros((3, 2), np.float32), _PER_ENV_HIGH, np.float32, shape=(3, 2)),
+        "t": TupleSpace(B, [BinarySpace(B, shape=(3, 4)), BoxSpace(B, -1.0, 1.0, np.float32, shape=(3,))]),
+    })
+    mask = np.array(mask)
+    sub = masked_space(space, mask)
+    k = int(mask.sum())
+    assert sub["a"].shape == (k, 2) and sub["t"][0].shape == (k, 4) and sub["t"][1].shape == (k,)
+    data = space.sample(B.random.random_number_generator(0))[1]
+    assert sub.contains(sbu.get_at(space, data, mask))
+    if k:
+        np.testing.assert_array_equal(np.broadcast_to(sub["a"].high, (k, 2)), _PER_ENV_HIGH[mask])
+    str(sub)  # printable, also with 0 rows
