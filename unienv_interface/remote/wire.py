@@ -35,6 +35,7 @@ import json
 import math
 import re
 import struct
+import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -129,9 +130,11 @@ def _dtype(text: Any) -> np.dtype:
     return dtype
 
 
-def _shape(shape: Any) -> Tuple[int, ...]:
+def _shape(shape: Any, itemsize: int) -> Tuple[int, ...]:
     if type(shape) is not list or len(shape) > MAX_NDIM or any(type(n) is not int or n < 0 for n in shape):
         raise WireError(f"Invalid array shape {shape!r}")
+    if math.prod(max(n, 1) for n in shape) * itemsize > sys.maxsize:  # numpy rejects these, even when empty
+        raise WireError(f"Array shape {shape!r} is too large")
     return tuple(shape)
 
 
@@ -356,7 +359,8 @@ class _Decoder:
         return self.buffers[index]
 
     def array(self, node: Dict[str, Any]) -> Any:
-        dtype, shape = _dtype(node.get("d")), _shape(node.get("s"))
+        dtype = _dtype(node.get("d"))
+        shape = _shape(node.get("s"), dtype.itemsize)
         codec = node.get("c")
         if codec is None:
             data = self.take(node.get("b"))
@@ -370,7 +374,13 @@ class _Decoder:
             if type(indices) is not list or type(options) is not dict:
                 raise WireError("Invalid codec array")
             blobs = [self.take(index) for index in indices]
-            array = get_codec(codec).decode(blobs, dtype, shape, options)
+            decoder = get_codec(codec)
+            try:
+                array = decoder.decode(blobs, dtype, shape, options)
+            except WireError:
+                raise
+            except Exception as exc:
+                raise WireError(f"Codec {codec!r} cannot decode the array: {type(exc).__name__}: {exc}") from None
             if array.dtype != dtype or array.shape != shape:
                 raise WireError(f"Codec {codec!r} returned a mismatched array")
         return _to_backend(array, self.backend, self.device) if self.convert else array
@@ -402,7 +412,7 @@ class _Decoder:
                     raise WireError(f"Invalid dict key: {exc}") from None
             return result
         if tag == "float":
-            if node.get("v") not in _NONFINITE:
+            if not isinstance(node.get("v"), str) or node["v"] not in _NONFINITE:
                 raise WireError("Invalid non-finite float")
             return _NONFINITE[node["v"]]
         if tag == "bytes":

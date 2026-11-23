@@ -567,6 +567,8 @@ class RemoteServer:
             _log.warning("Closing a connection that sent a malformed frame: %s", exc)
         except (ConnectionError, OSError):
             pass
+        except Exception:  # never let a bad request kill the reader thread uncleanly
+            _log.exception("Closing a connection after an unexpected error")
         finally:
             connection.close()
             with self._lock:
@@ -580,7 +582,8 @@ class RemoteServer:
         request_id, target, method = message[:3]
         if target == "" and method in ("open", "release"):
             args = _restore(message, buffers)[0]
-            record = self._factories.get(args[0]) if type(args) is list and len(args) == 1 else None
+            valid = type(args) is list and len(args) == 1 and type(args[0]) is str
+            record = self._factories.get(args[0]) if valid else None
             if record is None:
                 connection.send(_error(request_id, KeyError(f"No factory-hosted resource named {args!r}")))
             elif method == "open":

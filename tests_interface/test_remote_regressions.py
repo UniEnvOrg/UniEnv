@@ -436,3 +436,54 @@ def test_clients_that_send_no_frame_limit_keep_the_server_limit():
         client_side.recv()
         assert server._connections[0].max_frame_size == 1 << 22
         client_side.close()
+
+
+# ---------------------------------------------------------------------------- 12: malformed frames
+
+def _loads_document(document, buffers=()):
+    parts, _ = raw_frame(document, buffers)
+    return wire.loads(b"".join(parts))
+
+
+@pytest.mark.parametrize("document,buffers", [
+    ({"__t": "float", "v": [1]}, ()),
+    ({"__t": "float", "v": {}}, ()),
+    ({"__t": "nd", "d": "<f4", "s": [0, 2 ** 70], "b": 0}, (b"",)),
+    ({"__t": "nd", "d": "<f4", "s": [0, 2 ** 62, 2 ** 62], "b": 0}, (b"",)),
+    ({"__t": "nd", "d": "|u1", "s": [2 ** 40, 2 ** 40, 2 ** 40, 3], "c": "jpeg", "o": {"layout": "HWC"}, "b": [0]},
+     (b"",)),
+    ({"__t": "nd", "d": "|u1", "s": [0, 0, 3], "c": "jpeg", "o": {"layout": "HWC"}, "b": [0]}, (b"",)),
+])
+def test_malformed_values_raise_wire_errors(document, buffers):
+    with pytest.raises(WireError):  # used to raise TypeError / ValueError
+        _loads_document(document, buffers)
+
+
+def test_malformed_requests_close_only_their_connection_cleanly(monkeypatch):
+    from unienv_interface.remote.transport import connect as transport_connect
+
+    crashes = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: crashes.append(args.exc_value))
+    nd = {"__t": "nd", "d": "<f4", "s": [0, 2 ** 70], "b": 0}
+    requests = [
+        ([1, "", "open", [[["unhashable"]]], {}], ()),
+        ([1, "missing", "step", [{"__t": "float", "v": [1]}], {}], ()),
+        ([1, "", "open", [{"__t": "float", "v": [1]}], {}], ()),
+        ([1, "", "release", [nd], {}], (b"",)),
+    ]
+    with RemoteServer() as server:
+        server.register("sim", ProbeEnv())
+        server.register_factory("factory", ProbeEnv)
+        address = server.listen("tcp://127.0.0.1:0")
+        for document, buffers in requests:
+            transport = transport_connect(address)
+            transport.send(*raw_frame(document, buffers))
+            try:
+                transport.recv()  # either an error reply or a closed connection
+            except ConnectionError:
+                pass
+            transport.close()
+        wait_for(lambda: len(server._connections) == 0)
+        assert crashes == []  # reader threads used to die with unhandled TypeError / ValueError
+        with RemoteClient.connect(address) as client:
+            assert client.env("sim").step(ACTION)[1] == 1.0
