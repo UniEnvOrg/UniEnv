@@ -211,3 +211,19 @@ def test_flatten_dict_round_trips_empty_nested_dict():
     back = inverse.transform(target, flat)
     assert source.contains(back)
     assert back["a"] == {} and back["c"] == {"d": {}}
+
+
+def test_rescale_inverse_with_differently_abbreviated_bounds():
+    """Stored bounds of different shapes (per-row low, scalar high) still invert (found with xbarray 1.0)."""
+    import numpy as np
+    from unienv_interface.backends.numpy import NumpyComputeBackend as NB
+    from unienv_interface.space import BoxSpace
+    from unienv_interface.transformations.rescale import RescaleTransformation
+
+    space = BoxSpace(NB, np.array([[0.0], [1.0], [2.0]]), 5.0, np.float64, shape=(3, 1))
+    space._low, space._high = np.array([[0.0], [1.0], [2.0]]), np.array(5.0)  # as abbreviation may store them
+    inverse = RescaleTransformation(0.0, 1.0).direction_inverse(space)
+    target = RescaleTransformation(0.0, 1.0).get_target_space_from_source(space)
+    data = np.array([[2.5], [3.0], [3.5]])
+    forward = RescaleTransformation(0.0, 1.0).transform(space, data)
+    np.testing.assert_allclose(inverse.transform(target, forward), data)

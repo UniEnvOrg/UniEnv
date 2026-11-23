@@ -170,16 +170,18 @@ class RescaleTransformation(DataTransformation):
         assert source_space is not None, f"{__class__.__name__} requires a source space for inverse transformation"
         assert isinstance(source_space, BoxSpace), "RescaleTransformation only supports Box spaces"
         assert source_space.is_bounded('both'), "source_space only supports bounded spaces"
+        backend = source_space.backend
         new_low = source_space._low
         new_high = source_space._high
-        target_shape = source_space.backend.broadcast_shapes(new_low.shape, new_high.shape)
-        while len(target_shape) >= 1:
-            if target_shape[0] == 1:
-                target_shape = target_shape[1:]
-            else:
-                break
-        new_low = source_space.backend.reshape(new_low, target_shape)
-        new_high = source_space.backend.reshape(new_high, target_shape)
+        # The stored bounds may be abbreviated independently (e.g. per-row low, scalar high):
+        # broadcast both to their common shape before dropping leading size-1 axes.
+        target_shape = backend.broadcast_shapes(new_low.shape, new_high.shape)
+        new_low = backend.broadcast_to(new_low, target_shape)
+        new_high = backend.broadcast_to(new_high, target_shape)
+        while len(target_shape) >= 1 and target_shape[0] == 1:
+            target_shape = target_shape[1:]
+        new_low = backend.reshape(new_low, target_shape)
+        new_high = backend.reshape(new_high, target_shape)
         return RescaleTransformation(
             new_low=new_low,
             new_high=new_high,

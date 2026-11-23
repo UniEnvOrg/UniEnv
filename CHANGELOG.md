@@ -46,6 +46,7 @@ All notable changes to this project will be documented in this file.
 
 **World composition and transformations**
 
+- `RescaleTransformation.direction_inverse` reshaped the source box's stored bounds instead of broadcasting them, so a box whose low and high are stored at different sizes (e.g. per-row low, scalar high, as xbarray 1.0 abbreviates them) could not be inverted (`cannot reshape array of size 1`).
 - `CombinedWorldNode` / `CombinedFuncWorldNode` accepted control timesteps that are not integer multiples of the smallest one (e.g. 0.02 / 0.03 / 0.06) and then delivered actions to the 0.03 s node every 0.04 s. Such combinations now raise at construction.
 - `WorldEnv` / `FuncWorldEnv` accepted a control timestep that is not an integer multiple of the update timestep: control 0.03 / update 0.02 silently simulated 0.04 s per step, and control 0.02 / update 0.04 ran zero world steps. This now raises at construction; float multiples such as 0.05 / 0.01 are still accepted.
 - Inside `CombinedWorldNode` / `CombinedFuncWorldNode`, child nodes without their own `control_timestep` / `update_timestep` received `dt=None` in `pre_environment_step` / `post_environment_step`. They now receive the step's dt, the same value a bare node gets from `WorldEnv`.
