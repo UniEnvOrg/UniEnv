@@ -93,3 +93,25 @@ def test_torch_dataset_single_items_and_flattening():
     flat = batch.get_flattened_at(torch.tensor([1, 2]))
     assert flat.shape == (2, 3)
     assert_tree_equal(flat[:, -1], torch.tensor([1.0, 2.0]), check_dtype=False)
+
+
+@pytest.mark.parametrize("idx", [torch.tensor([6]), torch.tensor([0, 8]), torch.tensor([-7])], ids=["len", "past", "negative"])
+def test_torch_dataset_as_batch_rejects_out_of_range_indices(idx):
+    # Regression: out-of-range index arrays wrapped around ((idx + len) % len) and silently
+    # returned other rows (e.g. [6] -> row 0) instead of raising like the other batches.
+    batch = PyTorchAsUniEnvDataset(_DictDataset())
+    with pytest.raises(IndexError):
+        batch.get_at(idx)
+
+
+def test_unienv_dataset_round_trip():
+    # Regression: UniEnvAsPyTorchDataset.__getitems__ returns an already collated batch, which
+    # PyTorchAsUniEnvDataset treated as a list of samples ("string indices must be integers").
+    inner = PyTorchAsUniEnvDataset(_DictDataset())
+    round_trip = PyTorchAsUniEnvDataset(UniEnvAsPyTorchDataset(inner))
+    assert round_trip.single_space == inner.single_space
+    for idx, ids in ((torch.tensor([5, 0, 2]), [5, 0, 2]), (slice(1, 4), [1, 2, 3]), (..., list(range(6)))):
+        out = round_trip.get_at(idx)
+        assert_tree_equal(out, _expected(ids))
+        assert sbu.batch_space(round_trip.single_space, len(ids)).contains(out)
+    assert_tree_equal(round_trip.get_at(4), inner.get_at(4))

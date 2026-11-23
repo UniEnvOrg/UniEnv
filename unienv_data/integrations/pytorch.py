@@ -1,5 +1,7 @@
 from typing import Optional, Union, Tuple, Dict, Any
 
+import numpy as np
+
 from torch.utils.data import Dataset
 
 from unienv_interface.backends import ComputeBackend, BArrayType, BDeviceType, BDtypeType, BRNGType
@@ -120,9 +122,16 @@ class PyTorchAsUniEnvDataset(BatchBase[BatchT, PyTorchArrayType, PyTorchDeviceTy
                 idx = self.backend.nonzero(idx)[0]
             else:
                 assert self.backend.dtype_is_real_integer(idx.dtype), "Index array must be of integer or boolean type."
-                idx = (idx + len(self)) % len(self)
+                length = len(self)
+                np_idx = self.backend.to_numpy(idx)
+                if np.any((np_idx < -length) | (np_idx >= length)):
+                    raise IndexError(f"Index values out of bounds for dataset of length {length}: {np_idx.tolist()}")
+                idx = (idx + length) % length
         
         idx_list = self.backend.to_numpy(idx).tolist()
+        if isinstance(self.dataset, UniEnvAsPyTorchDataset):
+            # Its `__getitems__` returns the already collated batch (not a list of samples).
+            return self.dataset.__getitems__(idx_list), {}
         if hasattr(self.dataset, "__getitems__"):
             data_list = self.dataset.__getitems__(idx_list)
         else:
