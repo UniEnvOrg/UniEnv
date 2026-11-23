@@ -146,5 +146,6 @@ body[data-md-color-scheme] {
 
 /* API pages: plain module-path titles, wrapped signatures, quiet section labels */
 .md-typeset h1 code { background: none; border: 0; padding: 0; font-size: .82em; color: var(--ue-ink); }
+.md-typeset :is(h2, h3, h4) code { background: none; border: 0; padding: 0; color: var(--ue-ink); }
 .md-typeset .doc-signature pre code, .md-typeset .doc-signature code { white-space: pre-wrap; word-break: break-word; }
 .md-nav__item--section > .md-nav__link { text-transform: none; font-size: .66rem; letter-spacing: .01em; font-weight: 600; }
