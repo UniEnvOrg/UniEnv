@@ -24,6 +24,12 @@ These guides cover the parts of UniEnv you are most likely to reach for after th
 
     [Open the guide](dataset-integrations.md)
 
+-   **Contributing an Adaptor**
+
+    Connect a simulator, robot, sensor, dataset or policy to UniEnv, and get it listed in the ecosystem.
+
+    [Open the guide](contributing-adaptors.md)
+
 -   **Development**
 
     Documentation generation, tests, and local maintenance workflow.

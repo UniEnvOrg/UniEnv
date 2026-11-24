@@ -21,6 +21,7 @@ PREFERRED_DOC_ORDER = [
     Path("guides", "dataset-integrations.md"),
     Path("guides", "remote-execution.md"),
     Path("guides", "mcp.md"),
+    Path("guides", "contributing-adaptors.md"),
     Path("guides", "development.md"),
 ]
 
