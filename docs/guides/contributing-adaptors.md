@@ -13,13 +13,30 @@ Adaptors live in their own repositories, one per source, so each can pin its own
 
 | You are adapting | Implement | Examples |
 | --- | --- | --- |
-| A simulator or robot API that already runs whole episodes | an [`Env`](../concepts/environments.md) | `unienv-maniskill`, `unienv-droid` (`DroidEnv`) |
-| A physics engine, or a robot / sensor that should combine with others | a `World` and [`WorldNode`s](../concepts/world-composition.md) | `unienv-genesis`, `unienv-mjwarp`, `unienv-isaacsim`, `unienv-zed`, `unienv-rohand` |
+| A robot, gripper or hand, camera or other sensor | [`WorldNode`s](../concepts/world-composition.md) on a `RealWorld` | `unienv-tianji`, `unienv-wuji`, `unienv-rohand`, `unienv-zed` |
+| A physics engine | a `World` and its `WorldNode`s (robots, objects, sensors, tasks) | `unienv-genesis`, `unienv-mjwarp`, `unienv-isaacsim` |
+| A simulator or benchmark that already runs whole episodes | an [`Env`](../concepts/environments.md) | `unienv-maniskill`, `unienv-libero` (`FromLiberoEnv`) |
 | Recorded data | a batch (`unienv_data`), plus a `DataTransformation` into the matching env's schema | `unienv-droid` (`unienv_droid_data`), `unienv-libero` |
 | A model that acts | a [`Policy`](../concepts/policies.md) | `unienv-lerobot` |
 
-An `Env` is the quickest to write. Worlds and nodes take more work, but let users assemble their own scenes
-(your robot, someone else's camera, their task) and are the way to go for engines.
+**For robot hardware, use the node system.** Write each device as a `WorldNode` and run it on a `RealWorld`,
+which advances on wall-clock time. Nodes compose: users combine an arm, a hand and cameras from different
+adaptors into one environment, add their own task node, and swap in the simulated nodes of the same robot
+without touching the rest:
+
+```python
+from unienv_interface.backends.numpy import NumpyComputeBackend
+from unienv_interface.world import RealWorld, WorldEnv
+
+world = RealWorld(NumpyComputeBackend, world_timestep=1 / 15)  # usually the control timestep
+arm = MyArmNode(world, control_timestep=1 / 15)                # your adaptor's nodes
+camera = MyCameraNode(world, control_timestep=1 / 15)
+env = WorldEnv(world, [arm, camera])                           # one Env: reset / step / spaces
+```
+
+Use an `Env` only for a simulator or benchmark that already owns the whole episode loop. For a physics engine,
+write a `World` and nodes for its robots, objects and sensors, as for hardware. See
+[World Composition](../concepts/world-composition.md) for the node lifecycle and priorities.
 
 ## Describe The Data
 
