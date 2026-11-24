@@ -133,5 +133,6 @@ Tests that need a GPU, a simulator license or hardware should skip cleanly when 
 2. **Move it into UniEnvOrg (optional).** Open an issue on [UniEnv](https://github.com/UniEnvOrg/UniEnv/issues)
    to discuss moving the adaptor into the organization; a transferred repository keeps its history.
 3. **Add it to the website.** The ecosystem cards are in `site/index.html` of
-   [UniEnvOrg.github.io](https://github.com/UniEnvOrg/UniEnvOrg.github.io): copy a card in the *Simulation*
-   or *Robots, sensors & data* group and open a pull request. List only public repositories.
+   [UniEnvOrg.github.io](https://github.com/UniEnvOrg/UniEnvOrg.github.io): copy a card into the matching
+   group (*Simulation*, *Policies*, *Robots, sensors & data*) and open a pull request. List only public
+   repositories.
